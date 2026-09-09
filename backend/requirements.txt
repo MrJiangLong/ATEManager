@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+SQLAlchemy>=2.0
+pg8000>=1.30
+pydantic>=2.6
+python-dotenv>=1.0
+# JWT 认证（纯 Python，兼容 32 位 Python 3.8）
+pyjwt>=2.6,<2.9
+# VSCode F5 断点调试
+debugpy>=1.8

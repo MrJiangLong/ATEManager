@@ -1,0 +1,278 @@
+/* ===================================================================
+   ATE Manager · 全局设计令牌与基础样式
+   结构：1) 设计令牌  2) 基础重置  3) Element Plus 主题
+        4) 通用组件外观  5) 工具类  6) 响应式
+   =================================================================== */
+
+/* ---------- 1. 设计令牌 ---------- */
+:root {
+  /* 品牌色 */
+  --app-primary: #2f6bff;
+  --app-primary-dark: #2557d6;
+  --app-primary-light: #6b95ff;
+
+  /* 语义色（表格 Tag / 图表共用同一套，保证全站一致） */
+  --app-success: #12b76a;
+  --app-danger: #ef4444;
+  --app-warning: #f59e0b;
+  --app-purple: #7c5cff;
+  --app-neutral: #909399;
+
+  /* 表面与文本 */
+  --app-sidebar-bg: #0e1b38;
+  --app-content-bg: #f5f6fa;
+  --app-card-bg: #fff;
+  --app-card-border: #ebedf3;
+  --app-card-radius: 14px;
+  --app-card-radius-sm: 10px;
+  --app-card-shadow: 0 1px 2px rgba(16, 28, 61, 0.04);
+
+  --app-text: #1f2b4d;
+  --app-text-sub: #6b7a99;
+  --app-text-faint: #9aa6bd;
+  --app-border: #eef1f7;
+  --app-border-strong: #e3e8f2;
+
+  /* 间距节奏（4px 基准） */
+  --app-space-1: 4px;
+  --app-space-2: 8px;
+  --app-space-3: 12px;
+  --app-space-4: 16px;
+  --app-space-5: 20px;
+  --app-space-6: 24px;
+
+  /* Element Plus 主题覆盖 */
+  --el-color-primary: #2f6bff;
+  --el-color-primary-light-3: #6b95ff;
+  --el-color-primary-light-5: #9db8ff;
+  --el-color-primary-light-7: #c6d6ff;
+  --el-color-primary-light-8: #dde7ff;
+  --el-color-primary-light-9: #eef3ff;
+  --el-color-primary-dark-2: #2557d6;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+
+  /* 字体栈（集中管理，全站统一引用） */
+  /* 西文优先：Inter（开箱即用的无衬线英文 UI 字体）→ Segoe UI → Roboto → Helvetica → Arial */
+  --app-font-sans: 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* 中文优先：PingFang SC（macOS）→ 苹方/冬青黑 → 微软雅黑（Windows）→ 宋体兜底 */
+  --app-font-sans-zh: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', SimSun, sans-serif;
+  /* 等宽：用于 SN/case_id/版本号等代码字面值 */
+  --app-font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+}
+
+/* ---------- 2. 基础重置 ---------- */
+* { box-sizing: border-box; }
+
+html, body, #app { height: 100%; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--app-font-sans), var(--app-font-sans-zh);
+  font-size: 14px;
+  background: var(--app-content-bg);
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 3. Element Plus 主题 ---------- */
+/* 主按钮：统一渐变与按压反馈 */
+.app-btn-primary {
+  background: linear-gradient(135deg, #2f6bff 0%, #5a8bff 100%);
+  border: none;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(47, 107, 255, 0.28);
+  transition: opacity 0.2s, box-shadow 0.2s;
+}
+.app-btn-primary:hover,
+.app-btn-primary:focus {
+  opacity: 0.92;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(47, 107, 255, 0.36);
+}
+.app-btn-primary.is-disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+/* 表格：全站统一密度与外观，视图无需再用 cell-style 内联覆盖 */
+.el-table {
+  --el-table-border-color: var(--app-border);
+  --el-table-header-bg-color: #fafbfe;
+  --el-table-row-hover-bg-color: #f5f8ff;
+  --el-table-row-height: 46px;
+  --el-table-header-height: 42px;
+  --el-table-cell-padding: 10px 12px;
+  border-radius: var(--app-card-radius-sm);
+  font-size: 13px;
+  width: 100%;
+}
+.el-table--small {
+  --el-table-row-height: 38px;
+  --el-table-header-height: 36px;
+  --el-table-cell-padding: 6px 10px;
+  font-size: 12.5px;
+}
+.el-table .el-table__cell { padding: var(--el-table-cell-padding); }
+.el-table th.el-table__cell {
+  background: #fafbfe !important;
+  color: #47546e;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid var(--app-border);
+}
+.el-table .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  justify-content: flex-start;
+  word-break: break-word;
+}
+.el-table .el-table__row td.el-table__cell { color: #2b3a5e; }
+.el-table .cell .el-button + .el-button { margin-left: 4px; }
+.el-table .cell .el-tag { vertical-align: middle; }
+
+/* 弹窗：垂直居中 + 头部留白统一 */
+.el-overlay-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.el-dialog {
+  border-radius: 14px;
+  margin: 0 auto;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.el-dialog--fullscreen { max-height: 100vh; margin: 0; }
+.el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.el-dialog__body::-webkit-scrollbar { display: none; }
+.el-dialog__header {
+  border-bottom: 1px solid #f0f2f7;
+  padding-bottom: 16px;
+}
+.el-drawer__header {
+  margin-bottom: 8px;
+  color: var(--app-text);
+  font-weight: 600;
+}
+
+/* 表单弹窗（视图表单弹窗与改密弹窗共用同一套内边距） */
+.form-dialog .el-dialog__header,
+.pwd-dialog .el-dialog__header { margin-right: 0 !important; padding: 20px 24px 18px !important; }
+.form-dialog .el-dialog__body,
+.pwd-dialog .el-dialog__body { padding: 24px 24px 8px !important; }
+.form-dialog .el-dialog__footer,
+.pwd-dialog .el-dialog__footer { padding: 8px 24px 20px !important; }
+
+/* ---------- 4. 通用组件外观 ---------- */
+/* 面板卡片：DataCard 与所有视图的表格容器共用 */
+.data-card {
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-card-border);
+  border-radius: var(--app-card-radius);
+  padding: 18px 20px;
+  box-shadow: var(--app-card-shadow);
+  transition: box-shadow 0.25s ease;
+}
+.data-card .card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+/* #extra 聚合容器：插槽内多个控件作为一簇靠右排布（与 PageToolbar 的 extra 一致），
+   margin-left:auto 兜底无标题的纯 extra 头部 */
+.data-card .card-extra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+/* 轻量面板（StatTile / 无边框强调块） */
+.subtle-card {
+  background: var(--app-card-bg);
+  border: 1px solid var(--app-card-border);
+  border-radius: var(--app-card-radius-sm);
+  padding: 16px 18px;
+}
+
+/* 展开行明细面板（Records / Trace 共用） */
+.items-panel { padding: 10px 16px 14px; background: var(--app-content-bg); }
+.items-head { font-size: 12px; margin-bottom: 8px; }
+
+/* 分页器：统一右对齐与上间距 */
+.pager {
+  margin-top: var(--app-space-3);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 标签页头部（RouteConfig 子页共用） */
+.tab-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.tab-head .filter-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* 无左侧说明文字时，操作区靠右与表格右上角对齐 */
+.tab-head-end { justify-content: flex-end; }
+
+/* 通用栅格 */
+/* KPI 行：指标数量不固定，用 auto-fit 自适应（3 个均分 / 5 个自动换行） */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+
+/* ---------- 5. 工具类 ---------- */
+.muted { color: var(--app-text-sub); font-size: 12.5px; }
+.text-danger { color: var(--app-danger, #f56c6c); font-weight: 600; }
+
+.code {
+  font-family: var(--app-font-mono);
+  font-size: 12.5px;
+  color: #47546e;
+}
+
+/* 入场动画 */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.35s ease both; }
+
+/* ---------- 6. 滚动条 ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #c9d2e3; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #a9b6cf; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 7. 响应式 ---------- */
+@media (max-width: 1100px) {
+  .kpi-row { grid-template-columns: 1fr 1fr !important; }
+  .grid-2 { grid-template-columns: 1fr !important; }
+}
+
+/* 侧边栏的窄屏收起由 AppSidebar 通过 matchMedia 与折叠态联动处理，
+   此处不再用 CSS 覆盖其宽度——否则容器被压窄而 el-menu 仍是展开态，标题会被裁切 */
+@media (max-width: 900px) {
+  .kpi-row { grid-template-columns: 1fr !important; }
+  .grid-2 { grid-template-columns: 1fr !important; }
+}

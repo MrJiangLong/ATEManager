@@ -1,0 +1,73 @@
+import { reactive, computed } from 'vue'
+import { authApi, TOKEN_KEY } from '../api'
+
+const state = reactive({
+  token: localStorage.getItem(TOKEN_KEY) || '',
+  user: null,
+  checked: false,
+})
+
+// 会话恢复共享 Promise：整个页面生命周期只做一次 /auth/me 水合，
+// 路由守卫（首次导航早于组件挂载）与 App.vue 挂载共用同一请求，避免竞态与重复请求
+let refreshPromise = null
+
+export function useAuth() {
+  const isLoggedIn = computed(() => Boolean(state.token) && Boolean(state.user))
+
+  function refresh() {
+    if (!state.token) {
+      state.checked = true
+      return Promise.resolve(false)
+    }
+    // 已有进行中的请求则复用，避免并发水合
+    if (refreshPromise) return refreshPromise
+
+    const tokenAtStart = state.token
+
+    refreshPromise = authApi
+      .me()
+      .then((res) => {
+        // 若期间 token 已变更（如用户重新登录），忽略旧请求的成功结果
+        if (state.token !== tokenAtStart) return Boolean(state.token && state.user)
+        state.user = res.data
+        return true
+      })
+      .catch((error) => {
+        // 仅当失败的 token 仍是当前 token 时才清除凭证，避免旧请求 401 误清新登录态
+        if (state.token !== tokenAtStart) return false
+        // 仅认证失效(401)才清除本地凭证；网络超时/后端重启等临时错误
+        // 保留 token，避免弱网下把有效登录态误降级为游客
+        if (error?.status === 401) {
+          state.token = ''
+          state.user = null
+          localStorage.removeItem(TOKEN_KEY)
+        }
+        return false
+      })
+      .finally(() => {
+        state.checked = true
+        // 释放共享槽位：成功 / 失败后都允许后续调用重新水合（典型场景：401 清除凭证，
+        // 用户再次登录成功后再次调用 refresh；或临时网络错误恢复后想重新探测）
+        refreshPromise = null
+      })
+    return refreshPromise
+  }
+
+  async function login(username, password) {
+    const res = await authApi.login({ username, password })
+    state.token = res.data.access_token
+    state.user = res.data.user
+    state.checked = true
+    localStorage.setItem(TOKEN_KEY, state.token)
+    return res.data.user
+  }
+
+  function logout() {
+    state.token = ''
+    state.user = null
+    state.checked = true
+    localStorage.removeItem(TOKEN_KEY)
+  }
+
+  return { state, isLoggedIn, refresh, login, logout }
+}

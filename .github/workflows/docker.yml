@@ -1,0 +1,66 @@
+name: Build Docker Image
+
+# 推送 master 分支或 v* 标签时自动构建；也可手动触发（可选覆盖版本号）
+# 版本号优先级：v* 标签 > 手动填写 > backend/app/config.py 中 APP_VERSION > 提交短 SHA
+# 产物：ate-manager-{版本}.tar.gz（docker save + gzip），作为 artifact 下载后
+#       拷贝到服务器 docker load 即可部署，无需任何镜像仓库与登录凭据
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 覆盖版本号（可选）；留空则使用 config.py 中 APP_VERSION
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          if [[ "${REF}" == v* ]]; then
+            VER="${REF#v}"
+          elif [[ -n "${INPUT_VERSION}" ]]; then
+            VER="${INPUT_VERSION}"
+          else
+            VER="$(grep -oP 'APP_VERSION: str = "\K[^"]+' backend/app/config.py || true)"
+          fi
+          if [[ -z "${VER}" ]]; then
+            VER="${GITHUB_SHA::8}"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker build \
+            -t ate-manager:latest \
+            -t ate-manager:${{ steps.version.outputs.version }} \
+            .
+
+      - name: Export image archive
+        run: |
+          docker save \
+            ate-manager:latest \
+            ate-manager:${{ steps.version.outputs.version }} \
+            | gzip > ate-manager-${{ steps.version.outputs.version }}.tar.gz
+          ls -lh ate-manager-${{ steps.version.outputs.version }}.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ate-manager-${{ steps.version.outputs.version }}
+          path: ate-manager-${{ steps.version.outputs.version }}.tar.gz
+          retention-days: 90

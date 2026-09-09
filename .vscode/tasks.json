@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "后端: 安装依赖",
+      "type": "shell",
+      "command": "if not exist .venv\\Scripts\\python.exe (python -m venv .venv) && .venv\\Scripts\\pip install -r requirements.txt",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "后端: 环境自检",
+      "type": "shell",
+      "command": ".venv\\Scripts\\python -m app.check",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "后端: 初始化演示数据",
+      "type": "shell",
+      "command": ".venv\\Scripts\\python -m app.seed",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "后端: v1 机台流程测试",
+      "type": "shell",
+      "command": ".venv\\Scripts\\python tests/v1_api_test.py --api-key %V1_API_KEY%",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "前端: 安装依赖",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "前端: 开发服务器",
+      "type": "npm",
+      "script": "dev",
+      "isBackground": true,
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": "Local:.*"
+        }
+      }
+    },
+    {
+      "label": "前端: 生产构建",
+      "type": "npm",
+      "script": "build",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": []
+    }
+  ]
+}

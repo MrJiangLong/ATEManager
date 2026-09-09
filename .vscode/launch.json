@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI 后端 (8000)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "0.0.0.0", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    {
+      "name": "Vite 前端 (5173)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "${workspaceFolder}/frontend",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "autoAttachChildProcesses": true
+    },
+    {
+      "name": "Chrome 调试前端页面",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend",
+      "sourceMaps": true,
+      "preLaunchTask": "前端: 开发服务器"
+    },
+    {
+      "name": "v1 机台流程测试",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/tests/v1_api_test.py",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "args": ["--api-key", "${env:V1_API_KEY}"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "全栈调试（后端+前端）",
+      "configurations": ["FastAPI 后端 (8000)", "Vite 前端 (5173)"]
+    }
+  ]
+}

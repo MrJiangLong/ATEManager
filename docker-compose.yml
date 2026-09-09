@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    image: ate-manager:latest
+    container_name: ate-manager
+    ports:
+      - "8000:8000"
+    environment:
+      # 正式环境外部 PostgreSQL（pg8000 协议直连）
+      DATABASE_URL: postgresql+pg8000://postgres:unitrend123@10.1.1.4:5433/ate_manager
+      APP_DEBUG: "false"
+      LOG_LEVEL: INFO
+      LOG_FILE: /app/data/logs/app.log
+      # 通道一：上位机接入密钥（与 backend/.env 保持一致）
+      V1_API_KEY: ce15ef39ae60c65f19b501bf360305e6a4f43e1097a9ffc7
+      # 通道二：JWT 签名密钥（与 backend/.env 保持一致）
+      JWT_SECRET: GmegCtqmrl2Bxqe2vDFdeUJWh0UulhgkiGtyeAybTGwU7Kk6r3YVOysBXJwWWky1
+      # 默认管理员
+      DEFAULT_ADMIN_USERNAME: admin
+      DEFAULT_ADMIN_PASSWORD: admin123
+      DEFAULT_ADMIN_NAME: Administrator
+      # 防呆契约
+      FAIL_LIMIT: "3"
+      ENFORCE_FW: "true"
+      ENFORCE_CASE_IDS: "true"
+      CLIENT_ONLINE_WINDOW_SECONDS: "90"
+      METRICS_WINDOW_DAYS: "14"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

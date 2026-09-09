@@ -1,0 +1,20 @@
+<template>
+  <el-config-provider :locale="elLocale">
+    <router-view />
+  </el-config-provider>
+</template>
+
+<script setup>
+import { computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
+import router from './router'
+import { applyRouteTitle } from './utils/title'
+
+const { locale } = useI18n()
+const elLocale = computed(() => (locale.value === 'en' ? en : zhCn))
+
+// 语言切换后重新应用页面标题（路由切换的标题由 router.afterEach 统一处理）
+watch(locale, () => applyRouteTitle(router.currentRoute.value))
+</script>

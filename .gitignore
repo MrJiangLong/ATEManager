@@ -1,0 +1,25 @@
+# ---- Python / 后端 ----
+backend/.venv/
+backend/.env
+backend/logs/
+backend/data/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- Node / 前端 ----
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.vite/
+
+# ---- 编辑器 ----
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db
+*.log
