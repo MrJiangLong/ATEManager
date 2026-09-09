@@ -849,6 +849,10 @@ def seed(
         if with_repairs:
             _seed_repairs(db, rng)
         _seed_lock_scenarios(db, rng)
+        # is_completed 由 gate._write_passed() 维护，seed 是直接构造行、不走该路径，
+        # 故末尾统一回填：否则列表页"已完工"筛选（SQL 层按该列过滤）一条都筛不出，
+        # 但列表标签（运行时派生）却显示"已完工"，两处口径打架。
+        _backfill_is_completed(db)
 
         models_count = db.query(ProductModel).count()
         items_count = db.query(StationItem).count()
