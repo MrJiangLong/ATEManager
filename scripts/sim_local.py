@@ -1,9 +1,19 @@
-"""本地测试库一键跑产线仿真（不改动 backend/.env）。
+r"""本地测试库一键跑产线仿真（不改动 backend/.env）。
 
 用法（多余参数原样透传给 line_simulator.py）：
     scripts\sim-local.bat
     scripts\sim-local.bat --units 20
     scripts\sim-local.bat --mode normal --clients 2 --units 20
+
+    scripts\sim-local.bat --attach
+    scripts\sim-local.bat --attach --units 20 --mode normal
+
+默认模式（无 --attach）：自建一次性测试库 → seed → 起临时后端 → 仿真 → 收尾清理，
+    与正式环境完全隔离。
+
+--attach 模式（或 SIM_ATTACH=1）：不建库、不 seed、不起服务、不做任何清理，
+    直接对 http://127.0.0.1:SIM_PORT 上**已在运行**的后端（本地 uvicorn 或
+    Docker 部署均可）跑仿真；仿真数据写入该后端当前所连的数据库。
 
 环境变量开关：
     SIM_PG=1            改用临时 Docker PG（postgres:15 @55433），锁语义等同正式
@@ -12,6 +22,7 @@
     SIM_SWEEPER=false   关闭孤儿锁自动回收
     SIM_PORT=8000       后端端口
     SIM_KEEP_DB=1       复用上次测试库
+    SIM_ATTACH=1        同 --attach
 
 原理
     config.py 用 load_dotenv(override=False)，进程环境变量优先级最高，
@@ -116,8 +127,24 @@ def prepare_pg() -> str:
     sys.exit(1)
 
 
+def take_flag(argv: list, flag: str) -> tuple:
+    """从参数里摘出开关（不传给 line_simulator），返回 (是否命中, 剩余参数)。"""
+    return flag in argv, [a for a in argv if a != flag]
+
+
+def run_simulator(port: int, cfg: dict, extra: list, env: dict) -> int:
+    """对指定端口的后端跑产线仿真。"""
+    cmd = [str(PY), str(ROOT / "examples" / "line_simulator.py"),
+           "--base-url", f"http://127.0.0.1:{port}",
+           "--api-key", cfg["V1_API_KEY"],
+           "--admin-user", cfg.get("DEFAULT_ADMIN_USERNAME", "admin"),
+           "--admin-password", cfg.get("DEFAULT_ADMIN_PASSWORD", "admin123")] + extra
+    return subprocess.run(cmd, cwd=str(BACKEND), env=env).returncode
+
+
 def main() -> int:
-    extra = sys.argv[1:]
+    attach_flag, extra = take_flag(sys.argv[1:], "--attach")
+    attach = attach_flag or os.environ.get("SIM_ATTACH") == "1"
     port = int(os.environ.get("SIM_PORT", "8000"))
     products = os.environ.get("SIM_PRODUCTS", "20")
     sweeper = os.environ.get("SIM_SWEEPER", "false")
@@ -134,6 +161,22 @@ def main() -> int:
         print("[ERROR] cannot parse V1_API_KEY from backend\\.env")
         return 1
 
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    if attach:
+        # 只仿真：后端已在运行，直接打它的 API，不建库 / 不 seed / 不起服务 / 不清理
+        if not wait_health(port, timeout=10):
+            print(f"[ERROR] no backend answering on http://127.0.0.1:{port}")
+            print("        Start it first (scripts\\dev-backend.bat) or set SIM_PORT.")
+            return 1
+        print(f"[attach] target = running backend http://127.0.0.1:{port} "
+              "(no db/seed/uvicorn, no cleanup)")
+        print("[sim] starting line simulator...")
+        rc = run_simulator(port, cfg, extra, env)
+        print(f"[done] simulation finished, exit code {rc} (0=pass)")
+        return rc
+
     # 端口必须空闲，否则仿真数据会写进正在运行的正式后端
     if port_open(port):
         print(f"[ERROR] port {port} already in use - a prod backend may be running.")
@@ -142,10 +185,8 @@ def main() -> int:
 
     db_url = prepare_pg() if use_pg else (prepare_sqlite(sim_db, keep_db) or sim_db)
 
-    env = os.environ.copy()
     env["DATABASE_URL"] = db_url
     env["SWEEPER_ENABLED"] = sweeper
-    env["PYTHONIOENCODING"] = "utf-8"
 
     # 1) 静态工艺规则（只写本地测试库）
     print("[seed] writing static process rules and scenario data...")
@@ -168,12 +209,7 @@ def main() -> int:
 
         # 3) 跑仿真
         print("[sim] starting line simulator...")
-        cmd = [str(PY), str(ROOT / "examples" / "line_simulator.py"),
-               "--base-url", f"http://127.0.0.1:{port}",
-               "--api-key", cfg["V1_API_KEY"],
-               "--admin-user", cfg.get("DEFAULT_ADMIN_USERNAME", "admin"),
-               "--admin-password", cfg.get("DEFAULT_ADMIN_PASSWORD", "admin123")] + extra
-        rc = subprocess.run(cmd, cwd=str(BACKEND), env=env).returncode
+        rc = run_simulator(port, cfg, extra, env)
     finally:
         proc.terminate()
         try:
