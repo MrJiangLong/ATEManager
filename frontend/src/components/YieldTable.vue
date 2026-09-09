@@ -18,9 +18,10 @@
       </el-checkbox>
     </div>
 
-    <div v-if="shownRows.length" class="yield-head">
+    <div v-if="shownRows.length" class="yield-head" :style="gridStyle">
       <span class="th-name">{{ columnLabel }}</span>
       <span class="th-rate">{{ $t('dashboard.colRate') }}</span>
+      <span v-if="showFirstPass" class="th-fpy">{{ firstPassLabel || $t('dashboard.colFirstPass') }}</span>
       <span class="th-count">{{ $t('dashboard.colSamples') }}</span>
     </div>
 
@@ -31,9 +32,15 @@
         :key="row.key"
         class="yield-row"
         :class="rowClass(row.pass_rate)"
+        :style="gridStyle"
       >
         <span class="yield-key" :title="row.key">{{ row.key }}</span>
         <span class="yield-rate" :class="rateClass(row.pass_rate)">{{ row.pass_rate }}%</span>
+        <span
+          v-if="showFirstPass"
+          class="yield-fpy"
+          :title="`${row.first_pass} / ${row.total}`"
+        >{{ row.first_pass_rate }}%</span>
         <span class="yield-count">{{ row.passed }} / {{ row.total }}</span>
       </div>
       <EmptyState v-if="!shownRows.length" :text="emptyText" />
@@ -66,6 +73,9 @@ const props = defineProps({
   emptyText: { type: String, default: '' },
   columnLabel: { type: String, default: '' },
   searchPh: { type: String, default: '' },
+  /** 件级良率卡专用：额外显示"一次通过率"列（FPY），默认关闭不影响工位良率卡 */
+  showFirstPass: { type: Boolean, default: false },
+  firstPassLabel: { type: String, default: '' },
 })
 
 /** 概览页默认只渲染前 N 项，避免上千项一次性进 DOM */
@@ -77,6 +87,11 @@ const alertOnly = ref(false)
 const expanded = ref(false)
 
 const hasData = computed(() => (props.rows?.length || 0) > 0)
+
+/** 多一列直通率时压缩其他列宽，保持整卡宽度不变 */
+const gridStyle = computed(() => ({
+  gridTemplateColumns: props.showFirstPass ? '1fr 62px 66px 82px' : '1fr 72px 84px',
+}))
 
 /** 过滤：关键词 + 仅看异常（<95% 视为需关注） */
 const filtered = computed(() => {
@@ -165,6 +180,7 @@ function rowClass(rate) {
   border-bottom: 1px solid var(--app-border);
 }
 .th-rate,
+.th-fpy,
 .th-count { text-align: right; }
 
 /* 滚动区：卡片高度恒定 */
@@ -204,6 +220,14 @@ function rowClass(rate) {
   text-align: right;
   font-size: 12px;
   color: var(--app-text-sub);
+  font-variant-numeric: tabular-nums;
+}
+/* 一次通过率：主指标是良率，故这一列降一档（字重/颜色）作辅指标 */
+.yield-fpy {
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--app-text-faint);
   font-variant-numeric: tabular-nums;
 }
 .yield-rate.good { color: #2f6bff; }

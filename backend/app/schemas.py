@@ -624,6 +624,10 @@ class YieldRow(BaseModel):
     total: int = 0
     passed: int = 0
     pass_rate: float = 0.0
+    # 仅件级良率使用：一次通过（整件无任何 FAIL 记录）的件数与占比。
+    # 良率看终检结果，直通率看返修成本，两者并列才能看出"良率漂亮但重测多"。
+    first_pass: int = 0
+    first_pass_rate: float = 0.0
 
 
 class YieldPoint(BaseModel):
@@ -660,7 +664,13 @@ class MetricsOverview(BaseModel):
     window: WindowStat = Field(default_factory=WindowStat)
     trend: List[YieldPoint] = []
     station_yield: List[YieldRow] = []
+    # 记录级口径：窗口内 test_records 的一次通过率。在制品未跑的工位不产生记录，
+    # 故未完工的件只会抬高该值，不能代表"整件良率"（保留给需要按测试次数下钻的场景）。
     process_yield: List[YieldRow] = []
+    # 件级良率（终检口径）：分母 = 窗口内已完结（走完全流程或报废）的在制品，
+    # 在制不计入；不良只看终态——报废算不良，中途 FAIL 但重测通过算合格。
+    process_unit_yield: List[YieldRow] = []
+    process_unit_yield_pending: int = 0
     top_failed_items: List[FailedItemPoint] = []
     clients: ClientStat
     product_total: int = 0

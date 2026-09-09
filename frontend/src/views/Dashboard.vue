@@ -88,11 +88,16 @@
         />
       </DataCard>
       <DataCard :title="$t('dashboard.processYieldTitle')">
+        <template #extra>
+          <span class="muted">{{ $t('dashboard.processYieldHint', { n: overview?.process_unit_yield_pending ?? 0 }) }}</span>
+        </template>
         <YieldTable
-          :rows="overview?.process_yield"
+          :rows="overview?.process_unit_yield"
           :column-label="$t('dashboard.processColName')"
           :search-ph="$t('dashboard.processSearchPh')"
           :empty-text="$t('dashboard.noData')"
+          show-first-pass
+          :first-pass-label="$t('dashboard.colFirstPass')"
         />
       </DataCard>
     </div>
