@@ -1,4 +1,4 @@
-# ATE Manager 上位机接入接口文档
+# ATE Manager 上位机接口
 
 > **通道一（`/api/v1/*`）** —— 面向产线上位机（pytest 测试工程）的机器接口。
 > Web 管理端接口（`/api/admin/*`）见 [第 11 章](#11-管理端运维接口jwt)，仅供运维台调用。
@@ -10,7 +10,7 @@
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
-| 配套代码 | `examples/ate_client.py`（SDK + 演示）、`examples/line_simulator.py`（多机台并发验证） |
+| 配套代码 | `tools/ate_client.py`（SDK + 演示）、`tools/line_simulator.py`（多机台并发验证） |
 
 ---
 
@@ -529,6 +529,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `station_already_passed` | 10 | check-in | 复测拦截 |
 | 409 | `lock_conflict` | 11 | check-in / 管理端 | 锁被他人持有 |
 | 409 | `session_completed` | 10 | check-in / checkpoint | 会话已出站 |
+| 409 | `session_aborted` | 11 | checkpoint | 会话已被运维中止（换测试用例清单前），须立即停机 |
 | 409 | `product_holding_lock` | 11 | 管理端 | 在制品被持锁，禁止处置 |
 
 ### 6.2 处理决策
@@ -659,14 +660,43 @@ while not stop.wait(interval):          # interval = heartbeat_interval_sec / 2
 - 正常出站/释放前**先停心跳线程**，避免与服务端状态竞争
 - 线程停止事件不可命名为 `_stop`（会覆盖 `threading.Thread` 内部同名方法导致 `join()` 崩溃）
 
-### 10.2 断点文件
+### 10.2 会话被运维中止时的停机约定（必须实现）
+
+运维更换测试用例清单前会调用 `POST /api/admin/sessions/abort-running` 批量中止会话。
+**服务端无法杀掉上位机进程**，只能靠协作式停机：
+
+1. 会话被中止 → 工位锁释放、在制品回 `IDLE`（**不计失败**，这点与 `missing_mandatory` 的安全卡控不同）
+2. 上位机下一次心跳收到 `holding_lock=false`（≤ `heartbeat_interval_sec`）
+3. SDK 置 `cli.lost_lock = True`，并触发构造参数 `on_lost_lock` 回调
+4. 此后 `checkpoint` 会收到 `409 session_aborted`，`check-out` 会被 `lock_invalid` 拒绝
+5. **上位机必须自己停**：跑完当前用例后停止剩余用例，不要再尝试出站
+
+pytest 工程接入示例：
+
+```python
+import pytest
+
+def run_all(cli, cases):
+    for case in cases:
+        if cli.lost_lock:                    # 心跳线程已发现锁失效
+            pytest.exit("lock lost: session aborted by operator", returncode=3)
+        cli.checkpoint([run(case)])          # 也可能直接抛 409 session_aborted
+
+# 或回调式（无需轮询）
+cli = AteClient(url, key, client_id="CAL-DESK-01",
+                on_lost_lock=lambda reason: pytest.exit(reason, returncode=3))
+```
+
+被中止的件回到 `IDLE` 且未盖章，**重新进站跑一遍即可**，不计失败、不会工程锁定。
+
+### 10.3 断点文件
 
 - 进站后立即写入 `session_id` / `lock_token` / `checkout_id` / `cursor`
 - 采用"临时文件 + `os.replace`"原子写入，避免崩溃时写坏文件
 - **写入失败绝不能中断测试**（Windows 上杀毒/索引占用文件很常见），续测只是优化
 - 成功出站后删除该文件
 
-### 10.3 必做与禁做
+### 10.4 必做与禁做
 
 | 必做 | 禁做 |
 |---|---|
@@ -729,7 +759,7 @@ $env:SWEEPER_ENABLED="false"
 scripts\dev-backend.bat
 
 # 3) 另开终端（api-key 取 backend/.env 的 V1_API_KEY）
-python examples/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> demo
+python tools/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> demo
 ```
 
 | 场景 | 参数 | 验收点 |
@@ -745,8 +775,8 @@ python examples/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> d
 ### 13.2 多机台并发验证（`line_simulator.py`）
 
 ```powershell
-python examples\line_simulator.py --api-key <KEY> --mode normal --units 15
-python examples\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
+python tools\line_simulator.py --api-key <KEY> --mode normal --units 15
+python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 ```
 
 | 参数 | 默认 | 说明 |

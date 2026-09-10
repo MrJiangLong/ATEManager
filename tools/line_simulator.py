@@ -26,7 +26,7 @@ v2：补齐产线状态
     scripts\sim-local.bat
 
     # 2) 另开终端跑模拟器
-    python examples\line_simulator.py --api-key <V1_API_KEY>
+    python tools\line_simulator.py --api-key <V1_API_KEY>
 
     # 常用参数
     --clients 2            每工位的机台数（自动注册并绑定该工位）
@@ -62,13 +62,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ate_client import (  # noqa: E402
-    AteClient,
-    ApiError,
-    admin_login,
-)
+from ate_client import (AteClient,ApiError,admin_login)
 
 DEFAULT_MODEL = "DPO4054B"
 NON_BASELINE_FW = "V3.10"  # 与基线固件不同，用于触发 firmware_mismatch

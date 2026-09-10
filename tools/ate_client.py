@@ -3,7 +3,7 @@
 定位
     本文件是**参考实现与联调工具**，不是产线测试执行器：它不驱动仪器、不执行真实用例，
     只把「上位机 ↔ 服务端」的契约跑通。产线 pytest 工程（conftest）可直接 `import` 后复用，
-    或照抄其调用顺序。完整接口契约、错误码与时序见同目录 **CLIENT_INTEGRATION.md**。
+    或照抄其调用顺序。完整接口契约、错误码与时序见doc/API.md。
 
 兼容性
     Python 3.8+，仅用标准库（urllib / json / threading / dataclasses），
@@ -28,13 +28,13 @@
     ack = cli.check_out(items, duration_ms=...)     # 必须收到 ACK 才允许拔线
 
 运行演示
-    python examples/ate_client.py --api-key <V1_API_KEY> demo        # 全部场景
-    python examples/ate_client.py --api-key <V1_API_KEY> normal      # 正常全流程
-    python examples/ate_client.py --api-key <V1_API_KEY> gate        # 防跳站拦截（需求 2）
-    python examples/ate_client.py --api-key <V1_API_KEY> resume      # 崩溃 → 断点续测
-    python examples/ate_client.py --api-key <V1_API_KEY> takeover    # 崩溃 → 备用机台接管
-    python examples/ate_client.py --api-key <V1_API_KEY> sweep       # 孤儿锁回收（留一把锁在服务端）
-    python examples/ate_client.py --api-key <V1_API_KEY> resolve     # 只做机台身份上报
+    python tools/ate_client.py --api-key <V1_API_KEY> demo        # 全部场景
+    python tools/ate_client.py --api-key <V1_API_KEY> normal      # 正常全流程
+    python tools/ate_client.py --api-key <V1_API_KEY> gate        # 防跳站拦截（需求 2）
+    python tools/ate_client.py --api-key <V1_API_KEY> resume      # 崩溃 → 断点续测
+    python tools/ate_client.py --api-key <V1_API_KEY> takeover    # 崩溃 → 备用机台接管
+    python tools/ate_client.py --api-key <V1_API_KEY> sweep       # 孤儿锁回收（留一把锁在服务端）
+    python tools/ate_client.py --api-key <V1_API_KEY> resolve     # 只做机台身份上报
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
     "ApiError",
@@ -358,19 +358,28 @@ class HeartbeatThread(threading.Thread):
         self.last_error: Optional[str] = None
         self.lost_lock = False
 
+    def _notify_lost(self, reason: str) -> None:
+        """置停机标志并回调宿主——两者都只是"通知"，是否真的停由上位机决定。"""
+        self.lost_lock = True
+        LOGGER.warning("lost lock: %s -> stop testing now", reason)
+        callback = getattr(self.client, "on_lost_lock", None)
+        if callback:
+            try:
+                callback(reason)
+            except Exception:  # 回调异常绝不能拖垮心跳线程
+                LOGGER.exception("on_lost_lock callback raised")
+
     def run(self) -> None:
         while not self._stop_event.wait(self.interval):
             try:
                 data = self.client.heartbeat()
                 if not data.get("holding_lock"):
-                    self.lost_lock = True
-                    LOGGER.warning("心跳返回 holding_lock=false：锁已被接管，停止测试")
+                    self._notify_lost("server says holding_lock=false (lock taken over or session aborted)")
                     break
             except ApiError as exc:
                 self.last_error = str(exc)
                 if exc.is_lock_invalid:
-                    self.lost_lock = True
-                    LOGGER.warning("心跳被拒（%s）：锁已失效，停止测试", exc.code)
+                    self._notify_lost(f"heartbeat rejected: {exc.code}")
                     break
                 LOGGER.debug("心跳失败：%s", exc)
             except Exception as exc:  # 兜底：心跳线程永远不能拖垮主流程
@@ -408,6 +417,7 @@ class AteClient:
         timeout: float = DEFAULT_TIMEOUT,
         retries: int = 2,
         heartbeat_factor: float = 0.5,
+        on_lost_lock: Optional[Callable[[str], None]] = None,
     ):
         self.http = HttpClient(base_url, api_key, timeout=timeout, retries=retries, token=admin_token)
         self.client_id = client_id
@@ -415,8 +425,21 @@ class AteClient:
         self.state_file = state_file
         self.admin_token = admin_token
         self.heartbeat_factor = heartbeat_factor
+        # 锁失效回调：运维中止会话 / 锁被接管时触发，上位机应据此停止后续用例
+        self.on_lost_lock = on_lost_lock
         self.state: Optional[SessionState] = None
         self._hb: Optional[HeartbeatThread] = None
+
+    @property
+    def lost_lock(self) -> bool:
+        """锁是否已被服务端判失效（被接管 / 运维中止会话）。True → 必须停止测试。
+
+        典型用法（pytest 工程里每个用例之间自检）：
+
+            if cli.lost_lock:
+                pytest.exit("lock lost: aborted by operator", returncode=3)
+        """
+        return bool(self._hb and self._hb.lost_lock)
 
     # ---------------- 上下文管理 ----------------
     def __enter__(self) -> "AteClient":
@@ -842,7 +865,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="ate_client",
         description="ATE Manager 上位机接入 SDK 演示",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="完整契约见 examples/CLIENT_INTEGRATION.md",
+        epilog="完整契约见 doc/API.md",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="服务地址（默认 %(default)s）")
     parser.add_argument("--api-key", default="", help="X-API-Key（后端 V1_API_KEY）")

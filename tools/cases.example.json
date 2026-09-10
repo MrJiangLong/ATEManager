@@ -1,0 +1,23 @@
+{
+  "processes": {
+    "PROC_TEK_MSO": {
+      "CAL_PARAM": [
+        {
+          "case_id": "tests/test_cal_param.py::TestAmp::test_amp_cal",
+          "item_name": "CHn幅度校准",
+          "is_mandatory": true
+        },
+        "tests/test_cal_param.py::TestPhase::test_phase_cal",
+        "tests/test_cal_param.py::TestAmpDc::test_amp_dc_1m"
+      ],
+      "TST_AWG": [
+        "tests/test_tst_awg.py::TestAuxChk::test_aux_chk"
+      ]
+    },
+    "PROC_TEK_DPO": {
+      "CAL_PARAM": [
+        "tests/test_cal_param.py::TestAmp::test_amp_cal"
+      ]
+    }
+  }
+}

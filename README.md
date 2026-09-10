@@ -11,7 +11,7 @@
 | 组件 | 版本 | 说明 |
 |---|---|---|
 | 后端 API | `1.0.0` | `backend/app/config.py::APP_VERSION` |
-| 上位机接口文档 | `v1.0` | `examples/CLIENT_INTEGRATION.md` |
+| 上位机接口文档 | `v1.0` | `doc/API.md` |
 | 前端 | `1.0.0` | `frontend/package.json` |
 
 ---
@@ -216,7 +216,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
 | 契约回归 | 执行 `scripts\test-backend.bat`，33 项全部通过 |
-| 上位机链路 | `python examples/ate_client.py --api-key <V1_API_KEY> demo` |
+| 上位机链路 | `python tools/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
 
@@ -277,10 +277,15 @@ ATEManager/
 │   │       ├── clients.py    机台档案与工位绑定
 │   │       └── metrics.py    仪表盘统计
 │   └── tests/test_backend.py 端到端回归测试（33 项）
-├── examples/                 上位机接入（接口文档 + SDK + 并发模拟器）
-│   ├── CLIENT_INTEGRATION.md 上位机接口文档（唯一契约依据）
-│   ├── ate_client.py         SDK + 演示脚本（仅标准库，非产线执行器）
-│   └── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
+├── tools/                    运维与验证脚本（Python，仅标准库）
+│   ├── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
+│   ├── sim_local.py          本地测试库一键仿真（--attach 只对运行中后端）
+│   ├── sync_cases.py         用例ID全量同步（JSON + 中止会话 + 沉降等待）
+│   ├── cases.example.json    用例清单 JSON 模板（sync_cases 的输入示例）
+│   └── ate_client.py         SDK 参考实现 + 演示脚本（仅标准库，非产线执行器）
+├── doc/                      上位机接入文档与参考实现
+│   └── API.md                上位机接口文档（唯一契约依据）
+│
 ├── frontend/
 │   └── src/
 │       ├── api/              Axios 封装 + 按域划分的 API 模块
@@ -307,7 +312,8 @@ ATEManager/
 │           ├── RouteConfig.vue  工艺配置入口
 │           └── route-config/    RouteProcesses / RouteModels / RouteStations
 │                                 RouteTopology / RouteItems
-├── scripts/                  setup / dev-backend / dev-frontend / seed / test-backend
+├── scripts/                  Windows 启动器（.bat）：setup / dev-backend / dev-frontend
+│                             / seed / test-backend / sim-local / sync-cases
 ├── docker-compose.yml        单容器部署配置（端口 8000）
 ├── Dockerfile                多阶段构建（前端 Vite → 后端同源托管）
 └── README.md
@@ -403,7 +409,7 @@ ATEManager/
   "data": { "missing": ["CAL_IFACE"] } }
 ```
 
-> 完整错误码表见 `examples/CLIENT_INTEGRATION.md` 第 6 章。
+> 完整错误码表见 `doc/API.md` 第 6 章。
 
 ---
 
@@ -458,14 +464,14 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 
 四个必须持久化的值：`session_id`、`lock_token`、`checkout_id`、`cursor`。
 
-**完整契约、错误码、时序图、pytest conftest 示例见 [`examples/CLIENT_INTEGRATION.md`](examples/CLIENT_INTEGRATION.md)。**
+**完整契约、错误码、时序图、pytest conftest 示例见 [`doc/API.md`](doc/API.md)。**
 
 配套代码：
 
 | 文件 | 定位 |
 |---|---|
-| `examples/ate_client.py` | 参考实现 SDK + 演示脚本（仅标准库，非产线执行器） |
-| `examples/line_simulator.py` | 多机台并发验证（锁竞争 / 崩溃续测 / 失联接管） |
+| `tools/ate_client.py` | 参考实现 SDK + 演示脚本（仅标准库，非产线执行器） |
+| `tools/line_simulator.py` | 多机台并发验证（锁竞争 / 崩溃续测 / 失联接管） |
 
 ---
 
@@ -600,6 +606,6 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 
 | 文档 | 内容 |
 |---|---|
-| [`examples/CLIENT_INTEGRATION.md`](examples/CLIENT_INTEGRATION.md) | 上位机接口完整契约（错误码 / 时序 / 实现规范） |
+| [`doc/API.md`](doc/API.md) | 上位机接口完整契约（错误码 / 时序 / 实现规范） |
 | `backend/.env.example` | 全部配置项及注释 |
 | `/docs`（运行时） | OpenAPI 交互式文档 |
