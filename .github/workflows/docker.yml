@@ -1,9 +1,5 @@
 name: Build Docker Image
 
-# 推送 master 分支或 v* 标签时自动构建；也可手动触发（可选覆盖版本号）
-# 版本号优先级：v* 标签 > 手动填写 > backend/app/config.py 中 APP_VERSION > 提交短 SHA
-# 产物：ate-manager-{版本}.tar.gz（docker save + gzip），作为 artifact 下载后
-#       拷贝到服务器 docker load 即可部署，无需任何镜像仓库与登录凭据
 on:
   push:
     branches:
