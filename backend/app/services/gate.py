@@ -638,6 +638,15 @@ def save_checkpoint(
         )
     if session.status == models.SESSION_COMPLETED:
         raise conflict_error("session_completed", f"session_completed: {session_id}")
+    # 运维中止会话（换测试用例清单前的"先停再换"）：在断点上报这一步就明确告知，
+    # 上位机不必跑完全部用例才发现出站被拒，避免白跑一轮。
+    if session.status == models.SESSION_ABORTED:
+        raise conflict_error(
+            "session_aborted",
+            f"session_aborted: {session_id} terminated by operator, stop testing now",
+            exit_code=EXIT_LOCK_EXPIRED,
+            data={"session_id": session_id},
+        )
 
     product = db.get(models.ProductStatus, sn)
     if product is not None and product.lock_token and _token_mismatch(product, lock_token):

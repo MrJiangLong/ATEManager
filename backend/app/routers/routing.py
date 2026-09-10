@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import conflict_error, get_or_404, not_found
+from ..errors import bad_request, conflict_error, get_or_404, not_found
 from ..security import current_user
 from ..services.routing import process_topology, station_item_summary, validate_process
 
@@ -127,6 +127,117 @@ def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(curren
     row = get_or_404(db, models.StationItem, item_id, "item")
     db.delete(row)
     db.commit()
+
+
+@router.post("/items/import", response_model=schemas.StationItemImportOut, summary="批量导入用例ID清单(幂等upsert)")
+def import_items(
+    payload: schemas.StationItemImportIn, db: Session = Depends(get_db), user=Depends(current_user)
+):
+    """整批同步某工位的用例ID清单，供上位机脚本自动对齐（pytest --collect-only 的输出）。
+
+    匹配键 (process_id, station_id, case_id) 与唯一约束一致，故重复导入幂等：
+    第二次执行全部 unchanged，不会产生重复行，也不会因已存在而报 409。
+    """
+    get_or_404(db, models.Process, payload.process_id, "process")
+    step = (
+        db.query(models.ProcessStation)
+        .filter(
+            models.ProcessStation.process_id == payload.process_id,
+            models.ProcessStation.station_id == payload.station_id,
+        )
+        .first()
+    )
+    if step is None:
+        raise bad_request(
+            "station_not_in_process",
+            f"station_not_in_process: {payload.station_id} is not a step of {payload.process_id}",
+        )
+    if payload.mode not in ("upsert", "replace"):
+        raise bad_request("bad_mode", "bad_mode: mode must be 'upsert' or 'replace'")
+
+    existing = {
+        row.case_id: row
+        for row in db.query(models.StationItem)
+        .filter(
+            models.StationItem.process_id == payload.process_id,
+            models.StationItem.station_id == payload.station_id,
+        )
+        .all()
+    }
+
+    warnings: List[str] = []
+    seen = set()
+    created = updated = unchanged = 0
+    for row_in in payload.items:
+        case_id = row_in.case_id
+        if not case_id:
+            continue
+        if case_id in seen:
+            warnings.append(f"duplicate case_id in payload: {case_id}")
+            continue
+        seen.add(case_id)
+
+        row = existing.get(case_id)
+        # 未传 item_name 时：新增用 case_id 兜底，已存在的保留原名（不把中文名抹成 nodeid）
+        name = row_in.item_name or (row.item_name if row is not None else case_id)
+        if row is None:
+            row = models.StationItem(
+                process_id=payload.process_id,
+                station_id=payload.station_id,
+                case_id=case_id,
+                item_name=name,
+                is_mandatory=row_in.is_mandatory,
+                is_active=True,
+            )
+            db.add(row)
+            existing[case_id] = row
+            created += 1
+            continue
+
+        changed = False
+        if row.item_name != name:
+            row.item_name = name
+            changed = True
+        if bool(row.is_mandatory) != bool(row_in.is_mandatory):
+            row.is_mandatory = row_in.is_mandatory
+            changed = True
+        if not row.is_active:
+            row.is_active = True  # 重新出现在清单里 → 自动复活
+            changed = True
+        updated += 1 if changed else 0
+        unchanged += 1 if not changed else 0
+
+    # 清单外仍启用的项：upsert 只报告（保持必测），replace 才停用
+    orphans = sorted(
+        case_id for case_id, row in existing.items() if case_id not in seen and row.is_active
+    )
+    deactivated = 0
+    if payload.mode == "replace":
+        for case_id in orphans:
+            existing[case_id].is_active = False
+            deactivated += 1
+
+    total_active = sum(1 for r in existing.values() if r.is_active)
+
+    if payload.dry_run:
+        db.rollback()
+    else:
+        db.commit()
+
+    return schemas.StationItemImportOut(
+        process_id=str(payload.process_id),
+        station_id=str(payload.station_id),
+        mode=payload.mode,
+        dry_run=payload.dry_run,
+        created=created,
+        updated=updated,
+        unchanged=unchanged,
+        deactivated=deactivated,
+        total_active=total_active,
+        orphan_count=len(orphans),
+        orphans=orphans[:20],
+        warnings=warnings,
+    )
 
 
 # ==================== 校验与克隆 ====================

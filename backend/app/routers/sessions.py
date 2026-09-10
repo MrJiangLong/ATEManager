@@ -141,4 +141,74 @@ def abort_session(
     return _session_view(row)
 
 
+@router.post("/abort-running", response_model=schemas.SessionAbortRunningOut, summary="批量中止运行中的会话")
+def abort_running(
+    payload: schemas.SessionAbortRunningIn,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    """换测试用例清单前"先停再换"：批量关闭 RUNNING 会话并释放工位锁。
+
+    与单点 abort 一样走 force_release_lock —— 只关会话 + 放锁，不改印章、
+    不计失败（这点与 missing_mandatory 完全不同：后者会计一次失败）。
+    被中止的件回到 IDLE 且未盖章，需重新进站跑一遍。
+    """
+    filters = [payload.station_id, payload.process_id, payload.sn, payload.client_id]
+    if not any(filters):
+        raise bad_request(
+            "scope_required",
+            "scope_required: give at least one of station_id / process_id / sn / client_id "
+            "(aborting everything by accident is too costly)",
+        )
+
+    query = db.query(models.TestSession).filter(models.TestSession.status == models.SESSION_RUNNING)
+    if payload.station_id:
+        query = query.filter(models.TestSession.station_id == payload.station_id)
+    if payload.sn:
+        query = query.filter(models.TestSession.sn == payload.sn)
+    if payload.client_id:
+        query = query.filter(models.TestSession.client_id == payload.client_id)
+    if payload.process_id:
+        models_in = [
+            m.product_model
+            for m in db.query(models.ProductModel)
+            .filter(models.ProductModel.process_id == payload.process_id)
+            .all()
+        ]
+        sns = [
+            p.sn
+            for p in db.query(models.ProductStatus)
+            .filter(models.ProductStatus.product_model.in_(models_in or [""]))
+            .all()
+        ]
+        query = query.filter(models.TestSession.sn.in_(sns or [""]))
+
+    rows = query.all()
+    points = [
+        schemas.AbortedSessionPoint(
+            session_id=r.session_id, sn=r.sn, station_id=r.station_id, client_id=r.client_id
+        )
+        for r in rows
+    ]
+    if payload.dry_run:
+        return schemas.SessionAbortRunningOut(
+            aborted=len(points), dry_run=True, items=points
+        )
+
+    reason = payload.reason or "aborted before case-list sync"
+    for row in rows:
+        product = db.get(models.ProductStatus, row.sn)
+        if (
+            product is not None
+            and product.current_status == models.STATUS_TESTING
+            and product.current_client == row.client_id
+        ):
+            force_release_lock(db, sn=row.sn, reason=reason, operator=user.username)
+        else:
+            _close_session(row, models.SESSION_ABORTED, reason, user.username)
+            db.commit()
+
+    return schemas.SessionAbortRunningOut(aborted=len(points), items=points)
+
+
 

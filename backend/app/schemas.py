@@ -385,6 +385,46 @@ class StationItemUpdateIn(BaseModel):
     is_active: Optional[bool] = None
 
 
+class StationItemImportRow(BaseModel):
+    """批量导入的一行：case_id 即 pytest nodeid。"""
+
+    case_id: TrimmedRequired = Field(max_length=256)
+    item_name: Trimmed = Field(default="", max_length=128)
+    is_mandatory: bool = True
+
+
+class StationItemImportIn(BaseModel):
+    """按工位整批同步用例ID清单（幂等 upsert）。
+
+    mode=upsert   清单内的项新增/更新并重新启用，清单外的项原样不动
+    mode=replace  在 upsert 之上，把清单外的**启用中**项置为停用（不物理删，可回滚）
+    dry_run       只算差异不落库，用于脚本的 --dry-run 预览
+    """
+
+    process_id: TrimmedRequired = Field(max_length=64)
+    station_id: TrimmedRequired = Field(max_length=64)
+    items: List[StationItemImportRow] = []
+    mode: str = "upsert"
+    dry_run: bool = False
+
+
+class StationItemImportOut(BaseModel):
+    process_id: str
+    station_id: str
+    mode: str
+    dry_run: bool = False
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    deactivated: int = 0
+    total_active: int = 0
+    # 清单外仍启用的项：上位机改名/删用例后，旧 nodeid 会残留成"没人跑的必测项"，
+    # 导致进站 case_id_mismatch 全线拦截。upsert 模式只报告不动，replace 模式将其停用。
+    orphan_count: int = 0
+    orphans: List[str] = []
+    warnings: List[str] = []
+
+
 class TopologyOut(BaseModel):
     process_id: str
     steps: List[ProcessStationOut] = []
@@ -543,6 +583,34 @@ class ForceReleaseOut(BaseModel):
 
 class SessionAbortIn(BaseModel):
     reason: Trimmed = Field(default=None, max_length=255)
+
+
+class AbortedSessionPoint(BaseModel):
+    session_id: str
+    sn: str
+    station_id: str
+    client_id: Optional[str] = None
+
+
+class SessionAbortRunningIn(BaseModel):
+    """批量中止运行中的会话（换测试用例清单前的"先停再换"）。
+
+    必须带至少一个过滤条件，禁止无参全量——一次误调用停掉整条产线代价太大。
+    dry_run 只返回将受影响的会话，不执行。
+    """
+
+    station_id: Trimmed = Field(default=None, max_length=64)
+    process_id: Trimmed = Field(default=None, max_length=64)
+    sn: Trimmed = Field(default=None, max_length=64)
+    client_id: Trimmed = Field(default=None, max_length=64)
+    reason: Trimmed = Field(default=None, max_length=255)
+    dry_run: bool = False
+
+
+class SessionAbortRunningOut(BaseModel):
+    aborted: int = 0
+    dry_run: bool = False
+    items: List[AbortedSessionPoint] = []
 
 
 # =====================================================================
