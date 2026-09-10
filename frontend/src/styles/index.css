@@ -256,7 +256,11 @@ body {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.fade-up { animation: fade-up 0.35s ease both; }
+/* fill-mode 必须用 backwards 而非 both：both 会在动画结束后永久残留
+   transform: translateY(0)，使页面根成为 fixed 后代（Dialog/Drawer 的遮罩）
+   的包含块 —— 弹窗不再相对视口定位，出现遮罩只盖内容区、弹窗偏移的错位。
+   backwards 在结束后还原为无 transform，入场效果不变。 */
+.fade-up { animation: fade-up 0.35s ease backwards; }
 
 /* ---------- 6. 滚动条 ---------- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
