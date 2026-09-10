@@ -20,9 +20,16 @@
           <span class="muted" style="margin-left:8px">{{ processName(row.process_id) }}</span>
         </template>
       </el-table-column>
-      <el-table-column :label="t('configs.targetFw')" width="140">
+      <el-table-column :label="t('configs.targetFw')" width="120">
         <template #default="{ row }">
           <el-tag size="small" type="success" effect="plain">{{ row.target_fw_version }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('configs.fwRule')" width="140">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain" :type="row.fw_match_rule === 'min' ? 'warning' : 'info'">
+            {{ row.fw_match_rule === 'min' ? t('configs.fwRuleMin') : t('configs.fwRuleExact') }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
@@ -47,11 +54,22 @@
         </el-form-item>
         <el-form-item :label="t('configs.modelProcess')" required>
           <el-select v-model="form.process_id" filterable style="width:100%">
-            <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+            <el-option
+              v-for="p in selectableProcesses"
+              :key="p.process_id"
+              :value="p.process_id"
+              :label="p.process_id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('configs.targetFw')" required>
           <el-input v-model="form.target_fw_version" placeholder="V3.20" />
+        </el-form-item>
+        <el-form-item :label="t('configs.fwRule')">
+          <el-select v-model="form.fw_match_rule" style="width:100%">
+            <el-option value="exact" :label="t('configs.fwRuleExact')" />
+            <el-option value="min" :label="t('configs.fwRuleMin')" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -81,10 +99,20 @@ const processFilter = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
-const form = reactive({ product_model: '', process_id: '', target_fw_version: '' })
+const form = reactive({
+  product_model: '',
+  process_id: '',
+  target_fw_version: '',
+  fw_match_rule: 'exact',
+})
 
 const filtered = computed(() =>
   processFilter.value ? list.value.filter((m) => m.process_id === processFilter.value) : list.value
+)
+
+// 停用（归档）的流程不再接受新绑定；但已绑该流程的机型仍需可见可改，故保留当前值
+const selectableProcesses = computed(() =>
+  processes.value.filter((p) => p.is_active || p.process_id === form.process_id)
 )
 
 async function loadModels() {
@@ -106,6 +134,7 @@ function openCreate() {
     product_model: '',
     process_id: processFilter.value || processes.value[0]?.process_id || '',
     target_fw_version: '',
+    fw_match_rule: 'exact',
   })
   dialogVisible.value = true
 }
@@ -115,6 +144,7 @@ function openEdit(row) {
     product_model: row.product_model,
     process_id: row.process_id,
     target_fw_version: row.target_fw_version || '',
+    fw_match_rule: row.fw_match_rule || 'exact',
   })
   dialogVisible.value = true
 }
@@ -125,7 +155,11 @@ async function submit() {
   }
   saving.value = true
   try {
-    const payload = { process_id: form.process_id, target_fw_version: form.target_fw_version.trim() }
+    const payload = {
+      process_id: form.process_id,
+      target_fw_version: form.target_fw_version.trim(),
+      fw_match_rule: form.fw_match_rule,
+    }
     if (isEdit.value) {
       await modelApi.update(form.product_model, payload)
     } else {

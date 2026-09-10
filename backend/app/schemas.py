@@ -6,6 +6,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from typing_extensions import Annotated
 
+from .models import FW_RULE_EXACT, FW_RULE_MIN
+
+_FW_RULE_PATTERN = rf"^({FW_RULE_EXACT}|{FW_RULE_MIN})$"
+
 
 def _strip(value):
     return value.strip() if isinstance(value, str) else value
@@ -261,6 +265,8 @@ class HeartbeatData(BaseModel):
 class ProcessOut(ORMModel):
     process_id: str
     process_name: str
+    version: int = 1
+    is_active: bool = True
     created_at: Optional[datetime] = None
 
 
@@ -269,6 +275,8 @@ class ProcessStatOut(BaseModel):
 
     process_id: str
     process_name: str
+    version: int = 1
+    is_active: bool = True
     model_count: int = 0
     models: List[str] = []
     station_count: int = 0
@@ -279,16 +287,19 @@ class ProcessStatOut(BaseModel):
 class ProcessCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     process_name: Trimmed = Field(default="", max_length=128)
+    is_active: bool = True
 
 
 class ProcessUpdateIn(BaseModel):
     process_name: Trimmed = Field(default=None, max_length=128)
+    is_active: Optional[bool] = None
 
 
 class ProductModelOut(ORMModel):
     product_model: str
     process_id: str
     target_fw_version: str
+    fw_match_rule: str = FW_RULE_EXACT
     created_at: Optional[datetime] = None
 
 
@@ -296,11 +307,13 @@ class ProductModelCreateIn(BaseModel):
     product_model: TrimmedRequired = Field(max_length=64)
     process_id: TrimmedRequired = Field(max_length=64)
     target_fw_version: TrimmedRequired = Field(max_length=32)
+    fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
 
 
 class ProductModelUpdateIn(BaseModel):
     process_id: Trimmed = Field(default=None, max_length=64)
     target_fw_version: Trimmed = Field(default=None, max_length=32)
+    fw_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
 
 
 class StationOut(ORMModel):
@@ -325,7 +338,9 @@ class ClientOut(ORMModel):
     client_id: str
     station_id: Optional[str] = None
     ip_address: Optional[str] = None
+    app_version: Optional[str] = None
     last_seen_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
     online: bool = False
     holding_sn: Optional[str] = None
 
@@ -334,6 +349,7 @@ class ClientCreateIn(BaseModel):
     client_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
     ip_address: Trimmed = Field(default=None, max_length=45)
+    app_version: Trimmed = Field(default=None, max_length=50)
 
 
 class ClientUpdateIn(BaseModel):

@@ -57,6 +57,10 @@ STATUS_LOCKED = "LOCKED"
 STATUS_SCRAPPED = "SCRAPPED"
 
 
+# 固件基线匹配规则
+FW_RULE_EXACT = "exact"  # 必须与基线完全一致
+FW_RULE_MIN = "min"  # 不低于基线即可（版本按数字段比较，避免 V3.9 > V3.10 的字典序坑）
+
 # 维修处置动作
 REPAIR_RETEST = "RETEST"
 REPAIR_ROLLBACK = "ROLLBACK"
@@ -129,6 +133,11 @@ class Process(Base):
 
     process_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     process_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 拓扑每整体保存一次 +1：让"这个流程被改过几次"可见，也为将来的版本快照留口子
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    # 停用只作用于管理端（新建/改绑机型时不可选），运行期已绑定机型的在制品照常流转 ——
+    # 否则一次停用就会打断正在这条流程上跑的产线。
+    is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     models = relationship("ProductModel", back_populates="process", cascade="all, delete-orphan")
@@ -146,6 +155,10 @@ class ProductModel(Base):
         ForeignKey("processes.process_id", onupdate="CASCADE"), nullable=False, index=True
     )
     target_fw_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 基线匹配口径：exact 要求完全一致；min 只要求不低于基线（兼容小版本升级）
+    fw_match_rule: Mapped[str] = mapped_column(
+        String(16), default=FW_RULE_EXACT, server_default=FW_RULE_EXACT
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     process = relationship("Process", back_populates="models")
@@ -213,13 +226,19 @@ class StationClient(Base):
     __tablename__ = "station_clients"
 
     client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    station_id: Mapped[str] = mapped_column(
-        ForeignKey("stations.station_id"), nullable=False, index=True
+    # 可为空：上位机首次调用 /client/resolve 会自动注册（见 gate.get_client），
+    # 此时尚未绑定工位，需由 Web 端补录。未绑定用 NULL 表示 —— 空串会撞 stations 的
+    # 外键（PG 生效、SQLite 未开 pragma 而放行，历史上造成过跨库行为不一致）。
+    station_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("stations.station_id"), nullable=True, index=True
     )
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+    # 上位机程序版本：现场"同机型结果不可比"的常见根因是版本漂移，留档便于排查
+    app_version: Mapped[Optional[str]] = mapped_column(String(50))
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     station = relationship("Station", back_populates="clients")
 

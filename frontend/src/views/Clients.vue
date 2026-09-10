@@ -22,6 +22,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="ip_address" :label="$t('clients.tableIp')" width="140" />
+        <el-table-column :label="$t('clients.tableAppVersion')" width="130">
+          <template #default="{ row }">
+            <span v-if="row.app_version" class="code">{{ row.app_version }}</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="$t('clients.tableOnline')" width="100">
           <template #default="{ row }">
             <span class="online-dot" :class="{ on: row.online }" />
@@ -70,8 +76,8 @@
         <el-form-item :label="$t('clients.clientId')" required>
           <el-input v-model="form.client_id" :disabled="isEdit" :placeholder="$t('clients.clientIdPh')" />
         </el-form-item>
-        <el-form-item :label="$t('clients.bindStation')" required>
-          <el-select v-model="form.station_id" filterable style="width:100%">
+        <el-form-item :label="$t('clients.bindStation')" :required="!isEdit">
+          <el-select v-model="form.station_id" filterable clearable style="width:100%">
             <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
           </el-select>
         </el-form-item>
@@ -142,7 +148,9 @@ function openEdit(row) {
 }
 
 async function submit() {
-  if (!form.client_id.trim() || !form.station_id) return ElMessage.warning(t('errors.requiredField'))
+  if (!form.client_id.trim()) return ElMessage.warning(t('errors.requiredField'))
+  // 上位机首次上报会自动注册为"未绑定"，这类机台要能改 IP/保持解绑，故仅新建时强制绑定工位
+  if (!isEdit.value && !form.station_id) return ElMessage.warning(t('errors.requiredField'))
   saving.value = true
   try {
     const payload = { station_id: form.station_id, ip_address: form.ip_address || null }

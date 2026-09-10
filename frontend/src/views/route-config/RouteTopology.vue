@@ -93,6 +93,8 @@ const processId = ref('')
 const steps = ref([])
 const loading = ref(false)
 const saving = ref(false)
+// 服务端已落库的工步快照：与当前编辑中的 steps 做差集，即可得出本次被移除的工位
+const savedStations = ref([])
 
 const validateVisible = ref(false)
 const validateResult = ref(null)
@@ -123,14 +125,22 @@ async function loadSteps() {
       routingApi.listItems(processId.value),
     ])
     steps.value = stepRes.data.map((s) => ({ ...s, depends_on: [...(s.depends_on || [])] }))
+    savedStations.value = steps.value.map((s) => s.station_id)
     allItems.value = itemRes.data
   } catch (e) {
     steps.value = []
+    savedStations.value = []
     allItems.value = []
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
     loading.value = false
   }
+}
+
+/** 本次保存会从拓扑中移除的工位（新增/改序不算）。 */
+function removedStations() {
+  const current = new Set(steps.value.map((s) => s.station_id).filter(Boolean))
+  return savedStations.value.filter((sid) => sid && !current.has(sid))
 }
 
 function addStep() {
@@ -145,6 +155,21 @@ function removeRow(index) {
 async function save() {
   if (!processId.value) return
   if (steps.value.some((s) => !s.station_id)) return ElMessage.warning(t('errors.requiredField'))
+
+  // 移除工步会连带删除该工位的测试项（后端行为与单条删除工步一致），先让操作者知情
+  const dropped = removedStations()
+  const droppedItems = allItems.value.filter((i) => dropped.includes(i.station_id)).length
+  if (droppedItems) {
+    try {
+      await ElMessageBox.confirm(
+        t('configs.removeStepWarn', { stations: dropped.join(', '), count: droppedItems }),
+        t('common.confirm'),
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
 
   saving.value = true
   try {

@@ -62,7 +62,24 @@ _ADDED_COLUMNS = {
         "lock_heartbeat_count": "INTEGER DEFAULT 0",
         # 冗余列：支持列表页按"已完成/未完成"在 SQL 层精确过滤与分页
         "is_completed": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
-    }
+    },
+    "station_clients": {
+        "app_version": "VARCHAR(50)",
+        "created_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
+    },
+    "product_models": {
+        "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",
+    },
+    "processes": {
+        "version": "INTEGER DEFAULT 1",
+        "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
+    },
+}
+
+
+# 补列后需从既有列回填的（新列没有历史值，取最接近的口径兜底），仅在真正补列时执行一次
+_BACKFILL_ON_ADD = {
+    ("station_clients", "created_at"): "last_seen_at",
 }
 
 
@@ -85,6 +102,9 @@ def _migrate_columns() -> None:
                 if name in existing:
                     continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                source = _BACKFILL_ON_ADD.get((table, name))
+                if source:
+                    conn.execute(text(f"UPDATE {table} SET {name} = {source} WHERE {name} IS NULL"))
 
 
 def ensure_schema() -> None:

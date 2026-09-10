@@ -68,7 +68,9 @@ def resolve(
     _: str = Depends(api_caller),
     db: Session = Depends(get_db),
 ):
-    client = get_client(db, payload.client_id, ip=payload.ip_address, create=True)
+    client = get_client(
+        db, payload.client_id, ip=payload.ip_address, app_version=payload.app_version, create=True
+    )
     if client is None:
         raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
 
@@ -93,7 +95,7 @@ def check_in_endpoint(
     _: str = Depends(api_caller),
     db: Session = Depends(get_db),
 ):
-    client = get_client(db, payload.client_id)
+    client = get_client(db, payload.client_id, app_version=payload.app_version)
     if client is None:
         raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
 

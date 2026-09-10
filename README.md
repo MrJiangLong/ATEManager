@@ -59,7 +59,7 @@
 - **用例ID 驱动防漏测**：进站比对本次待执行清单，出站校验必测项是否被真实执行（`SKIP` 等同未执行）
 - **防跳工位闸门**：`depends_on` 拓扑依赖 + 已盖章工位集合双重判定
 - **防复测**：已盖章工位严禁重测（`409 station_already_passed`）
-- **固件基线校验**：机型绑定 `target_fw_version`，版本不符 `403` 拦截
+- **固件基线校验**：机型绑定 `target_fw_version`，`fw_match_rule` 决定口径（`exact` 完全一致 / `min` 不低于基线，按数字段比较），不符 `403` 拦截
 - **出站 ACK 闭环**：`checkout_id` 幂等，网络重传安全
 - **租约锁**：心跳保活 + 双超时（失联 120s / 硬超时按工位配置）
 - **崩溃续测**：断点增量上报，重启后 `attempt+1` 并跳过已完成用例
@@ -329,8 +329,8 @@ ATEManager/
 
 | 表 | 主键 | 作用 |
 |---|---|---|
-| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条 |
-| `product_models` | `product_model` | 机型 → 专属流程 + 强制固件基线 `target_fw_version` |
+| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`version` 随拓扑保存自增，`is_active` 停用后不再接受新机型绑定 |
+| `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
 | `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门 |
 | `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测 |
@@ -343,7 +343,7 @@ ATEManager/
 
 | 表 | 主键 | 作用 |
 |---|---|---|
-| `station_clients` | `client_id` | 物理工控机档案，绑定逻辑工位 |
+| `station_clients` | `client_id` | 物理工控机档案，绑定逻辑工位；`app_version` 留档上位机程序版本 |
 | `product_status` | `sn` | 在制品状态机，`passed_stations` 为已盖章工位集合 |
 | `test_records` | `record_id` | 事件底账，`executed_items` JSONB 为执行快照 |
 | `repair_records` | `repair_id` | 维修处置与回滚履历 |
@@ -360,6 +360,10 @@ ATEManager/
 | `test_records.executed_items` | 执行快照 JSONB，内部携带 `checkout_id`（幂等键）、`session_id`、`attempt` |
 | `test_records.is_valid` | 维修处置作废标记；作废记录不参与追溯结论 |
 | `test_sessions.checkpoint` | 续测断点（按 `case_id` 去重覆盖）与客户端 `cursor` |
+| `product_models.fw_match_rule` | 固件基线口径：`exact` 完全一致（默认）；`min` 不低于基线，按数字段比较（`V3.9 < V3.20`） |
+| `station_clients.app_version` | 上位机程序版本，身份上报与进站时刷新，用于排查版本漂移 |
+| `processes.version` | 拓扑每整体保存一次 +1；保存前会做结构性校验（成环等），不通过则整体回滚 |
+| `processes.is_active` | 停用只作用于管理端（不再接受新机型绑定），运行期已绑定机型的在制品照常流转 |
 
 ### 7.4 租约锁模型（v1.0）
 

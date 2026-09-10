@@ -268,15 +268,23 @@ def test_validate_ok_and_cycle():
     admin("POST", "/api/admin/processes", {"process_id": bad, "process_name": "cycle demo"})
     admin("POST", "/api/admin/stations", {"station_id": "S1", "station_name": "S1"})
     admin("POST", "/api/admin/stations", {"station_id": "S2", "station_name": "S2"})
-    admin(
-        "PUT",
-        "/api/admin/routing/stations",
-        [
-            {"station_id": "S1", "step_order": 10, "depends_on": ["S2"]},
-            {"station_id": "S2", "step_order": 20, "depends_on": ["S1"]},
-        ],
-        params={"process_id": bad},
+    cycle = [
+        {"station_id": "S1", "step_order": 10, "depends_on": ["S2"]},
+        {"station_id": "S2", "step_order": 20, "depends_on": ["S1"]},
+    ]
+    # 保存前校验会拦下成环拓扑
+    resp = admin("PUT", "/api/admin/routing/stations", cycle, params={"process_id": bad})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "topology_invalid",
+        f"cycle must be rejected on save: {resp.text}",
     )
+
+    # force 才允许落库（供排查/回滚等特殊场景）
+    resp = admin(
+        "PUT", "/api/admin/routing/stations", cycle, params={"process_id": bad, "force": True}
+    )
+    check(resp.status_code == 200, f"force save cycle: {resp.text}")
+
     resp = admin("GET", "/api/admin/routing/validate", params={"process_id": bad})
     check(resp.json()["ok"] is False, f"cycle should fail: {resp.text}")
     codes = [i["code"] for i in resp.json()["issues"]]
@@ -304,6 +312,122 @@ def test_delete_guards():
     pass_station("CAL_PARAM", sn)
     resp = admin("DELETE", f"/api/admin/product-models/{M_DPO}")
     check(resp.status_code == 409 and resp.json()["code"] == "model_in_use", f"model guard: {resp.text}")
+
+
+def test_station_item_guards():
+    """station_items 无外键级联，只能靠应用层守住：
+
+    - 测试项不得挂到拓扑外的工位（否则是"没人跑却计入统计"的孤儿必测项）
+    - 工步被移出拓扑时，其测试项须连带清理
+    - 工位字典被测试项引用时拒绝删除；删除流程则连带清理
+    """
+    pid = f"PROC_GUARD-{STAMP}"
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "item guard"})
+    admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [
+            {"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []},
+            {"station_id": "CAL_IFACE", "step_order": 20, "depends_on": ["CAL_PARAM"]},
+        ],
+        params={"process_id": pid},
+    )
+
+    def create_item(station_id, case_id):
+        return admin(
+            "POST",
+            "/api/admin/routing/items",
+            {"process_id": pid, "station_id": station_id, "case_id": case_id, "item_name": case_id},
+        )
+
+    resp = create_item("CAL_PARAM", "tests/guard_a.py::test_one")
+    check(resp.status_code == 201, f"item in topology must be 201: {resp.text}")
+
+    resp = create_item("TST_PARAM", "tests/guard_b.py::test_two")
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "station_not_in_process",
+        f"item outside topology must be 400: {resp.text}",
+    )
+
+    create_item("CAL_IFACE", "tests/guard_c.py::test_three")
+    admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []}],
+        params={"process_id": pid},
+    )
+    resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid})
+    stations = {i["station_id"] for i in resp.json()}
+    check("CAL_IFACE" not in stations, f"removed step items must be purged: {stations}")
+    check("CAL_PARAM" in stations, f"kept step items must survive: {stations}")
+
+    # 工位是跨流程共享字典，被测试项引用时拒绝删除
+    orphan_station = f"S_GUARD-{STAMP}"
+    admin("POST", "/api/admin/stations", {"station_id": orphan_station, "station_name": "orphan"})
+    with SessionLocal() as db:
+        db.add(
+            models.StationItem(
+                process_id=pid, station_id=orphan_station, case_id="legacy::one", item_name="legacy"
+            )
+        )
+        db.commit()
+    resp = admin("DELETE", f"/api/admin/stations/{orphan_station}")
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "station_has_items",
+        f"station referenced by items must be 409: {resp.text}",
+    )
+
+    # 清空拓扑 → 原工步的测试项连带清理（从未进过拓扑的孤儿项由删除流程兜底）
+    admin("PUT", "/api/admin/routing/stations", [], params={"process_id": pid})
+    resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid})
+    stations = {i["station_id"] for i in resp.json()}
+    check("CAL_PARAM" not in stations, f"items must be purged with topology: {stations}")
+
+    # 存量孤儿项不得让流程永远删不掉
+    with SessionLocal() as db:
+        db.add(
+            models.StationItem(
+                process_id=pid, station_id=orphan_station, case_id="legacy::two", item_name="legacy2"
+            )
+        )
+        db.commit()
+    resp = admin("DELETE", f"/api/admin/processes/{pid}")
+    check(resp.status_code == 204, f"delete process with orphan items: {resp.text}")
+    with SessionLocal() as db:
+        left = db.query(models.StationItem).filter(models.StationItem.process_id == pid).count()
+    check(left == 0, f"process items must be purged, left={left}")
+
+    resp = admin("DELETE", f"/api/admin/stations/{orphan_station}")
+    check(resp.status_code == 204, f"station deletable after purge: {resp.text}")
+
+
+def test_client_unbound_state():
+    """上位机自动注册的机台处于未绑定态：可保持解绑、可改 IP，进站时 403。"""
+    cid = f"CLI-{STAMP}-UNBOUND"
+    resp = v1("resolve", {"client_id": cid, "ip_address": "10.1.60.99"})
+    check(resp.status_code == 200, f"auto register: {resp.text}")
+    check(resp.json()["data"]["bound"] is False, f"auto registered must be unbound: {resp.text}")
+
+    # 未绑定机台也要能改 IP：不传 station_id 即保持解绑
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"ip_address": "10.1.60.100"})
+    check(resp.status_code == 200, f"update ip: {resp.text}")
+    check(resp.json()["ip_address"] == "10.1.60.100", f"ip updated: {resp.text}")
+    check(not resp.json()["station_id"], f"must stay unbound: {resp.text}")
+
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL_PARAM"})
+    check(resp.status_code == 200 and resp.json()["station_id"] == "CAL_PARAM", f"bind: {resp.text}")
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": ""})
+    check(resp.status_code == 200 and not resp.json()["station_id"], f"unbind: {resp.text}")
+
+    resp = v1(
+        "check-in",
+        {"client_id": cid, "sn": new_sn("UNBOUND"), "product_model": M_DPO, "firmware": FW},
+    )
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "client_not_bound",
+        f"unbound check-in must be 403: {resp.text}",
+    )
+    admin("DELETE", f"/api/admin/clients/{cid}")
 
 
 def test_clone_process():
@@ -885,6 +1009,166 @@ def test_sweeper_releases_orphan_lock():
     check(resp.status_code == 200, f"re-checkin after sweep: {resp.text}")
 
 
+def test_client_app_version_tracked():
+    """机台上报的程序版本要落库：现场"同机型结果不可比"的常见根因是版本漂移。"""
+    cid = f"CLI-{STAMP}-VER"
+    resp = v1("resolve", {"client_id": cid, "ip_address": "10.1.60.77", "app_version": "2.4.1"})
+    check(resp.status_code == 200, f"resolve: {resp.text}")
+
+    def fetch():
+        return next(
+            (c for c in admin("GET", "/api/admin/clients").json() if c["client_id"] == cid), None
+        )
+
+    row = fetch()
+    check(row is not None, f"auto registered client must exist: {cid}")
+    check(row["app_version"] == "2.4.1", f"app_version must persist: {row}")
+    check(bool(row["created_at"]), f"created_at must be set: {row}")
+    check(row["station_id"] is None, f"auto registered must be unbound: {row}")
+
+    # 进站同样刷新版本（此前 CheckInIn 收了 app_version 却没落库）
+    admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL_PARAM"})
+    resp = v1(
+        "check-in",
+        {
+            "client_id": cid,
+            "sn": new_sn("VER"),
+            "product_model": M_DPO,
+            "firmware": FW,
+            "app_version": "2.5.0",
+        },
+    )
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    check(fetch()["app_version"] == "2.5.0", f"app_version must refresh on check-in: {fetch()}")
+
+    # 手工注册也允许登记版本
+    manual = f"CLI-{STAMP}-VERM"
+    resp = admin(
+        "POST",
+        "/api/admin/clients",
+        {"client_id": manual, "station_id": "CAL_PARAM", "app_version": "2.6.0"},
+    )
+    check(resp.status_code == 201 and resp.json()["app_version"] == "2.6.0", f"manual register: {resp.text}")
+
+    admin("DELETE", f"/api/admin/clients/{cid}")
+    admin("DELETE", f"/api/admin/clients/{manual}")
+
+
+def test_firmware_match_rule():
+    """fw_match_rule：exact 要求完全一致；min 只要求不低于基线。
+
+    min 规则下必须按数字段比较，否则 "V3.9" > "V3.20" 的字典序会放行旧固件。
+    """
+    pid = f"PROC_FWRULE-{STAMP}"
+    model = f"MODEL_FWRULE-{STAMP}"
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "fw rule"})
+    admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []}],
+        params={"process_id": pid},
+    )
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {
+            "product_model": model,
+            "process_id": pid,
+            "target_fw_version": "V3.20",
+            "fw_match_rule": "min",
+        },
+    )
+    check(resp.status_code == 201, f"create model: {resp.text}")
+    check(resp.json()["fw_match_rule"] == "min", f"rule must persist: {resp.text}")
+
+    def try_firmware(firmware, tag):
+        # 每次换机台 + 换 SN，避免工位锁互相干扰
+        cid = f"CLI-{STAMP}-FW-{tag}"
+        admin("POST", "/api/admin/clients", {"client_id": cid, "station_id": "CAL_PARAM"})
+        return v1(
+            "check-in",
+            {"client_id": cid, "sn": new_sn(f"FW-{tag}"), "product_model": model, "firmware": firmware},
+        )
+
+    resp = try_firmware("V3.20", "EQ")
+    check(resp.status_code == 200, f"equal must pass under min: {resp.text}")
+    resp = try_firmware("V3.21", "HI")
+    check(resp.status_code == 200, f"higher must pass under min: {resp.text}")
+    resp = try_firmware("V3.9", "LOW")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "firmware_mismatch",
+        f"V3.9 is below V3.20 and must be blocked: {resp.text}",
+    )
+
+    # 切回 exact：高于基线也不再放行
+    resp = admin("PUT", f"/api/admin/product-models/{model}", {"fw_match_rule": "exact"})
+    check(resp.status_code == 200 and resp.json()["fw_match_rule"] == "exact", f"switch rule: {resp.text}")
+    resp = try_firmware("V3.21", "EXACT")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "firmware_mismatch",
+        f"exact must reject higher version: {resp.text}",
+    )
+
+    resp = admin("PUT", f"/api/admin/product-models/{model}", {"fw_match_rule": "bogus"})
+    check(resp.status_code == 422, f"invalid rule must be 422: {resp.text}")
+
+
+def test_process_version_and_status():
+    """流程版本随每次拓扑保存自增；停用后不再接受新机型绑定。"""
+    pid = f"PROC_VER-{STAMP}"
+    resp = admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "version demo"})
+    check(resp.status_code == 201, f"create process: {resp.text}")
+    check(
+        resp.json()["version"] == 1 and resp.json()["is_active"] is True,
+        f"defaults must be v1/active: {resp.text}",
+    )
+
+    admin("POST", "/api/admin/stations", {"station_id": "S1", "station_name": "S1"})
+    admin("POST", "/api/admin/stations", {"station_id": "S2", "station_name": "S2"})
+
+    def save(steps):
+        return admin("PUT", "/api/admin/routing/stations", steps, params={"process_id": pid})
+
+    check(save([{"station_id": "S1", "step_order": 10, "depends_on": []}]).status_code == 200, "save 1")
+    check(
+        save(
+            [
+                {"station_id": "S1", "step_order": 10, "depends_on": []},
+                {"station_id": "S2", "step_order": 20, "depends_on": ["S1"]},
+            ]
+        ).status_code
+        == 200,
+        "save 2",
+    )
+
+    resp = admin("GET", "/api/admin/processes")
+    row = next((p for p in resp.json() if p["process_id"] == pid), None)
+    check(row is not None and row["version"] == 3, f"version must bump once per save: {row}")
+
+    # 停用后不再接受新机型绑定
+    resp = admin("PUT", f"/api/admin/processes/{pid}", {"is_active": False})
+    check(resp.status_code == 200 and resp.json()["is_active"] is False, f"deactivate: {resp.text}")
+
+    model = f"MODEL_VER-{STAMP}"
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {"product_model": model, "process_id": pid, "target_fw_version": "V1.0"},
+    )
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "process_inactive",
+        f"inactive process must reject new model: {resp.text}",
+    )
+
+    admin("PUT", f"/api/admin/processes/{pid}", {"is_active": True})
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {"product_model": model, "process_id": pid, "target_fw_version": "V1.0"},
+    )
+    check(resp.status_code == 201, f"reactivated process accepts model: {resp.text}")
+
+
 def test_force_release_and_sessions_api():
     """运维强制解锁 + 会话管理接口。"""
     sn = new_sn("FORCE")
@@ -924,6 +1208,8 @@ TESTS = [
     test_topology_and_items,
     test_validate_ok_and_cycle,
     test_delete_guards,
+    test_station_item_guards,
+    test_client_unbound_state,
     test_clone_process,
     test_dpo_full_flow,
     test_mso_full_flow,
@@ -951,6 +1237,9 @@ TESTS = [
     test_heartbeat_does_not_extend_hard_timeout,
     test_checkpoint_resume_and_merge,
     test_sweeper_releases_orphan_lock,
+    test_client_app_version_tracked,
+    test_firmware_match_rule,
+    test_process_version_and_status,
     test_force_release_and_sessions_api,
 ]
 

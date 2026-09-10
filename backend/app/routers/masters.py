@@ -17,6 +17,17 @@ from ..services.routing import process_overview
 router = APIRouter()
 
 
+def _get_active_process(db: Session, process_id: str) -> models.Process:
+    """机型只能绑到启用中的流程。
+
+    已停用的流程对存量机型继续有效（在制品照常流转），只是不再接受新绑定。
+    """
+    row = get_or_404(db, models.Process, process_id, "process")
+    if not row.is_active:
+        raise conflict_error("process_inactive", f"process_inactive: {process_id} is archived")
+    return row
+
+
 # ==================== 工艺流程 ====================
 process_router = APIRouter(prefix="/api/admin/processes", tags=["admin-工艺流程"])
 
@@ -31,7 +42,9 @@ def create_process(payload: schemas.ProcessCreateIn, db: Session = Depends(get_d
     if db.get(models.Process, payload.process_id):
         raise conflict_error("process_already_exists", f"process_already_exists: {payload.process_id}")
     row = models.Process(
-        process_id=payload.process_id, process_name=payload.process_name or payload.process_id
+        process_id=payload.process_id,
+        process_name=payload.process_name or payload.process_id,
+        is_active=payload.is_active,
     )
     db.add(row)
     db.commit()
@@ -45,6 +58,8 @@ def update_process(
     row = get_or_404(db, models.Process, process_id, "process")
     if payload.process_name is not None:
         row.process_name = payload.process_name
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
     db.commit()
     return row
 
@@ -56,6 +71,11 @@ def delete_process(process_id: str, db: Session = Depends(get_db), user=Depends(
         raise conflict_error("process_has_models", "process_has_models: reassign its models first")
     if db.query(models.ProcessStation).filter(models.ProcessStation.process_id == process_id).count():
         raise conflict_error("process_has_steps", "process_has_steps: remove its topology first")
+    # station_items 无外键级联：流程都删了，其测试项必然无意义，连带清理而非拒绝，
+    # 否则存量孤儿项会让流程永远删不掉。
+    db.query(models.StationItem).filter(models.StationItem.process_id == process_id).delete(
+        synchronize_session=False
+    )
     db.delete(db.get(models.Process, process_id))
     db.commit()
 
@@ -78,7 +98,7 @@ def list_models(
 def create_model(payload: schemas.ProductModelCreateIn, db: Session = Depends(get_db), user=Depends(current_user)):
     if db.get(models.ProductModel, payload.product_model):
         raise conflict_error("model_already_exists", f"model_already_exists: {payload.product_model}")
-    get_or_404(db, models.Process, payload.process_id, "process")
+    _get_active_process(db, payload.process_id)
     row = models.ProductModel(**payload.model_dump())
     db.add(row)
     db.commit()
@@ -94,7 +114,7 @@ def update_model(
 ):
     row = get_or_404(db, models.ProductModel, product_model, "model")
     if payload.process_id:
-        get_or_404(db, models.Process, payload.process_id, "process")
+        _get_active_process(db, payload.process_id)
     for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
         setattr(row, key, value)
     db.commit()
@@ -151,6 +171,10 @@ def delete_station(station_id: str, db: Session = Depends(get_db), user=Depends(
         raise conflict_error("station_in_topology", "station_in_topology: remove it from processes first")
     if db.query(models.StationClient).filter(models.StationClient.station_id == station_id).count():
         raise conflict_error("station_has_clients", "station_has_clients: unbind its clients first")
+    # 工位是跨流程共享字典，删一个会波及所有引用它的流程，故只拒绝不连带清理；
+    # 与 station_in_topology 一样，要求先从各流程移除。
+    if db.query(models.StationItem).filter(models.StationItem.station_id == station_id).count():
+        raise conflict_error("station_has_items", "station_has_items: remove its test items first")
     db.delete(db.get(models.Station, station_id))
     db.commit()
 

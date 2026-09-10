@@ -18,6 +18,33 @@ from ..services.routing import process_topology, station_item_summary, validate_
 router = APIRouter(prefix="/api/admin/routing", tags=["admin-工艺拓扑"])
 
 
+def _assert_station_in_process(db: Session, process_id: str, station_id: str) -> None:
+    """测试项必须挂在流程拓扑内的工位上。
+
+    station_items 没有指向 process_stations 的外键，只能在应用层守住，
+    否则会写入"不在拓扑里的必测项"——它不参与进站闸门，却会污染流程的测试项统计。
+    """
+    step = (
+        db.query(models.ProcessStation)
+        .filter(
+            models.ProcessStation.process_id == process_id,
+            models.ProcessStation.station_id == station_id,
+        )
+        .first()
+    )
+    if step is None:
+        raise bad_request(
+            "station_not_in_process",
+            f"station_not_in_process: {station_id} is not a step of {process_id}",
+        )
+
+
+# 保存前阻断的结构性问题：这类错误一旦落库，流程会直接不可用，且无法靠后续补配置挽回。
+# 刻意不含 station_no_item —— 先编排拓扑、后补测试项是正常操作顺序，一并阻断会形成
+# "没测试项不让存拓扑 → 没拓扑不让加测试项"的死锁。
+_BLOCKING_SAVE_CODES = frozenset({"config_cycle", "station_undefined"})
+
+
 # ==================== 工步拓扑 ====================
 @router.get("/topology", response_model=schemas.TopologyOut, summary="流程拓扑视图(工步 + 测试项)")
 def topology(
@@ -38,13 +65,33 @@ def list_steps(
 def save_steps(
     process_id: str,
     payload: List[schemas.ProcessStationIn],
+    force: bool = Query(False, description="跳过结构性校验强行保存"),
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ):
-    """以「整体覆盖」方式保存拓扑，前端一屏编排后一次性提交。"""
-    get_or_404(db, models.Process, process_id, "process")
+    """以「整体覆盖」方式保存拓扑，前端一屏编排后一次性提交。
+
+    被移出拓扑的工位，其测试项会一并清理 —— 与 DELETE /stations/{station_id} 的行为
+    保持一致。否则 station_items 会残留成"没人跑却仍计数的必测项"。
+
+    保存后会做结构性校验（成环等），不通过则整体回滚；成功则流程 version +1。
+    """
+    process = get_or_404(db, models.Process, process_id, "process")
     for step in payload:
         get_or_404(db, models.Station, step.station_id, "station")
+
+    keep = {step.station_id for step in payload}
+    removed = {
+        row[0]
+        for row in db.query(models.ProcessStation.station_id)
+        .filter(models.ProcessStation.process_id == process_id)
+        .all()
+    } - keep
+    if removed:
+        db.query(models.StationItem).filter(
+            models.StationItem.process_id == process_id,
+            models.StationItem.station_id.in_(removed),
+        ).delete(synchronize_session=False)
 
     db.query(models.ProcessStation).filter(models.ProcessStation.process_id == process_id).delete()
     for step in payload:
@@ -56,6 +103,24 @@ def save_steps(
                 depends_on=list(step.depends_on or []),
             )
         )
+    # 先落库再校验，以便直接复用 validate_process 的完整规则；不通过则整体回滚
+    db.flush()
+
+    if not force:
+        blocking = [
+            issue
+            for issue in validate_process(db, process_id).issues
+            if issue.level == "error" and issue.code in _BLOCKING_SAVE_CODES
+        ]
+        if blocking:
+            db.rollback()
+            raise conflict_error(
+                "topology_invalid",
+                "topology_invalid: " + "; ".join(f"{i.code}: {i.detail}" for i in blocking),
+                data={"issues": [i.model_dump() for i in blocking]},
+            )
+
+    process.version = (process.version or 0) + 1
     db.commit()
     return process_topology(db, process_id).steps
 
@@ -92,6 +157,7 @@ def list_items(
 @router.post("/items", response_model=schemas.StationItemOut, status_code=201, summary="新增用例ID测试项")
 def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(current_user)):
     get_or_404(db, models.Process, payload.process_id, "process")
+    _assert_station_in_process(db, payload.process_id, payload.station_id)
     exists = (
         db.query(models.StationItem)
         .filter(
@@ -139,19 +205,7 @@ def import_items(
     第二次执行全部 unchanged，不会产生重复行，也不会因已存在而报 409。
     """
     get_or_404(db, models.Process, payload.process_id, "process")
-    step = (
-        db.query(models.ProcessStation)
-        .filter(
-            models.ProcessStation.process_id == payload.process_id,
-            models.ProcessStation.station_id == payload.station_id,
-        )
-        .first()
-    )
-    if step is None:
-        raise bad_request(
-            "station_not_in_process",
-            f"station_not_in_process: {payload.station_id} is not a step of {payload.process_id}",
-        )
+    _assert_station_in_process(db, payload.process_id, payload.station_id)
     if payload.mode not in ("upsert", "replace"):
         raise bad_request("bad_mode", "bad_mode: mode must be 'upsert' or 'replace'")
 

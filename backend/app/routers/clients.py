@@ -78,12 +78,17 @@ def update_client(
 ):
     client = get_or_404(db, models.StationClient, client_id, "client")
     if payload.station_id is not None:
-        if not payload.station_id:
-            raise conflict_error("station_required", "station_required: client must be bound to a station")
-        get_or_404(db, models.Station, payload.station_id, "station")
-        if client.station_id != payload.station_id:
-            _assert_not_holding(db, client_id)
-        client.station_id = payload.station_id
+        if payload.station_id:
+            get_or_404(db, models.Station, payload.station_id, "station")
+            if client.station_id != payload.station_id:
+                _assert_not_holding(db, client_id)
+            client.station_id = payload.station_id
+        else:
+            # 显式传空 = 解除工位绑定。自动注册的机台本就处于未绑定态，
+            # 若不允许解绑，这类机台连改 IP 都提交不了。
+            if client.station_id:
+                _assert_not_holding(db, client_id)
+            client.station_id = None
     if payload.ip_address is not None:
         client.ip_address = payload.ip_address
     db.commit()

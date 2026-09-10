@@ -43,6 +43,7 @@ from ..errors import (
     forbidden,
     not_found,
 )
+from .firmware import fw_matches
 from .routing import (
     _as_list,
     is_completed,
@@ -88,20 +89,30 @@ def get_client(
     client_id: str,
     *,
     ip: Optional[str] = None,
+    app_version: Optional[str] = None,
     create: bool = False,
 ) -> Optional[models.StationClient]:
-    """读取机台；create=True 时首次调用自动注册（station_id 需由 Web 端补录）。"""
+    """读取机台；create=True 时首次调用自动注册（station_id 置 NULL，需由 Web 端补录）。
+
+    顺带刷新 ip / app_version：两者都是机台自报的运行期信息，由本函数统一收口，
+    调用方无需各自赋值（改动会随调用方后续的 commit 落库）。
+    """
     client = db.get(models.StationClient, client_id)
     if client is None and create:
-        client = models.StationClient(client_id=client_id, station_id="", ip_address=ip)
+        client = models.StationClient(
+            client_id=client_id, station_id=None, ip_address=ip, app_version=app_version
+        )
         db.add(client)
         try:
             db.commit()
         except IntegrityError:  # 并发注册，回读即可
             db.rollback()
             client = db.get(models.StationClient, client_id)
-    if client is not None and ip:
-        client.ip_address = ip
+    if client is not None:
+        if ip:
+            client.ip_address = ip
+        if app_version:
+            client.app_version = app_version
     return client
 
 
@@ -367,13 +378,18 @@ def check_in(
             f"model_mismatch: {sn} is registered as {product.product_model}, got {product_model}",
         )
 
-    # 5) 固件基线校验
-    fw_match = (firmware or "").strip() == (model_row.target_fw_version or "").strip()
+    # 5) 固件基线校验（口径由机型的 fw_match_rule 决定：完全一致 / 不低于基线）
+    rule = model_row.fw_match_rule or models.FW_RULE_EXACT
+    fw_match = fw_matches(firmware, model_row.target_fw_version, rule)
     if not fw_match and settings.ENFORCE_FW:
         raise forbidden(
             "firmware_mismatch",
-            f"firmware_mismatch: {sn} expected {model_row.target_fw_version}, got {firmware}",
-            data={"expected": model_row.target_fw_version, "actual": firmware},
+            f"firmware_mismatch: {sn} expected {rule} {model_row.target_fw_version}, got {firmware}",
+            data={
+                "expected": model_row.target_fw_version,
+                "actual": firmware,
+                "rule": rule,
+            },
         )
     product.current_fw_version = firmware
 

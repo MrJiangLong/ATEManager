@@ -10,6 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from .firmware import fw_matches
 from .gate import (
     _station_of_client,
     _timeout_of,
@@ -50,7 +51,11 @@ def build_product_out(
         )
     if model_row:
         view.target_fw_version = model_row.target_fw_version
-        view.fw_match = (row.current_fw_version or "") == (model_row.target_fw_version or "")
+        view.fw_match = fw_matches(
+            row.current_fw_version,
+            model_row.target_fw_version,
+            model_row.fw_match_rule or models.FW_RULE_EXACT,
+        )
 
     view.passed_count = len(passed)
 
