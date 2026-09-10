@@ -215,7 +215,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，33 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，38 项全部通过 |
 | 上位机链路 | `python tools/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -276,7 +276,7 @@ ATEManager/
 │   │       ├── sessions.py   测试会话：续测断点 / 僵尸锁 / 强制终止
 │   │       ├── clients.py    机台档案与工位绑定
 │   │       └── metrics.py    仪表盘统计
-│   └── tests/test_backend.py 端到端回归测试（33 项）
+│   └── tests/test_backend.py 端到端回归测试（38 项）
 ├── tools/                    运维与验证脚本（Python，仅标准库）
 │   ├── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
 │   ├── sim_local.py          本地测试库一键仿真（--attach 只对运行中后端）
@@ -329,10 +329,10 @@ ATEManager/
 
 | 表 | 主键 | 作用 |
 |---|---|---|
-| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`version` 随拓扑保存自增，`is_active` 停用后不再接受新机型绑定 |
+| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定 |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门 |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门；整体覆盖式保存，保存后校验成环等结构问题，不通过则整体回滚 |
 | `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测 |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
@@ -362,7 +362,6 @@ ATEManager/
 | `test_sessions.checkpoint` | 续测断点（按 `case_id` 去重覆盖）与客户端 `cursor` |
 | `product_models.fw_match_rule` | 固件基线口径：`exact` 完全一致（默认）；`min` 不低于基线，按数字段比较（`V3.9 < V3.20`） |
 | `station_clients.app_version` | 上位机程序版本，身份上报与进站时刷新，用于排查版本漂移 |
-| `processes.version` | 拓扑每整体保存一次 +1；保存前会做结构性校验（成环等），不通过则整体回滚 |
 | `processes.is_active` | 停用只作用于管理端（不再接受新机型绑定），运行期已绑定机型的在制品照常流转 |
 
 ### 7.4 租约锁模型（v1.0）
@@ -549,7 +548,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 33 项，覆盖全部卡控场景
+python tests/test_backend.py      # 38 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

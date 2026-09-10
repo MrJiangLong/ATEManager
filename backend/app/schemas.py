@@ -265,7 +265,6 @@ class HeartbeatData(BaseModel):
 class ProcessOut(ORMModel):
     process_id: str
     process_name: str
-    version: int = 1
     is_active: bool = True
     created_at: Optional[datetime] = None
 
@@ -275,7 +274,6 @@ class ProcessStatOut(BaseModel):
 
     process_id: str
     process_name: str
-    version: int = 1
     is_active: bool = True
     model_count: int = 0
     models: List[str] = []

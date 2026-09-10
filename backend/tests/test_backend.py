@@ -1113,39 +1113,13 @@ def test_firmware_match_rule():
     check(resp.status_code == 422, f"invalid rule must be 422: {resp.text}")
 
 
-def test_process_version_and_status():
-    """流程版本随每次拓扑保存自增；停用后不再接受新机型绑定。"""
+def test_process_status():
+    """流程停用后不再接受新机型绑定，重新启用后恢复。"""
     pid = f"PROC_VER-{STAMP}"
-    resp = admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "version demo"})
+    resp = admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "status demo"})
     check(resp.status_code == 201, f"create process: {resp.text}")
-    check(
-        resp.json()["version"] == 1 and resp.json()["is_active"] is True,
-        f"defaults must be v1/active: {resp.text}",
-    )
+    check(resp.json()["is_active"] is True, f"default must be active: {resp.text}")
 
-    admin("POST", "/api/admin/stations", {"station_id": "S1", "station_name": "S1"})
-    admin("POST", "/api/admin/stations", {"station_id": "S2", "station_name": "S2"})
-
-    def save(steps):
-        return admin("PUT", "/api/admin/routing/stations", steps, params={"process_id": pid})
-
-    check(save([{"station_id": "S1", "step_order": 10, "depends_on": []}]).status_code == 200, "save 1")
-    check(
-        save(
-            [
-                {"station_id": "S1", "step_order": 10, "depends_on": []},
-                {"station_id": "S2", "step_order": 20, "depends_on": ["S1"]},
-            ]
-        ).status_code
-        == 200,
-        "save 2",
-    )
-
-    resp = admin("GET", "/api/admin/processes")
-    row = next((p for p in resp.json() if p["process_id"] == pid), None)
-    check(row is not None and row["version"] == 3, f"version must bump once per save: {row}")
-
-    # 停用后不再接受新机型绑定
     resp = admin("PUT", f"/api/admin/processes/{pid}", {"is_active": False})
     check(resp.status_code == 200 and resp.json()["is_active"] is False, f"deactivate: {resp.text}")
 
@@ -1160,7 +1134,8 @@ def test_process_version_and_status():
         f"inactive process must reject new model: {resp.text}",
     )
 
-    admin("PUT", f"/api/admin/processes/{pid}", {"is_active": True})
+    resp = admin("PUT", f"/api/admin/processes/{pid}", {"is_active": True})
+    check(resp.status_code == 200 and resp.json()["is_active"] is True, f"reactivate: {resp.text}")
     resp = admin(
         "POST",
         "/api/admin/product-models",
@@ -1239,7 +1214,7 @@ TESTS = [
     test_sweeper_releases_orphan_lock,
     test_client_app_version_tracked,
     test_firmware_match_rule,
-    test_process_version_and_status,
+    test_process_status,
     test_force_release_and_sessions_api,
 ]
 

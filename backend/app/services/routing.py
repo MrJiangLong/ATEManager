@@ -297,7 +297,6 @@ def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
             schemas.ProcessStatOut(
                 process_id=process.process_id,
                 process_name=process.process_name,
-                version=process.version or 1,
                 is_active=bool(process.is_active),
                 model_count=len(models_under),
                 models=[m.product_model for m in models_under],

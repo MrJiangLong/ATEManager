@@ -20,27 +20,16 @@
       </el-table-column>
       <el-table-column prop="station_count" :label="t('configs.tableStationCount')" width="90" align="right" />
       <el-table-column prop="item_count" :label="t('configs.tableItemCount')" width="100" align="right" />
-      <el-table-column :label="t('configs.tableVersion')" width="80" align="right">
-        <template #default="{ row }"><span class="muted">v{{ row.version ?? 1 }}</span></template>
-      </el-table-column>
-      <el-table-column :label="t('common.status')" width="100" align="center">
+      <el-table-column :label="t('common.status')" width="90" align="center">
         <template #default="{ row }">
-          <el-tag size="small" effect="plain" :type="row.is_active ? 'success' : 'info'">
-            {{ row.is_active ? t('common.enabled') : t('common.disabled') }}
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small" effect="plain">
+            {{ row.is_active ? 'ON' : 'OFF' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="180" align="center" fixed="right">
+      <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button
-            link
-            size="small"
-            :type="row.is_active ? 'info' : 'success'"
-            @click="onToggleActive(row)"
-          >
-            {{ row.is_active ? t('common.disabled') : t('common.enabled') }}
-          </el-button>
           <el-button link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
@@ -61,6 +50,9 @@
         <el-form-item :label="t('configs.processName')">
           <el-input v-model="form.process_name" placeholder="TEK数字示波器-带AWG选件流程" />
         </el-form-item>
+        <div class="switch-row">
+          <el-checkbox v-model="form.is_active">{{ t('common.enabled') }}</el-checkbox>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
@@ -102,7 +94,7 @@ const { processes, loading, loadProcesses } = useProcesses()
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
-const form = reactive({ process_id: '', process_name: '' })
+const form = reactive({ process_id: '', process_name: '', is_active: true })
 
 const cloneVisible = ref(false)
 const cloneSaving = ref(false)
@@ -110,12 +102,16 @@ const cloneForm = reactive({ from_process: '', to_process: '' })
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { process_id: '', process_name: '' })
+  Object.assign(form, { process_id: '', process_name: '', is_active: true })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
-  Object.assign(form, { process_id: row.process_id, process_name: row.process_name || '' })
+  Object.assign(form, {
+    process_id: row.process_id,
+    process_name: row.process_name || '',
+    is_active: row.is_active !== false,
+  })
   dialogVisible.value = true
 }
 
@@ -123,7 +119,7 @@ async function submit() {
   if (!form.process_id.trim()) return ElMessage.warning(t('errors.requiredField'))
   saving.value = true
   try {
-    const payload = { process_name: form.process_name || form.process_id }
+    const payload = { process_name: form.process_name || form.process_id, is_active: form.is_active }
     if (isEdit.value) {
       await processApi.update(form.process_id, payload)
     } else {
@@ -136,16 +132,6 @@ async function submit() {
     ElMessage.error(e.message)
   } finally {
     saving.value = false
-  }
-}
-
-async function onToggleActive(row) {
-  try {
-    await processApi.update(row.process_id, { is_active: !row.is_active })
-    ElMessage.success(t('common.saveSuccess'))
-    loadProcesses({ force: true })
-  } catch (e) {
-    ElMessage.error(e.message)
   }
 }
 
@@ -188,3 +174,7 @@ async function submitClone() {
 
 onMounted(() => loadProcesses())
 </script>
+
+<style scoped>
+.switch-row { display: flex; gap: 20px; }
+</style>

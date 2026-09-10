@@ -71,7 +71,6 @@ _ADDED_COLUMNS = {
         "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",
     },
     "processes": {
-        "version": "INTEGER DEFAULT 1",
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
 }

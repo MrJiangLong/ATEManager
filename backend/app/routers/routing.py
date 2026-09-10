@@ -74,9 +74,9 @@ def save_steps(
     被移出拓扑的工位，其测试项会一并清理 —— 与 DELETE /stations/{station_id} 的行为
     保持一致。否则 station_items 会残留成"没人跑却仍计数的必测项"。
 
-    保存后会做结构性校验（成环等），不通过则整体回滚；成功则流程 version +1。
+    保存后会做结构性校验（成环等），不通过则整体回滚（可用 force=true 跳过）。
     """
-    process = get_or_404(db, models.Process, process_id, "process")
+    get_or_404(db, models.Process, process_id, "process")
     for step in payload:
         get_or_404(db, models.Station, step.station_id, "station")
 
@@ -120,7 +120,6 @@ def save_steps(
                 data={"issues": [i.model_dump() for i in blocking]},
             )
 
-    process.version = (process.version or 0) + 1
     db.commit()
     return process_topology(db, process_id).steps
 

@@ -133,8 +133,6 @@ class Process(Base):
 
     process_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     process_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    # 拓扑每整体保存一次 +1：让"这个流程被改过几次"可见，也为将来的版本快照留口子
-    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     # 停用只作用于管理端（新建/改绑机型时不可选），运行期已绑定机型的在制品照常流转 ——
     # 否则一次停用就会打断正在这条流程上跑的产线。
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
