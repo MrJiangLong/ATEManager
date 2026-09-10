@@ -7,7 +7,6 @@
     class="session-drawer"
   >
     <template v-if="session">
-      <!-- 概要：状态 + 一句话结论 -->
       <div class="summary">
         <el-tag :type="sessionTagType(session.status)" :effect="session.status === 'RUNNING' ? 'dark' : 'plain'" size="small">
           {{ $t(`sessionStatus.${session.status}`) }}
@@ -16,7 +15,6 @@
         <span class="muted">{{ session.station_id }} · {{ session.client_id }}</span>
       </div>
 
-      <!-- 尝试链：不用 #N，改用可视化时间线 -->
       <div class="block">
         <div class="block-title">{{ $t('sessions.sectionAttempts') }}</div>
         <div class="attempt-track">
@@ -31,7 +29,6 @@
         </div>
       </div>
 
-      <!-- 基本信息 -->
       <div class="block">
         <div class="block-title">{{ $t('sessions.sectionBasic') }}</div>
         <el-descriptions :column="2" size="small" border>
@@ -59,14 +56,12 @@
         </el-descriptions>
       </div>
 
-      <!-- 结束原因：完整文本，表格里只放按钮 -->
       <div class="block">
         <div class="block-title">{{ $t('sessions.tableEndReason') }}</div>
         <div v-if="session.end_reason" class="reason-box">{{ session.end_reason }}</div>
         <div v-else class="reason-box muted">{{ $t('sessions.noEndReason') }}</div>
       </div>
 
-      <!-- 续测断点 -->
       <div class="block">
         <div class="block-title">
           {{ $t('sessions.sectionCheckpoint') }}
@@ -163,7 +158,7 @@ const cursorText = computed(() => {
 .block-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .block-title .count { font-weight: 400; }
 
-/* 尝试链：圆角节点从左到右排列，末端的实心节点表示"当前这一次" */
+/* 末端实心节点表示"当前这一次" */
 .attempt-track { display: flex; align-items: center; gap: 6px; }
 .attempt-node {
   width: 16px;

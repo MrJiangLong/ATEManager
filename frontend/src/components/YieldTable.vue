@@ -52,7 +52,7 @@
         {{ $t('dashboard.showingCount', { n: shownRows.length, total: rows.length }) }}
       </span>
       <el-button
-        v-if="filtered.length > previewSize"
+        v-if="filtered.length > PREVIEW_SIZE"
         link
         type="primary"
         size="small"

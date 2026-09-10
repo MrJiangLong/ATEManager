@@ -41,7 +41,6 @@ def build_overview(
     today_start = local_day_start(now)
     since = today_start - timedelta(days=window_days - 1)
 
-    # ---- 流程图缓存（按机型一次装载）----
     model_process = {
         m.product_model: m.process_id for m in db.query(models.ProductModel).all()
     }
@@ -55,7 +54,6 @@ def build_overview(
             graphs[pid] = load_process(db, pid)
         return graphs[pid]
 
-    # ---- 在制品 ----
     products = db.query(models.ProductStatus).all()
     wip = schemas.WipStat()
     for p in products:
@@ -78,7 +76,6 @@ def build_overview(
             wip.locked += 1
     wip.total = len(products)
 
-    # ---- 窗口内事件 ----
     raw = (
         db.query(models.TestRecord)
         .filter(models.TestRecord.created_at >= sql_time(since))
@@ -92,7 +89,6 @@ def build_overview(
         if created and created >= since:
             records.append((created, r))
 
-    # ---- 机型 → 流程 映射（按 SN 归属）----
     sn_process = {p.sn: model_process.get(p.product_model) for p in products}
     if process_id:
         records = [(c, r) for c, r in records if sn_process.get(r.sn) == process_id]
@@ -101,7 +97,6 @@ def build_overview(
     today_pass = sum(1 for _, r in today if r.overall_result == "PASS")
     today_fail = sum(1 for _, r in today if r.overall_result == "FAIL")
 
-    # ---- 日趋势 ----
     per_day: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "passed": 0})
     for created, r in records:
         bucket = per_day[local_day_key(created)]
@@ -122,8 +117,8 @@ def build_overview(
             )
         )
 
-    # ---- 窗口整体良率（按量加权，与 trend 同源）----
-    # 不能用"日良率的算术平均"：无产出的日期 pass_rate=0，会把均值整体拉低，
+    # 窗口整体良率按量加权（与 trend 同源）：不能用"日良率的算术平均"，
+    # 无产出的日期 pass_rate=0 会把均值整体拉低，
     # 出现"趋势图 100%、均值线 7%"这类与今日良率对不上的显示。
     window_total = sum(point.total for point in trend)
     window_passed = sum(point.passed for point in trend)
@@ -133,7 +128,6 @@ def build_overview(
         pass_rate=_rate(window_passed, window_total),
     )
 
-    # ---- 工位 / 流程良率 ----
     def yield_by(extractor) -> List[schemas.YieldRow]:
         grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "passed": 0})
         for _, r in records:
@@ -149,22 +143,14 @@ def build_overview(
             for key, stat in sorted(grouped.items())
         ]
 
-    # ---- 流程良率（件级·终检口径）----
     def unit_yield_by_process():
-        """按流程统计整件良率：分母只含已完结的件，在制不计入。
+        """按流程统计整件良率：分母只含已完结（走完全流程或报废）的件，在制不计入。
 
-        与 process_yield（记录级）的差别：记录级只数"测了多少次、其中多少 PASS"，
-        未完工的件没跑的工位不产生记录，失败没机会发生，只会把良率往上抬；
-        件级以"件"为单位，走完全流程或报废才进分母。
-
-        不良判定只看终态：只有报废件算不良。中途 FAIL 但重测通过的件是合格品，
-        计入分子——gate 只在 PASS 时盖章，故"走完全流程"即代表每个工位最终都过了。
-        因此本指标是"最终良率"而非 FPY：不反映返修/重测成本，区分度只来自报废件，
-        故同时给出 first_pass（FPY：整件无任何 FAIL 记录）与之并列。
-
-        pending 只数"窗口内有过测试活动、但还没走完流程"的件；从未产生任何测试
-        记录的件（seed 生成的 IDLE 件，压根没进过站）既不在分母里，也不算 pending
-        —— 它们从未进入流程，不属于"被良率漏掉"的那部分。
+        与 process_yield（记录级）的差别：未完工的件没跑的工位不产生记录，失败没机会
+        发生，只会把记录级良率往上抬，故本指标以"件"为单位。
+        不良只看终态（仅报废算不良，中途 FAIL 但重测通过算合格），因此这是"最终良率"
+        而非 FPY，需与 first_pass（整件无任何 FAIL 记录）并列才能看出返修成本。
+        pending 只数窗口内有测试活动但未走完流程的件；从未进过站的件不计入。
         """
         active_sns = {r.sn for _, r in records}
         # FPY 按整件判定，不受时间窗截断影响：窗口外的失败同样算失败
@@ -211,7 +197,6 @@ def build_overview(
 
     unit_yield_rows, unit_yield_pending = unit_yield_by_process()
 
-    # ---- TOP 失效用例ID ----
     fail_counter: Counter = Counter()
     fail_names: Dict[str, str] = {}
     for _, r in records:
@@ -233,7 +218,6 @@ def build_overview(
         for case_id, count in fail_counter.most_common(10)
     ]
 
-    # ---- 租约锁概览 ----
     lock_stat = schemas.LockStat()
     for p in products:
         if p.current_status != models.STATUS_TESTING:

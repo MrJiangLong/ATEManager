@@ -209,6 +209,3 @@ def abort_running(
             db.commit()
 
     return schemas.SessionAbortRunningOut(aborted=len(points), items=points)
-
-
-

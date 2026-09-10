@@ -16,17 +16,13 @@ from .sessions import _session_view
 
 router = APIRouter(prefix="/api/admin/products", tags=["admin-在制品"])
 
-# 派生字段（锁状态）依赖机型与流程拓扑。若逐行装载，
-# 每行会产生 4+ 次查询（N+1），列表页上千行即上万次 SQL。
-# 机型与流程数量极小，改为一次性预载后在内存中派生。
-#
-# 只有 zombie_only 分支必须 Python 侧过滤（见下），故保留候选扫描上限：
-# 超出时 total 为上限内的计数。实际不会触达——TESTING 行数 ≤ 在线机台数。
+# 僵尸锁是相对"当前时刻"的实时判定，无法 SQL 预筛，只能取候选后在 Python 侧过滤。
+# TESTING 行数 ≤ 在线机台数，故该上限仅是兜底，实际不会触达。
 _DERIVED_SCAN_LIMIT = 5000
 
 
 def _prefetch_models_and_graphs(db: Session):
-    """预载全部机型与流程拓扑，供 build_product_out 复用，消除 N+1 查询。"""
+    """预载全部机型与流程拓扑：派生字段依赖机型与拓扑，逐行装载会产生 N+1 查询。"""
     model_rows = db.query(models.ProductModel).all()
     models_by_name = {m.product_model: m for m in model_rows}
     graphs = {}
@@ -73,14 +69,13 @@ def list_products(
         ]
         query = query.filter(models.ProductStatus.product_model.in_(models_in or [""]))
 
-    # 预载机型与拓扑：下面三个分支的派生字段都依赖它，避免逐行装载导致 N+1
+    # 预载机型与拓扑：下面各分支的派生字段都依赖它
     models_by_name, graphs = _prefetch_models_and_graphs(db)
 
     # 「已完工」不体现在 current_status 上（仍是 IDLE），只由拓扑盖章派生，
     # 故"待测试 / 已完工"必须按 is_completed 冗余列区分，否则两种状态混在一起。
     if status_filter in ("IDLE", "COMPLETED"):
-        # is_completed 已冗余落库 → 直接在 SQL 层过滤：total 精确、分页正确，
-        # 不再需要扫描上限，也不再逐行派生（原先超过上限时 total 会偏小）
+        # is_completed 已冗余落库 → 可在 SQL 层精确过滤与分页
         query = query.filter(
             models.ProductStatus.current_status == models.STATUS_IDLE,
             models.ProductStatus.is_completed == (status_filter == "COMPLETED"),
@@ -102,7 +97,6 @@ def list_products(
     # 僵尸锁 = 心跳断流 > LOCK_HEARTBEAT_GRACE_SEC，是相对"当前时刻"的实时判定，
     # 没有可落库的字段（随时间自行变化，不能像 is_completed 那样冗余），
     # 因此无法 SQL 预筛，只能取候选后在 Python 侧过滤再分页。
-    # 规模可控：TESTING 行数 ≤ 在线机台数（同一工位一台同时仅持一把锁）。
     if zombie_only:
         candidates = (
             query.filter(models.ProductStatus.current_status == models.STATUS_TESTING)
@@ -140,9 +134,6 @@ def list_products(
 def get_product(sn: str, db: Session = Depends(get_db), user=Depends(current_user)):
     row = get_or_404(db, models.ProductStatus, sn, "product")
     return build_product_out(db, row, include_lock=True)
-
-
-
 
 
 @router.post(

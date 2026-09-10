@@ -30,7 +30,6 @@
         {{ today }}
       </el-tag>
 
-      <!-- 已登录：用户信息 + 下拉（修改密码 / 退出） -->
       <div v-if="isLoggedIn" class="user-box">
         <el-avatar :size="34" class="avatar">{{ avatarText }}</el-avatar>
         <el-dropdown trigger="click" @command="$emit('user-command', $event)">
@@ -72,10 +71,9 @@ const { t, locale } = useI18n()
 const auth = useAuth()
 const isLoggedIn = auth.isLoggedIn
 
-/* 顶栏左：当前页面标题（来自路由 meta.titleKey） */
 const currentTitle = computed(() => (route.meta?.titleKey ? t(route.meta.titleKey) : ''))
 
-/* 顶栏右：长格式日期（与 AppSidebar 收起态保持一致：语言感知） */
+/* 长格式日期：跟随界面语言切换 */
 const today = computed(() => {
   const tag = locale.value === 'en' ? 'en-US' : 'zh-CN'
   return new Date().toLocaleDateString(tag, {
@@ -88,7 +86,7 @@ const today = computed(() => {
 
 const langLabel = computed(() => (locale.value === 'en' ? t('layout.langEn') : t('layout.langZh')))
 
-/* 用户信息：直接读全局会话，避免父组件透传 ref */
+/* 直接读全局会话，避免父组件透传 */
 const avatarText = computed(() => {
   const name = auth.state.user?.full_name || auth.state.user?.username || ''
   return name ? name.slice(0, 1).toUpperCase() : 'U'

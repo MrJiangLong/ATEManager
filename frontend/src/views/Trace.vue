@@ -15,7 +15,6 @@
     <div v-if="loading" class="loading-box"><el-skeleton :rows="6" animated /></div>
 
     <template v-else-if="data">
-      <!-- 概览 -->
       <div class="kpi-row">
         <StatTile tone="blue" :icon="Cpu" :label="$t('common.sn')" :value="data.product.sn" :legend="snLegend" />
         <StatTile
@@ -28,7 +27,6 @@
         <StatTile tone="purple" :icon="Cpu" :label="$t('common.status')" :value="statusText" :legend="statusLegend" />
       </div>
 
-      <!-- 工步拓扑 -->
       <DataCard :title="$t('configs.tabTopology')">
         <template #extra>
           <el-tag size="small" effect="plain" type="info">{{ data.product.process_id }}</el-tag>
@@ -60,7 +58,6 @@
         </div>
       </DataCard>
 
-      <!-- 事件台账 -->
       <DataCard :title="$t('trace.ledger')">
         <el-table
           :data="data.records"
@@ -170,7 +167,6 @@
         </el-table>
       </DataCard>
 
-      <!-- 维修履历 -->
       <DataCard :title="$t('trace.repairs')">
         <el-table :data="data.repairs" stripe size="small">
           <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90" />

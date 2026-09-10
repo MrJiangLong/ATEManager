@@ -8,7 +8,6 @@
     @open="onOpen"
   >
     <template v-if="row">
-      <!-- 概要 -->
       <div class="summary">
         <el-tag :type="statusTagType(detail?.current_status || row.current_status)" size="small">
           {{ statusLabel }}
@@ -20,7 +19,6 @@
         </el-tag>
       </div>
 
-      <!-- 工艺进度：工步时间线 -->
       <div class="block">
         <div class="block-title">
           {{ $t('products.sectionProgress') }}
@@ -44,7 +42,6 @@
         <EmptyState v-else :text="$t('common.noData')" />
       </div>
 
-      <!-- 基本信息 -->
       <div class="block">
         <div class="block-title">{{ $t('products.sectionBasic') }}</div>
         <el-descriptions :column="2" size="small" border>
@@ -91,7 +88,6 @@
         <div v-if="row.lock_zombie" class="reason-box text-danger">{{ $t('products.lockZombieTip') }}</div>
       </div>
 
-      <!-- 最近事件 -->
       <div class="block">
         <div class="block-title">{{ $t('products.sectionEvents') }}</div>
         <el-skeleton v-if="loading" :rows="3" animated />

@@ -5,7 +5,7 @@
         <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:240px">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
         </el-select>
-        <el-select v-model="stationFilter" clearable :placeholder="t('configs.filterStation2')" style="width:180px">
+        <el-select v-model="stationFilter" clearable :placeholder="t('configs.filterStation')" style="width:180px">
           <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
         </el-select>
         <el-button :icon="RefreshRight" size="small" @click="loadItems">{{ t('common.refresh') }}</el-button>
@@ -26,7 +26,7 @@
       <el-table-column :label="t('configs.mandatory')" width="100" align="center">
         <template #default="{ row }">
           <el-tag :type="row.is_mandatory ? 'danger' : 'info'" size="small" :effect="row.is_mandatory ? 'dark' : 'plain'">
-            {{ row.is_mandatory ? t('configs.mandatory') : t('configs.optional2') }}
+            {{ row.is_mandatory ? t('configs.mandatory') : t('configs.optional') }}
           </el-tag>
         </template>
       </el-table-column>

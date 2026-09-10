@@ -1,6 +1,3 @@
-// Shared domain constants used across views/components.
-// Keep this file pure (no DOM, no Vue) so it can be imported anywhere.
-
 /**
  * 在制品列表可筛选的状态。
  * IDLE / TESTING / LOCKED / SCRAPPED 对应后端 current_status；

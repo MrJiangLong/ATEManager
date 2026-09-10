@@ -37,7 +37,6 @@
           <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
         </el-table-column>
 
-        <!-- 状态：语义化标签，不再出现 #N -->
         <el-table-column :label="$t('sessions.tableStatus')" width="120">
           <template #default="{ row }">
             <el-tag size="small" :type="sessionTagType(row.status)" :effect="row.status === 'RUNNING' ? 'dark' : 'plain'">
@@ -46,7 +45,6 @@
           </template>
         </el-table-column>
 
-        <!-- 尝试次数：点阵代替序号 -->
         <el-table-column :label="$t('sessions.tableAttempt')" width="120">
           <template #default="{ row }">
             <el-tooltip :content="attemptTipText(row.attempt, t)" placement="top">
@@ -69,7 +67,6 @@
           </template>
         </el-table-column>
 
-        <!-- 心跳：呼吸点 + 相对时间 -->
         <el-table-column :label="$t('sessions.tableHeartbeat')" min-width="140">
           <template #default="{ row }">
             <span v-if="row.status === 'RUNNING'" class="live" :class="liveClass(row)">
@@ -84,7 +81,6 @@
           <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.started_at) }}</span></template>
         </el-table-column>
 
-        <!-- 原因：按钮 + 抽屉，不在列表里堆长文本 -->
         <el-table-column :label="$t('common.action')" width="150" align="center" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" :icon="View" @click="openDrawer(row)">

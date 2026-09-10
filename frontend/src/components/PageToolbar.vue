@@ -102,5 +102,4 @@ const hasRow2 = computed(() => Boolean(slots.default || slots.extra))
   gap: 10px;
   flex-wrap: wrap;
 }
-
 </style>

@@ -110,9 +110,6 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-// Element Plus 折叠侧边栏时会改变 el-main 宽度（不触发 window resize），
-// 这里用 ResizeObserver 监听图表容器，宽度变化时调用 echarts.resize() 防止溢出。
-
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -374,6 +371,7 @@ function onResize() {
   trendChart?.resize()
 }
 
+// 折叠侧边栏会改变 el-main 宽度但不触发 window resize，故额外用 ResizeObserver 重绘
 let containerObserver = null
 
 onMounted(() => {
@@ -405,5 +403,4 @@ usePolling(() => loadAll(true), 60000)
 .dashboard { display: flex; flex-direction: column; gap: 16px; }
 .chart { width: 100%; height: 300px; }
 .window-switch { margin-left: 4px; }
-
 </style>

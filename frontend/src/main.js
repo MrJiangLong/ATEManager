@@ -27,8 +27,7 @@ setUnauthorizedHandler(() => {
 app.use(router)
 app.use(i18n)
 app.use(ElementPlus)
-// 图标全局注册：模板内 <el-icon><Xxx /></el-icon> 直接可用；
-// 需要 :icon="Xxx" 绑定的组件仍显式导入（全局注册仅解决模板标签解析）
+// 全局注册只让模板里的 <el-icon><Xxx /></el-icon> 生效；:icon="Xxx" 绑定仍需显式导入
 for (const [name, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(name, component)
 }

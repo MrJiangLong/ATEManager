@@ -1,12 +1,10 @@
 <template>
   <div class="login-page">
-    <!-- 背景装饰 -->
     <div class="bg-decor decor-1"></div>
     <div class="bg-decor decor-2"></div>
     <div class="bg-decor decor-3"></div>
 
     <div class="login-box">
-      <!-- 左侧品牌区 -->
       <div class="brand-panel">
         <div class="brand-logo">
           <AppLogoMark :size="48" />
@@ -22,7 +20,6 @@
         <div class="brand-footer">{{ $t('auth.brandFooter') }}</div>
       </div>
 
-      <!-- 右侧登录区 -->
       <div class="form-panel">
         <div class="form-top">
           <el-dropdown trigger="click" @command="changeLang">
@@ -76,13 +73,6 @@
               {{ loading ? $t('auth.loggingIn') : $t('auth.login') }}
             </el-button>
           </el-form>
-
-          <el-divider class="guest-divider">
-            <span class="divider-text">{{ $t('auth.guestDivider') }}</span>
-          </el-divider>
-          <el-button class="guest-btn" :icon="View" plain @click="enterAsGuest">
-            {{ $t('auth.guestEnter') }}
-          </el-button>
         </div>
       </div>
     </div>
@@ -93,7 +83,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, Check, Lock, Switch, User, View } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Lock, Switch, User } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '../i18n'
 import { useAuth } from '../stores/auth'
@@ -153,10 +143,6 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
-}
-
-function enterAsGuest() {
-  router.push(safeRedirect(route.query.redirect))
 }
 </script>
 
@@ -288,7 +274,7 @@ function enterAsGuest() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 28px 52px 40px;
+  padding: 44px 64px 56px;
   background: #fff;
   border-radius: 0 20px 20px 0;
 }
@@ -324,6 +310,11 @@ function enterAsGuest() {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  /* 限宽让输入框不撑满整个右侧面板，与左品牌区视觉重量更平衡 */
+  max-width: 360px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 0;
 }
 
 .form-title {
@@ -334,9 +325,18 @@ function enterAsGuest() {
 }
 
 .form-sub {
-  margin: 8px 0 30px;
+  margin: 12px 0 36px;
   font-size: 13.5px;
   color: #8a96b0;
+  line-height: 1.6;
+}
+
+/* 表单项之间留出更明显的呼吸空间，避免表单看起来"挤" */
+.form-body :deep(.el-form-item) {
+  margin-bottom: 22px;
+}
+.form-body :deep(.el-form-item:last-of-type) {
+  margin-bottom: 32px;
 }
 
 .login-btn {
@@ -345,22 +345,6 @@ function enterAsGuest() {
   font-size: 15px;
   letter-spacing: 2px;
   border-radius: 10px;
-}
-
-.guest-divider {
-  margin: 26px 0 18px;
-}
-
-.divider-text {
-  font-size: 12px;
-  color: #a0abc2;
-}
-
-.guest-btn {
-  width: 100%;
-  height: 42px;
-  border-radius: 10px;
-  color: #5c6b8c;
 }
 
 .lang-active {
