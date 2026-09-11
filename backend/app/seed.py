@@ -12,6 +12,7 @@
 import argparse
 import random
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -163,16 +164,47 @@ def _values_for(case_id: str, rng: random.Random, failed: bool) -> dict:
     return {"value": round(rng.uniform(0, 1), 4)}
 
 
+# 复用查询结果：远端库每条 SQL 都是一次网络往返，N+1 写法会被放大上千倍
+# （60 台在制品 → 上千次往返 → 数十秒）。seed 是进程内一次性调用，缓存不跨进程。
+_GRAPH_CACHE: dict = {}
+_ITEM_CACHE: dict = {}
+_MODEL_CACHE: dict = {}
+
+
+def _reset_caches() -> None:
+    _GRAPH_CACHE.clear()
+    _ITEM_CACHE.clear()
+    _MODEL_CACHE.clear()
+
+
+def _cached_model(db, product_model: str):
+    if product_model not in _MODEL_CACHE:
+        from .models import ProductModel as PM
+
+        _MODEL_CACHE[product_model] = db.get(PM, product_model)
+    return _MODEL_CACHE[product_model]
+
+
+def _cached_graph(db, process_id: str):
+    if process_id not in _GRAPH_CACHE:
+        _GRAPH_CACHE[process_id] = load_process(db, process_id)
+    return _GRAPH_CACHE[process_id]
+
+
 def _make_items(db, process_id: str, station_id: str, rng: random.Random, failed: bool) -> list:
-    rows = (
-        db.query(StationItem)
-        .filter(
-            StationItem.process_id == process_id,
-            StationItem.station_id == station_id,
-            StationItem.is_active.is_(True),
+    key = (process_id, station_id)
+    rows = _ITEM_CACHE.get(key)
+    if rows is None:
+        rows = (
+            db.query(StationItem)
+            .filter(
+                StationItem.process_id == process_id,
+                StationItem.station_id == station_id,
+                StationItem.is_active.is_(True),
+            )
+            .all()
         )
-        .all()
-    )
+        _ITEM_CACHE[key] = rows
     items = []
     for row in rows:
         # 失败时仅让某个必测项判定 FAIL，其余照常 PASS
@@ -208,8 +240,9 @@ def _write_record(db, *, sn, station_id, items, overall, when, firmware, duratio
         },
         created_at=when,
     )
+    # 刻意不 flush：同一事务内的多条 INSERT 由 SQLAlchemy 攒批下发，
+    # 逐条 flush 会在远端库上把往返次数放大到记录数级别
     db.add(record)
-    db.flush()
     return record
 
 
@@ -229,10 +262,8 @@ def _plan_start(now, rng, *, span_minutes: int) -> datetime:
 
 def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
     """按流程拓扑推进一台在制品，产生合法的事件账本。"""
-    from .models import ProductModel as PM
-
-    row = db.get(PM, product_model)
-    graph = load_process(db, row.process_id)
+    row = _cached_model(db, product_model)
+    graph = _cached_graph(db, row.process_id)
     if graph is None:
         return
 
@@ -300,7 +331,6 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
             updated_at=base + timedelta(minutes=cursor),
         )
     )
-    db.flush()
 
 
 # ---------------------------------------------------------------------
@@ -390,30 +420,60 @@ def _backfill_is_completed(db) -> None:
 
 
 def _seed_static_rules(db) -> None:
+    """写入静态工艺规则（幂等：已存在的行跳过）。
+
+    不用 db.merge()：merge 对每个对象都是「先 SELECT 再 INSERT/UPDATE」，在远端库上
+    等于每条数据多一次往返。改为「一次查出已有主键，只对缺失的行 insert」，
+    每张表只需一次查询。
+    """
+
+    existing = {row[0] for row in db.query(Process.process_id).all()}
     for process_id, name in PROCESSES:
-        db.merge(Process(process_id=process_id, process_name=name))
+        if process_id not in existing:
+            db.add(Process(process_id=process_id, process_name=name))
+
+    existing = {row[0] for row in db.query(Station.station_id).all()}
     for station_id, name, timeout in STATIONS:
-        db.merge(Station(station_id=station_id, station_name=name, timeout_sec=timeout))
+        if station_id not in existing:
+            db.add(Station(station_id=station_id, station_name=name, timeout_sec=timeout))
+
+    existing = {row[0] for row in db.query(ProductModel.product_model).all()}
     for model, process_id in MODELS:
-        db.merge(
-            ProductModel(
-                product_model=model, process_id=process_id, target_fw_version=TARGET_FW
+        if model not in existing:
+            db.add(
+                ProductModel(
+                    product_model=model, process_id=process_id, target_fw_version=TARGET_FW
+                )
             )
-        )
+
+    existing_steps = {
+        (row[0], row[1])
+        for row in db.query(ProcessStation.process_id, ProcessStation.station_id).all()
+    }
     for process_id, station_id, order, deps in TOPOLOGY:
-        db.merge(
-            ProcessStation(
-                process_id=process_id,
-                station_id=station_id,
-                step_order=order,
-                depends_on=list(deps),
+        if (process_id, station_id) not in existing_steps:
+            db.add(
+                ProcessStation(
+                    process_id=process_id,
+                    station_id=station_id,
+                    step_order=order,
+                    depends_on=list(deps),
+                )
             )
-        )
+
+    existing_items = {
+        (row[0], row[1], row[2])
+        for row in db.query(
+            StationItem.process_id, StationItem.station_id, StationItem.case_id
+        ).all()
+    }
     for process_id in (p[0] for p in PROCESSES):
         for station_id, case_id, item_name in ITEMS:
             if process_id == "PROC_TEK_DPO" and station_id in DPO_EXCLUDED:
                 continue
-            db.merge(
+            if (process_id, station_id, case_id) in existing_items:
+                continue
+            db.add(
                 StationItem(
                     process_id=process_id,
                     station_id=station_id,
@@ -423,10 +483,11 @@ def _seed_static_rules(db) -> None:
                     is_active=True,
                 )
             )
+
+    existing_clients = {row[0] for row in db.query(StationClient.client_id).all()}
     for client_id, station_id, ip in CLIENTS:
-        db.merge(
-            StationClient(client_id=client_id, station_id=station_id, ip_address=ip)
-        )
+        if client_id not in existing_clients:
+            db.add(StationClient(client_id=client_id, station_id=station_id, ip_address=ip))
     db.commit()
 
 
@@ -552,7 +613,6 @@ def _mk_session(
         created_at=started_at,
     )
     db.add(row)
-    db.flush()
     return row
 
 
@@ -568,7 +628,6 @@ def _mk_product(db, *, sn, product_model, status, passed, fail_count=0, locked_r
             fail_count=fail_count,
         )
         db.add(row)
-        db.flush()
     else:
         row.current_status = status
         row.passed_stations = sorted(passed)
@@ -588,6 +647,7 @@ def _ensure_scenario_clients(db) -> None:
     单独执行 --scenarios（只重建场景、不动静态规则）时，若场景引用了新机台，
     会出现"会话里的机台在机台档案中查不到"。既有的库升级时尤其需要这一步。
     """
+    existing = {row[0] for row in db.query(StationClient.client_id).all()}
     for client_id, station_id, ip in (
         ("CAL-DESK-01", "CAL_PARAM", "10.1.60.11"),
         ("CAL-DESK-07", "CAL_PARAM", "10.1.60.17"),
@@ -596,7 +656,9 @@ def _ensure_scenario_clients(db) -> None:
         ("CAL-DESK-02", "CAL_IFACE", "10.1.60.12"),
         ("TST-DESK-01", "TST_PARAM", "10.1.61.11"),
     ):
-        db.merge(StationClient(client_id=client_id, station_id=station_id, ip_address=ip))
+        # 已存在则跳过：本函数的目的是"确保档案存在"，不该覆盖管理员改过的绑定/IP
+        if client_id not in existing:
+            db.add(StationClient(client_id=client_id, station_id=station_id, ip_address=ip))
     db.commit()
 
 
@@ -824,6 +886,8 @@ def seed(
     backfill_completed: bool = False,
 ) -> None:
     ensure_schema()
+    _reset_caches()
+    started = time.perf_counter()
     db = SessionLocal()
     try:
         _ensure_admin(db)
@@ -860,6 +924,7 @@ def seed(
         print(f"       流程 {len(PROCESSES)} / 工位 {len(STATIONS)} / 机型 {models_count} / 机台 {len(CLIENTS)}")
         print(f"       工步 {len(TOPOLOGY)} / 用例ID测试项 {items_count}")
     finally:
+        print(f"[seed] 耗时 {time.perf_counter() - started:.1f}s")
         db.close()
 
 
