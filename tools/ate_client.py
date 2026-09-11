@@ -90,15 +90,21 @@ MAX_PENDING_ITEMS = 500
 FATAL_LOCK_CODES = ("lock_invalid", "lock_expired")
 # 防呆拦截：重试无意义，必须人工介入
 GATE_CODES = (
+    # 工艺/流程不匹配
     "missing_prereq",
     "station_already_passed",
-    "firmware_mismatch",
-    "product_locked",
-    "product_scrapped",
     "station_not_in_process",
     "case_id_mismatch",
     "missing_mandatory",
+    # 被测件身份与状态
     "model_mismatch",
+    "model_not_registered",
+    "firmware_mismatch",
+    "product_locked",
+    "product_scrapped",
+    # 机台侧配置缺失：同样只能由运维处理，重试没有意义
+    "client_not_bound",
+    "client_not_registered",
 )
 
 CAL_PARAM_CASES = [

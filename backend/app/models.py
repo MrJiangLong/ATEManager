@@ -224,9 +224,8 @@ class StationClient(Base):
     __tablename__ = "station_clients"
 
     client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    # 可为空：上位机首次调用 /client/resolve 会自动注册（见 gate.get_client），
-    # 此时尚未绑定工位，需由 Web 端补录。未绑定用 NULL 表示 —— 空串会撞 stations 的
-    # 外键（PG 生效、SQLite 未开 pragma 而放行，历史上造成过跨库行为不一致）。
+    # 可为空：/client/resolve 会自动注册未绑定工位的机台，工位由 Web 端后补。
+    # 用 NULL 而非空串 —— 空串会撞 stations 外键（PG 生效、SQLite 未开 pragma 而放行）。
     station_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("stations.station_id"), nullable=True, index=True
     )

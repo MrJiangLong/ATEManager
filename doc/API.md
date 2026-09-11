@@ -314,7 +314,7 @@ NULL ─────────────→ IDLE ─────────
 | 403 | `model_not_registered` | 机型未注册 | 联系工艺工程师 |
 | 403 | `missing_prereq` | **跳站拦截**：前置工位未完成 | 弹告警、pytest 终止、治具不开电 |
 | 403 | `model_mismatch` | SN 已登记为其他机型 | 贴错机型/换线未清线 |
-| 403 | `firmware_mismatch` | 固件非基线版本 | 提示刷写基线固件 |
+| 403 | `firmware_mismatch` | 固件不满足基线（口径见机型 `fw_match_rule`） | 提示刷写基线固件 |
 | 403 | `product_scrapped` | 已报废 | 禁止流转 |
 | 403 | `product_locked` | 连续失败达上限，已工程锁定 | 提示送修 |
 | 404 | `process_not_found` / `session_not_found` | 流程/会话不存在 | 检查参数 |
@@ -323,6 +323,21 @@ NULL ─────────────→ IDLE ─────────
 | 409 | `session_completed` | 指定的 `resume_session_id` 已出站 | 不要续测，重新进站 |
 
 > `lock_conflict` 的 `data` 含 `lock_idle_sec` 与 `grace_sec`，可用于估算"还要等多久才能接管"。
+
+**固件基线口径（`fw_match_rule`）**
+
+由机型的 `fw_match_rule` 决定，运维在 Web 管理端「工艺配置 → 机型」中维护：
+
+| 取值 | 判定 | 适用场景 |
+|---|---|---|
+| `exact`（默认） | `firmware == target_fw_version` | 严格锁定版本，任何偏差都拦截 |
+| `min` | `firmware >= target_fw_version` | 允许小版本升级，只要不低于基线 |
+
+`min` 按**数字段**比较，不是字符串比较 —— 因此 `V3.9 < V3.20` 判定正确（字符串比较会误判成 `V3.9 > V3.20` 而放行旧固件）。
+版本含日期/哈希等无法解析的内容时退回字符串比较。
+
+`firmware_mismatch` 的 `data` 回传 `expected` / `actual` / `rule`，客户端可直接提示"需刷写到 V3.20 或更高"。
+若产线尚未强制固件，服务端可用 `ENFORCE_FW=false` 关闭该拦截（仅记录不阻断）。
 
 ---
 
@@ -516,7 +531,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
 | 403 | `missing_prereq` | 10 | check-in | 跳站拦截 |
 | 403 | `model_mismatch` | 10 | check-in | 机型与建档不符 |
-| 403 | `firmware_mismatch` | 10 | check-in | 固件非基线 |
+| 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
 | 403 | `product_scrapped` | 10 | check-in | 已报废 |
 | 403 | `product_locked` | 16 | check-in | 已工程锁定 |
 | 403 | `lock_invalid` | 14 | check-out / checkpoint / release / heartbeat | 锁被接管或失效 |
