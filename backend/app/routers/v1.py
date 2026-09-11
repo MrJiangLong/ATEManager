@@ -38,7 +38,7 @@ from ..services import (
     save_checkpoint,
     touch_client,
 )
-from ..services.timeutil import utcnow
+from ..services.timeutil import as_utc, utcnow
 
 router = APIRouter(prefix="/api/v1", tags=["v1-上位机"])
 
@@ -83,7 +83,7 @@ def resolve(
             "station_id": client.station_id or None,
             "ip_address": client.ip_address,
             "bound": bool(client.station_id),
-            "last_seen_at": client.last_seen_at.isoformat() if client.last_seen_at else None,
+            "last_seen_at": as_utc(client.last_seen_at).isoformat() if client.last_seen_at else None,
             "server_time": utcnow().isoformat(),
         },
     )
@@ -224,7 +224,7 @@ def ack(
                     "sn": record.sn,
                     "station_id": record.station_id,
                     "overall_result": record.overall_result,
-                    "created_at": record.created_at.isoformat() if record.created_at else None,
+                    "created_at": as_utc(record.created_at).isoformat() if record.created_at else None,
                 },
             )
     raise not_found("ack_not_found", f"ack_not_found: no record for checkout_id {checkout_id}")

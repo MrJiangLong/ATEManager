@@ -1,9 +1,17 @@
 """Pydantic 输入输出模型：API 契约的唯一声明处。"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+)
 from typing_extensions import Annotated
 
 from .models import FW_RULE_EXACT, FW_RULE_MIN
@@ -25,7 +33,23 @@ Trimmed = Annotated[Optional[str], BeforeValidator(_strip)]
 TrimmedRequired = Annotated[str, BeforeValidator(_strip), AfterValidator(_require_non_empty)]
 
 
-class ORMModel(BaseModel):
+class UTCSchema(BaseModel):
+    """响应模型基类：naive 时间一律按 UTC 补全时区后缀。
+
+    SQLite 以 naive 串存 UTC，读出后 tzinfo 为空，直接 isoformat 会得到无后缀的
+    ``2026-09-11T01:03:11``；而 JS 的 Date 对无后缀串按**本地时间**解析，
+    东八区下就比真实时间早 8 小时。故统一补 +00:00，与 timeutil.as_utc 同口径。
+    PostgreSQL 读出的本就是 aware，原样透传。
+    """
+
+    @field_serializer("*", when_used="json")
+    def _naive_datetime_as_utc(self, value):
+        if isinstance(value, datetime) and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+
+class ORMModel(UTCSchema):
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -269,7 +293,7 @@ class ProcessOut(ORMModel):
     created_at: Optional[datetime] = None
 
 
-class ProcessStatOut(BaseModel):
+class ProcessStatOut(UTCSchema):
     """流程概览：下拉与统计使用。"""
 
     process_id: str
@@ -649,7 +673,7 @@ class RecordPageOut(BaseModel):
     items: List[RecordOut]
 
 
-class TraceStep(BaseModel):
+class TraceStep(UTCSchema):
     station_id: str
     station_name: str
     step_order: int

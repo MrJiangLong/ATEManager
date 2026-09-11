@@ -12,12 +12,14 @@ from pathlib import Path
 from .config import settings
 
 _FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-18s | %(message)s"
+# 日志 asctime 走本地时间，而业务数据一律存 UTC，故必须带偏移量，否则两者差一个时区
+_DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 _LEVEL = settings.LOG_LEVEL.upper()
 
 
 def _console_handler() -> logging.Handler:
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+    handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
     return handler
 
 
@@ -28,7 +30,7 @@ def _file_handler():
         handler = RotatingFileHandler(
             log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
         )
-        handler.setFormatter(logging.Formatter(_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+        handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
         return handler
     except OSError as exc:
         print(f"[warn] 日志文件初始化失败({exc})，仅输出到控制台")

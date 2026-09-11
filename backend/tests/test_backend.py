@@ -9,7 +9,7 @@
     B. 正常流转：DPO 4 站 / MSO 6 站全流程盖章
     C. 需求 2：跳站 403、复测 409、工艺不符 400、固件 403、用例ID 400
     D. 需求 1：落库 ACK、幂等重传、ack 校验端点
-    E. 漏测拦截 400、连续失败锁定 403、锁超时接管
+    E. 漏测拦截 400、连续失败锁定 403、锁超时接管、主动释放锁
     F. 维修处置：RETEST / ROLLBACK / RESET / SCRAP
     G. 台账追溯与仪表盘统计
 """
@@ -1144,6 +1144,64 @@ def test_process_status():
     check(resp.status_code == 201, f"reactivated process accepts model: {resp.text}")
 
 
+def test_client_release_lock():
+    """上位机主动放弃锁：释放锁与会话，但不计失败、不动画章，同工位可立即接管。"""
+    sn = new_sn("RELEASE")
+    pass_station("CAL_PARAM", sn)  # 先正常通过首站，留下印章作为"不应被改动"的基线
+
+    resp = checkin("CAL_IFACE", sn)
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    session_id = resp.json()["data"]["session_id"]
+    lock_token = resp.json()["data"]["lock_token"]
+
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        stamps_before = sorted(product.passed_stations)
+        fail_before = product.fail_count
+
+    resp = v1(
+        "release",
+        {
+            "client_id": CLIENTS["CAL_IFACE"],
+            "sn": sn,
+            "lock_token": lock_token,
+            "reason": "操作员取消测试",
+        },
+    )
+    check(resp.status_code == 200, f"release: {resp.status_code} {resp.text}")
+    data = resp.json()["data"]
+    check(data["released"] is True, f"released: {data}")
+    check(data["session_id"] == session_id, f"session id: {data}")
+
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.current_status == models.STATUS_IDLE, f"status after release: {product.current_status}")
+        check(product.lock_token is None, f"lock token must be cleared: {product.lock_token}")
+        # 主动放弃不能计一次失败——这与漏测拦截(400)的语义有本质区别
+        check(product.fail_count == fail_before, f"release must not count as failure: {product.fail_count}")
+        check(sorted(product.passed_stations) == stamps_before, f"stamps must stay: {product.passed_stations}")
+
+    resp = admin("GET", f"/api/admin/sessions/{session_id}")
+    check(resp.status_code == 200, f"session detail: {resp.text}")
+    check(resp.json()["status"] == models.SESSION_ABORTED, f"session status: {resp.json()}")
+    check("操作员取消测试" in (resp.json()["end_reason"] or ""), f"end reason: {resp.json()}")
+
+    # 同工位另一台机台应能立即进站，证明锁确实释放了
+    other = f"CLI-{STAMP}-RELEASE-OTHER"
+    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL_IFACE"})
+    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
+    check(resp.status_code == 200, f"re-check-in after release: {resp.status_code} {resp.text}")
+
+    # 未持锁的机台调用 release：不报错，但绝不能释放他人持有的锁
+    resp = v1("release", {"client_id": CLIENTS["CAL_PARAM"], "sn": sn, "reason": "无关机台"})
+    check(resp.status_code == 200, f"release by non-holder: {resp.text}")
+    check(resp.json()["data"]["released"] is False, f"must not release others: {resp.json()}")
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.current_status == models.STATUS_TESTING, f"other's lock must survive: {product.current_status}")
+        check(product.current_client == other, f"holder unchanged: {product.current_client}")
+
+
 def test_force_release_and_sessions_api():
     """运维强制解锁 + 会话管理接口。"""
     sn = new_sn("FORCE")
@@ -1215,6 +1273,7 @@ TESTS = [
     test_client_app_version_tracked,
     test_firmware_match_rule,
     test_process_status,
+    test_client_release_lock,
     test_force_release_and_sessions_api,
 ]
 

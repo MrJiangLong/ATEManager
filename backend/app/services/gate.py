@@ -877,10 +877,17 @@ def sweep_orphan_locks(db: Session) -> dict:
 
 
 def _station_of_client(db: Session, product: models.ProductStatus) -> str:
+    """current_client 绑定的工位；机台不存在或尚未绑定工位时返回空串。
+
+    station_id 可为空（上位机首次 resolve 会自动注册为未绑定），必须收敛成空串：
+    返回值随后会被当作主键传给 _timeout_of，None 会触发 SQLAlchemy 的全空主键告警。
+    """
     if not product.current_client:
         return ""
     client = db.get(models.StationClient, product.current_client)
-    return client.station_id if client else ""
+    if client is None or not client.station_id:
+        return ""
+    return client.station_id
 
 
 # =====================================================================
