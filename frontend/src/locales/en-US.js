@@ -330,7 +330,7 @@ export default {
     offline: 'Offline',
     bindStation: 'Bound Station',
     clientId: 'Station PC ID',
-    clientIdPh: 'e.g. CAL-DESK-01',
+    clientIdPh: 'e.g. SZ-L1-CAL-01',
     clientName: 'Station PC Name',
     clientNamePh: 'e.g. Line 1 Calibration Bench A',
     ipAddress: 'IP Address',

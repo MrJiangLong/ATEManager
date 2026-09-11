@@ -30,7 +30,7 @@
     >
       <el-form :model="form" label-position="top">
         <el-form-item :label="t('configs.stationId')" required>
-          <el-input v-model="form.station_id" :disabled="isEdit" placeholder="CAL_PARAM" />
+          <el-input v-model="form.station_id" :disabled="isEdit" placeholder="CAL-PARAM" />
         </el-form-item>
         <el-form-item :label="t('configs.stationName')">
           <el-input v-model="form.station_name" placeholder="校准-指标测试站位" />

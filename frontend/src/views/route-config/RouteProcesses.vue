@@ -45,7 +45,7 @@
     >
       <el-form :model="form" label-position="top">
         <el-form-item :label="t('configs.processId')" required>
-          <el-input v-model="form.process_id" :disabled="isEdit" placeholder="PROC_TEK_MSO" />
+          <el-input v-model="form.process_id" :disabled="isEdit" placeholder="PROC-SCOPE-MSO-AWG" />
         </el-form-item>
         <el-form-item :label="t('configs.processName')">
           <el-input v-model="form.process_name" placeholder="TEK数字示波器-带AWG选件流程" />
@@ -68,7 +68,7 @@
           </el-select>
         </el-form-item>
         <el-form-item :label="t('configs.cloneTo')" required>
-          <el-input v-model="cloneForm.to_process" placeholder="PROC_TEK_MSO6B" />
+          <el-input v-model="cloneForm.to_process" placeholder="PROC-SCOPE-MSO6-BASE" />
         </el-form-item>
       </el-form>
       <template #footer>
