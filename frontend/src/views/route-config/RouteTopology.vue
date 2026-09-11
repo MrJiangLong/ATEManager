@@ -30,9 +30,17 @@
           </el-select>
         </template>
       </el-table-column>
-      <el-table-column :label="t('configs.dependsOn')" min-width="260">
+      <el-table-column :label="t('configs.dependsOn')" min-width="320">
         <template #default="{ row }">
-          <el-select v-model="row.depends_on" multiple filterable collapse-tags collapse-tags-tooltip style="width:100%">
+          <el-select
+            v-model="row.depends_on"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            :max-collapse-tags="5"
+            style="width:100%"
+          >
             <el-option
               v-for="s in steps"
               :key="s.station_id"

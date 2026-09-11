@@ -15,7 +15,7 @@
         <el-table-column prop="client_id" :label="$t('clients.tableClient')" width="170">
           <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
         </el-table-column>
-        <el-table-column :label="$t('clients.clientName')" min-width="160" show-overflow-tooltip>
+        <el-table-column :label="$t('clients.clientName')" width="170" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.client_name">{{ row.client_name }}</span>
             <span v-else class="muted">{{ row.client_id }}</span>
