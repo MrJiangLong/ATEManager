@@ -66,6 +66,7 @@ _ADDED_COLUMNS = {
     "station_clients": {
         "app_version": "VARCHAR(50)",
         "created_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
+        "client_name": "VARCHAR(128)",
     },
     "product_models": {
         "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",

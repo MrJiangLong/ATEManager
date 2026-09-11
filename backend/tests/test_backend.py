@@ -1050,8 +1050,32 @@ def test_client_app_version_tracked():
     )
     check(resp.status_code == 201 and resp.json()["app_version"] == "2.6.0", f"manual register: {resp.text}")
 
+    # client_name：可填展示名，未填时回退为 client_id，保证列表永远有可读内容
+    named = f"CLI-{STAMP}-NAME"
+    resp = admin(
+        "POST",
+        "/api/admin/clients",
+        {"client_id": named, "station_id": "CAL_PARAM", "client_name": "Line1 Cal Bench A"},
+    )
+    check(
+        resp.status_code == 201 and resp.json()["client_name"] == "Line1 Cal Bench A",
+        f"explicit name: {resp.text}",
+    )
+
+    fallback = f"CLI-{STAMP}-FALLBACK"
+    resp = admin("POST", "/api/admin/clients", {"client_id": fallback, "station_id": "CAL_PARAM"})
+    check(
+        resp.status_code == 201 and resp.json()["client_name"] == fallback,
+        f"name must fall back to client_id: {resp.text}",
+    )
+
+    resp = admin("PUT", f"/api/admin/clients/{named}", {"client_name": ""})
+    check(resp.status_code == 200 and resp.json()["client_name"] is None, f"clear name: {resp.text}")
+
     admin("DELETE", f"/api/admin/clients/{cid}")
     admin("DELETE", f"/api/admin/clients/{manual}")
+    admin("DELETE", f"/api/admin/clients/{named}")
+    admin("DELETE", f"/api/admin/clients/{fallback}")
 
 
 def test_firmware_match_rule():

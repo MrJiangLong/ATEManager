@@ -332,6 +332,8 @@ export default {
     bindStation: '绑定工位',
     clientId: '机台编号',
     clientIdPh: '如 CAL-DESK-01',
+    clientName: '机台名称',
+    clientNamePh: '如 1号线校准台A',
     ipAddress: 'IP 地址',
     newClient: '注册机台',
     editClient: '编辑机台',

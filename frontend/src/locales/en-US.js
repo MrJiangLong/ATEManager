@@ -331,6 +331,8 @@ export default {
     bindStation: 'Bound Station',
     clientId: 'Station PC ID',
     clientIdPh: 'e.g. CAL-DESK-01',
+    clientName: 'Station PC Name',
+    clientNamePh: 'e.g. Line 1 Calibration Bench A',
     ipAddress: 'IP Address',
     newClient: 'Register Station PC',
     editClient: 'Edit Station PC',

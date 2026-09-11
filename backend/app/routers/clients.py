@@ -66,7 +66,10 @@ def create_client(payload: schemas.ClientCreateIn, db: Session = Depends(get_db)
     if db.get(models.StationClient, payload.client_id):
         raise conflict_error("client_already_registered", f"client_already_registered: {payload.client_id}")
     get_or_404(db, models.Station, payload.station_id, "station")
-    client = models.StationClient(**payload.model_dump())
+    data = payload.model_dump()
+    # 未填名称时回退为 client_id，保证列表永远有可读内容（同 stations.station_name）
+    data["client_name"] = payload.client_name or payload.client_id
+    client = models.StationClient(**data)
     db.add(client)
     db.commit()
     return _client_view(db, client)
@@ -89,6 +92,8 @@ def update_client(
             if client.station_id:
                 _assert_not_holding(db, client_id)
             client.station_id = None
+    if payload.client_name is not None:
+        client.client_name = payload.client_name or None
     if payload.ip_address is not None:
         client.ip_address = payload.ip_address
     db.commit()

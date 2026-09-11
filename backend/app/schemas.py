@@ -358,6 +358,7 @@ class StationUpdateIn(BaseModel):
 
 class ClientOut(ORMModel):
     client_id: str
+    client_name: Optional[str] = None
     station_id: Optional[str] = None
     ip_address: Optional[str] = None
     app_version: Optional[str] = None
@@ -370,12 +371,15 @@ class ClientOut(ORMModel):
 class ClientCreateIn(BaseModel):
     client_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
+    # 未填时由服务端回退为 client_id，与 stations.station_name 的兜底一致
+    client_name: Trimmed = Field(default="", max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
     app_version: Trimmed = Field(default=None, max_length=50)
 
 
 class ClientUpdateIn(BaseModel):
     station_id: Trimmed = Field(default=None, max_length=64)
+    client_name: Trimmed = Field(default=None, max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
 
 

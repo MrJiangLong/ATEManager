@@ -15,6 +15,12 @@
         <el-table-column prop="client_id" :label="$t('clients.tableClient')" width="170">
           <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
         </el-table-column>
+        <el-table-column :label="$t('clients.clientName')" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.client_name">{{ row.client_name }}</span>
+            <span v-else class="muted">{{ row.client_id }}</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="$t('clients.tableStation')" width="170">
           <template #default="{ row }">
             <el-tag v-if="row.station_id" size="small" effect="plain" type="primary">{{ row.station_id }}</el-tag>
@@ -76,6 +82,9 @@
         <el-form-item :label="$t('clients.clientId')" required>
           <el-input v-model="form.client_id" :disabled="isEdit" :placeholder="$t('clients.clientIdPh')" />
         </el-form-item>
+        <el-form-item :label="$t('clients.clientName')">
+          <el-input v-model="form.client_name" :placeholder="$t('clients.clientNamePh')" />
+        </el-form-item>
         <el-form-item :label="$t('clients.bindStation')" :required="!isEdit">
           <el-select v-model="form.station_id" filterable clearable style="width:100%">
             <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
@@ -116,7 +125,7 @@ const stationFilter = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
-const form = reactive({ client_id: '', station_id: '', ip_address: '' })
+const form = reactive({ client_id: '', client_name: '', station_id: '', ip_address: '' })
 
 async function load() {
   loading.value = true
@@ -134,13 +143,19 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { client_id: '', station_id: stationFilter.value || '', ip_address: '' })
+  Object.assign(form, {
+    client_id: '',
+    client_name: '',
+    station_id: stationFilter.value || '',
+    ip_address: '',
+  })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
   Object.assign(form, {
     client_id: row.client_id,
+    client_name: row.client_name || '',
     station_id: row.station_id || '',
     ip_address: row.ip_address || '',
   })
@@ -153,7 +168,11 @@ async function submit() {
   if (!isEdit.value && !form.station_id) return ElMessage.warning(t('errors.requiredField'))
   saving.value = true
   try {
-    const payload = { station_id: form.station_id, ip_address: form.ip_address || null }
+    const payload = {
+      station_id: form.station_id,
+      client_name: form.client_name || null,
+      ip_address: form.ip_address || null,
+    }
     if (isEdit.value) {
       await clientApi.update(form.client_id, payload)
     } else {
