@@ -14,10 +14,11 @@
       <el-select v-model="filters.status" clearable :placeholder="$t('sessions.filterStatus')" style="width: 140px">
         <el-option v-for="s in SESSION_STATUS_LIST" :key="s" :value="s" :label="$t(`sessionStatus.${s}`)" />
       </el-select>
-      <div class="filter-checks">
-        <el-checkbox v-model="filters.abnormal_only" :label="$t('sessions.abnormalOnly')" />
-        <el-checkbox v-model="zombieOnly" :label="$t('sessions.zombieOnly')" />
-      </div>
+      <!-- 异常终止 / 失联是跨状态的视图，独立成一个筛选项；清空即「全部」 -->
+      <el-select v-model="filters.view" clearable :placeholder="$t('sessions.filterView')" style="width: 150px">
+        <el-option value="abnormal" :label="$t('sessions.abnormalOnly')" />
+        <el-option value="zombie" :label="$t('sessions.zombieOnly')" />
+      </el-select>
       <template #extra>
         <el-button :icon="Refresh" @click="search">{{ $t('common.refresh') }}</el-button>
       </template>
@@ -37,11 +38,26 @@
           <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
         </el-table-column>
 
-        <el-table-column :label="$t('sessions.tableStatus')" width="120">
+        <!-- 状态列承载「这个会话现在怎么样」：运行中带心跳，异常终止带原因 -->
+        <el-table-column :label="$t('sessions.tableStatus')" min-width="210">
           <template #default="{ row }">
-            <el-tag size="small" :type="sessionTagType(row.status)" :effect="row.status === 'RUNNING' ? 'dark' : 'plain'">
-              {{ $t(`sessionStatus.${row.status}`) }}
-            </el-tag>
+            <div class="cell-stack">
+              <span class="status-line">
+                <el-tag
+                  size="small"
+                  :type="sessionTagType(row.status)"
+                  :effect="row.status === 'RUNNING' ? 'dark' : 'plain'"
+                >
+                  {{ $t(`sessionStatus.${row.status}`) }}
+                </el-tag>
+                <span v-if="row.status === 'RUNNING'" class="live" :class="liveClass(row)">
+                  <i class="live-dot" />{{ fmtRelative(row.last_heartbeat_at || row.started_at, t) }}
+                </span>
+              </span>
+              <span v-if="row.end_reason" class="muted cell-sub end-reason" :title="row.end_reason">
+                {{ row.end_reason }}
+              </span>
+            </div>
           </template>
         </el-table-column>
 
@@ -64,16 +80,6 @@
         <el-table-column :label="$t('sessions.tableCheckpoint')" width="100" align="right">
           <template #default="{ row }">
             <span :class="{ 'muted': !row.item_count }">{{ row.item_count }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column :label="$t('sessions.tableHeartbeat')" min-width="140">
-          <template #default="{ row }">
-            <span v-if="row.status === 'RUNNING'" class="live" :class="liveClass(row)">
-              <i class="live-dot" />
-              {{ fmtRelative(row.last_heartbeat_at || row.started_at, t) }}
-            </span>
-            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
 
@@ -147,8 +153,7 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const zombieOnly = ref(false)
-const filters = reactive({ sn: '', station_id: '', status: '', abnormal_only: false })
+const filters = reactive({ sn: '', station_id: '', status: '', view: '' })
 
 const drawerVisible = ref(false)
 const current = ref(null)
@@ -163,17 +168,22 @@ function liveClass(row) {
 async function load() {
   loading.value = true
   try {
-    const params = { page: page.value, page_size: pageSize.value }
-    if (filters.sn) params.sn = filters.sn
-    if (filters.station_id) params.station_id = filters.station_id
-    if (filters.abnormal_only) params.abnormal_only = true
-    else if (filters.status) params.status = filters.status
-
-    const res = zombieOnly.value
-      ? await sessionApi.zombieLocks({ page: page.value, page_size: pageSize.value })
-      : await sessionApi.list(params)
-    items.value = res.data.items
-    total.value = res.data.total
+    if (filters.view === 'zombie') {
+      // 失联锁走专用端点
+      const res = await sessionApi.zombieLocks({ page: page.value, page_size: pageSize.value })
+      items.value = res.data.items
+      total.value = res.data.total
+    } else {
+      const params = { page: page.value, page_size: pageSize.value }
+      if (filters.sn) params.sn = filters.sn
+      if (filters.station_id) params.station_id = filters.station_id
+      // 视图选「异常终止」时优先于具体状态（沿用后端 abnormal_only 语义）
+      if (filters.view === 'abnormal') params.abnormal_only = true
+      else if (filters.status) params.status = filters.status
+      const res = await sessionApi.list(params)
+      items.value = res.data.items
+      total.value = res.data.total
+    }
   } catch (e) {
     items.value = []
     total.value = 0
@@ -242,7 +252,7 @@ async function onForceRelease(row) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.station_id, filters.status, filters.abnormal_only, zombieOnly.value],
+  () => [filters.sn, filters.station_id, filters.status, filters.view],
   () => search()
 )
 
@@ -272,14 +282,15 @@ usePolling(async () => {
   flex: 1 1 auto;
   min-height: 0;
 }
-.filter-checks {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.filter-checks :deep(.el-checkbox) {
-  margin-right: 0;
-}
+/* 单元格两行堆叠：主信息 + 次要说明，形成主次层次 */
+.cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cell-sub { font-size: 12.5px; line-height: 1.4; }
+.status-line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 结束原因可能很长：单行截断，完整内容走 title */
+.end-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 易读优先：行高与内边距大于默认紧凑表格 */
+.sessions :deep(.el-table .el-table__cell) { padding: 11px 12px; }
 
 .sessions :deep(.el-table) {
   flex: 1 1 auto;

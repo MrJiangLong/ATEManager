@@ -1,6 +1,12 @@
 <template>
   <div class="clients fade-up">
     <PageToolbar :title="$t('clients.title')" :subtitle="$t('clients.subtitle')">
+      <el-input
+        v-model="keyword"
+        clearable
+        :placeholder="$t('clients.searchPh')"
+        style="width: 220px"
+      />
       <el-select v-model="stationFilter" clearable :placeholder="$t('clients.filterStation')" style="width:180px">
         <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
       </el-select>
@@ -11,37 +17,50 @@
     </PageToolbar>
 
     <DataCard>
-      <el-table v-loading="loading" :data="items" stripe size="small">
-        <el-table-column prop="client_id" :label="$t('clients.tableClient')" width="170">
-          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
-        </el-table-column>
-        <el-table-column :label="$t('clients.clientName')" width="170" show-overflow-tooltip>
+      <el-table
+        v-loading="loading"
+        :data="paged"
+        stripe
+        size="small"
+        style="width: 100%; table-layout: fixed"
+      >
+        <!-- 编号与名称是同一台机台的两种表示，合并为一列；名称为次要信息 -->
+        <el-table-column :label="$t('clients.tableMachine')" min-width="140">
           <template #default="{ row }">
-            <span v-if="row.client_name">{{ row.client_name }}</span>
-            <span v-else class="muted">{{ row.client_id }}</span>
+            <div class="cell-stack">
+              <span class="code">{{ row.client_id }}</span>
+              <span v-if="row.client_name" class="muted cell-sub">{{ row.client_name }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('clients.tableStation')" width="170">
+        <el-table-column :label="$t('clients.tableStation')" width="210">
           <template #default="{ row }">
             <el-tag v-if="row.station_id" size="small" effect="plain" type="primary">{{ row.station_id }}</el-tag>
             <el-tag v-else size="small" effect="plain" type="danger">{{ $t('clients.unbound') }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="ip_address" :label="$t('clients.tableIp')" width="140" />
-        <el-table-column :label="$t('clients.tableAppVersion')" width="130">
+        <!-- 接入信息（IP / 程序版本）属次要信息，统一降级为小字 -->
+        <el-table-column :label="$t('clients.tableAccess')" min-width="170">
           <template #default="{ row }">
-            <span v-if="row.app_version" class="code">{{ row.app_version }}</span>
-            <span v-else class="muted">—</span>
+            <!-- 空值不再用「—」占位：缺哪行少哪行，全缺才提示未上报 -->
+            <div v-if="row.ip_address || row.app_version" class="cell-stack">
+              <span v-if="row.ip_address" class="cell-sub">{{ row.ip_address }}</span>
+              <span v-if="row.app_version" class="muted cell-sub">{{ row.app_version }}</span>
+            </div>
+            <span v-else class="muted cell-sub">{{ $t('clients.notReported') }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('clients.tableOnline')" width="100">
+        <!-- 状态是主角：圆点 + 状态词 + 心跳时间；离线整体转为警示色 -->
+        <el-table-column :label="$t('clients.tableState')" min-width="170">
           <template #default="{ row }">
-            <span class="online-dot" :class="{ on: row.online }" />
-            <span class="muted">{{ row.online ? $t('clients.online') : $t('clients.offline') }}</span>
+            <div class="cell-stack state-cell" :class="row.online ? 'is-online' : 'is-offline'">
+              <span class="state-line">
+                <i class="state-dot" />
+                <span class="state-text">{{ row.online ? $t('clients.online') : $t('clients.offline') }}</span>
+              </span>
+              <span class="muted cell-sub">{{ fmtRelative(row.last_seen_at, t) }}</span>
+            </div>
           </template>
-        </el-table-column>
-        <el-table-column :label="$t('clients.tableLastSeen')" width="170">
-          <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.last_seen_at) }}</span></template>
         </el-table-column>
         <el-table-column :label="$t('clients.tableHolding')" min-width="180">
           <template #default="{ row }">
@@ -69,6 +88,18 @@
         </el-table-column>
         <template #empty><EmptyState :text="$t('common.noData')" /></template>
       </el-table>
+
+      <div class="pager">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="filtered.length"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          background
+          size="small"
+        />
+      </div>
     </DataCard>
 
     <el-dialog
@@ -103,7 +134,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
@@ -113,7 +144,7 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
-import { fmtDateTime } from '../utils/format'
+import { fmtRelative } from '../utils/format'
 
 const { t } = useI18n()
 const { stations, loadProcesses } = useProcesses()
@@ -121,6 +152,7 @@ const { stations, loadProcesses } = useProcesses()
 const items = ref([])
 const loading = ref(false)
 const stationFilter = ref('')
+const keyword = ref('')
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -140,6 +172,33 @@ async function load() {
     loading.value = false
   }
 }
+
+// 机台档案一次全量返回，搜索在本地过滤即可
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return items.value
+  return items.value.filter((c) =>
+    [c.client_id, c.client_name, c.ip_address].some((v) =>
+      String(v || '').toLowerCase().includes(kw)
+    )
+  )
+})
+
+const page = ref(1)
+const pageSize = ref(20)
+// 过滤是本地的，分页同样本地做；过滤条件变化时回到第一页
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
+watch([keyword, stationFilter], () => {
+  page.value = 1
+})
+// 删除或刷新后总数变少时，防止当前页越界留白
+watch(() => filtered.value.length, (len) => {
+  const maxPage = Math.max(1, Math.ceil(len / pageSize.value))
+  if (page.value > maxPage) page.value = maxPage
+})
 
 function openCreate() {
   isEdit.value = false
@@ -244,10 +303,26 @@ usePolling(load, 20000)
 
 <style scoped>
 .clients { display: flex; flex-direction: column; gap: 16px; }
-.online-dot {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: #c3cfe6; margin-right: 6px; vertical-align: middle;
+/* 单元格内两行堆叠：主信息一行、次要信息一行，形成主次层次 */
+.cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cell-sub { font-size: 12.5px; line-height: 1.4; }
+
+/* 状态列：小号文字 + 圆点，靠颜色区分而非字号字重，避免喧宾夺主 */
+.state-line { display: inline-flex; align-items: center; gap: 6px; }
+.state-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--app-border, #c3cfe6); flex: none;
 }
-.online-dot.on { background: var(--app-success); box-shadow: 0 0 6px rgba(18, 183, 106, 0.8); }
+.state-text { font-weight: 500; }
+.state-cell.is-online .state-dot { background: var(--app-success, #12b76a); }
+.state-cell.is-online .state-text { color: var(--app-success, #12b76a); }
+.state-cell.is-offline .state-dot { background: var(--app-danger, #f56c6c); }
+.state-cell.is-offline .state-text { color: var(--app-danger, #f56c6c); }
+
+/* 字号与其他页面同一体系：正文继承默认 14px，辅助 12.5px 对齐全局 muted/code */
+.clients :deep(.el-table .el-table__cell) { padding: 11px 12px; }
+
+/* 分页脚靠右，与表格留出间距 */
+.pager { display: flex; justify-content: flex-end; padding-top: 12px; }
 .holding-lost { font-size: 11px; margin-top: 2px; }
 </style>

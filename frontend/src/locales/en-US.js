@@ -51,7 +51,6 @@ export default {
     action: 'Action',
     status: 'Status',
     enabled: 'Enabled',
-    disabled: 'Disabled',
     result: 'Result',
     noData: 'No data',
     yesDeleteItem: 'Delete this test item? This cannot be undone.',
@@ -138,7 +137,7 @@ export default {
     windowAvg: '{days}d avg {n}%',
     lockTitle: 'Active Locks',
     lockUnit: 'held',
-    lockHint: 'Lost locks can be taken over by another station',
+    lockHint: 'Lost locks can be taken over',
     lockActive: 'Active',
     lockZombie: 'Zombie',
     trendTitle: 'Throughput & Yield Trend',
@@ -201,7 +200,7 @@ export default {
     lockIdleTip: 'Since last heartbeat',
     lockLeaseTip: 'Hard timeout left',
     lockZombieTip: 'Station likely crashed: can be taken over or force-released',
-    zombieOnly: 'Zombie locks only',
+    zombieOnly: 'Lost locks only',
     // ---- Detail drawer ----
     drawerTitle: 'WIP Detail',
     sectionProgress: 'Process Progress',
@@ -219,10 +218,11 @@ export default {
 
   sessions: {
     title: 'Test Sessions',
-    subtitle: 'Crash-resume checkpoints, lock takeover and abnormal termination trace',
+    subtitle: 'Checkpoints, lock takeover and abnormal ends',
     searchSn: 'Serial Number',
     filterStation: 'Station',
     filterStatus: 'Status',
+    filterView: 'Abnormal / Lost',
     abnormalOnly: 'Abnormal only',
     tableSn: 'Serial Number',
     tableStation: 'Station',
@@ -230,7 +230,6 @@ export default {
     tableAttempt: 'Attempts',
     tableStatus: 'Status',
     tableCheckpoint: 'Checkpoint',
-    tableHeartbeat: 'Heartbeat',
     tableStarted: 'Started',
     tableEndReason: 'End Reason',
     sessionId: 'Session ID',
@@ -250,7 +249,7 @@ export default {
     heartbeatAt: 'Last heartbeat',
     endedAt: 'Ended at',
     endedBy: 'Operator',
-    noEndReason: 'Session is running, no end reason yet',
+    noEndReason: 'Running — no end reason yet',
     attemptTipMany: '{n} attempts (auto-resumed after crash)',
     attemptTipFirst: 'First attempt, no interruption',
     zombieOnly: 'Lost locks only',
@@ -258,7 +257,7 @@ export default {
 
   trace: {
     title: 'SN Full Lifecycle Trace',
-    subtitle: 'Step topology progress, event ledger and repair history',
+    subtitle: 'Topology progress, event ledger and repair history',
     backToList: 'Back to WIP',
     targetSn: 'Serial Number',
     dependsOn: 'Depends On',
@@ -274,7 +273,7 @@ export default {
 
   records: {
     title: 'Event Ledger',
-    subtitle: 'Check-out records with Case ID level detail',
+    subtitle: 'Check-out records with Case ID detail',
     searchSn: 'Serial Number',
     filterModel: 'Model',
     filterStation: 'Station',
@@ -300,7 +299,7 @@ export default {
 
   repairs: {
     title: 'Repair',
-    subtitle: 'RETEST / ROLLBACK / RESET / SCRAP history and registration',
+    subtitle: 'Repair actions and history',
     quickTitle: 'Quick Register',
     tableId: 'ID',
     tableSn: 'Serial Number',
@@ -316,18 +315,18 @@ export default {
 
   clients: {
     title: 'Stations',
-    subtitle: 'Physical test PCs and logical station binding',
+    subtitle: 'Test PCs and their station bindings',
     filterStation: 'Station',
-    tableClient: 'Station PC',
+    tableMachine: 'Station PC',
+    tableState: 'Status',
+    tableAccess: 'Connection',
+    searchPh: 'Search ID / name / IP',
     tableStation: 'Bound Station',
-    tableIp: 'IP Address',
-    tableAppVersion: 'App Version',
-    tableOnline: 'Online',
-    tableLastSeen: 'Last Heartbeat',
     tableHolding: 'Holding SN',
-    holdingLost: 'Station lost, lock is reclaimable',
+    holdingLost: 'Station lost, lock reclaimable',
     online: 'Online',
     offline: 'Offline',
+    notReported: 'Not reported',
     bindStation: 'Bound Station',
     clientId: 'Station PC ID',
     clientIdPh: 'e.g. SZ-L1-CAL-01',
@@ -342,7 +341,7 @@ export default {
 
   configs: {
     title: 'Process Config',
-    subtitle: 'Static rules: Process → Model → Station → Step topology → Case ID items',
+    subtitle: 'Process → Model → Station → Steps → Test items',
     tabProcesses: 'Processes',
     tabModels: 'Models',
     tabStations: 'Stations',

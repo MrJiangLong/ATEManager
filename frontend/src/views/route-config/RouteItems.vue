@@ -15,7 +15,7 @@
       </el-button>
     </div>
 
-    <el-table v-loading="loading" :data="items" stripe size="small">
+    <el-table v-loading="loading" :data="paged" stripe size="small">
       <el-table-column prop="station_id" :label="t('configs.tabStations')" width="150">
         <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
       </el-table-column>
@@ -49,6 +49,18 @@
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
+
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="items.length"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        background
+        size="small"
+      />
+    </div>
 
     <el-dialog
       v-model="dialogVisible"
@@ -95,6 +107,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 import CaseIdText from '../../components/CaseIdText.vue'
 
@@ -105,6 +118,7 @@ const processId = ref('')
 const stationFilter = ref('')
 const items = ref([])
 const loading = ref(false)
+const { page, pageSize, paged } = useLocalPagination(items)
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -204,7 +218,10 @@ async function onDelete(row) {
   }
 }
 
-watch([processId, stationFilter], () => loadItems())
+watch([processId, stationFilter], () => {
+  page.value = 1
+  loadItems()
+})
 
 onMounted(async () => {
   await loadProcesses()

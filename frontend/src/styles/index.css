@@ -245,6 +245,9 @@ body {
 .muted { color: var(--app-text-sub); font-size: 12.5px; }
 .text-danger { color: var(--app-danger, #f56c6c); font-weight: 600; }
 
+/* 数据表分页脚：靠右，与表格留出间距 */
+.pager { display: flex; justify-content: flex-end; padding-top: 12px; }
+
 .code {
   font-family: var(--app-font-mono);
   font-size: 12.5px;

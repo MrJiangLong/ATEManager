@@ -109,19 +109,21 @@ ITEMS = [
 DPO_EXCLUDED = {"CAL-AWG", "TST-AWG"}
 
 CLIENTS = [
-    ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11"),
-    ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12"),
-    ("SZ-L1-CAL-03", "CAL-AWG", "10.1.60.13"),
+    # 第 4 列是上位机自报的 app_version：真机上由 gate 在注册/心跳时刷新，
+    # seed 里直接给定值，便于演示机台清单的「接入信息」列
+    ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11", "V1.4.2"),
+    ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12", "V1.4.2"),
+    ("SZ-L1-CAL-03", "CAL-AWG", "10.1.60.13", "V1.4.2"),
     # 备用机台：与主机台同工位，用于承载演示场景数据
     # 一台机台同时只应持有一把工位锁，故每个持锁的场景件各占一台
-    ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17"),
-    ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18"),
-    ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11"),
-    ("SZ-L1-TST-02", "TST-IFACE", "10.1.61.12"),
-    ("SZ-L1-TST-03", "TST-AWG", "10.1.61.13"),
+    ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17", "V1.4.1"),
+    ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18", "V1.4.2"),
+    ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11", "V1.4.2"),
+    ("SZ-L1-TST-02", "TST-IFACE", "10.1.61.12", "V1.4.1"),
+    ("SZ-L1-TST-03", "TST-AWG", "10.1.61.13", "V1.4.2"),
     # 备用机台：与主机台同工位，用于演示"崩溃后被接管"
-    ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19"),
-    ("SZ-L1-TST-09", "TST-PARAM", "10.1.61.19"),
+    ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19", None),
+    ("SZ-L1-TST-09", "TST-PARAM", "10.1.61.19", None),
 ]
 
 STATION_CLIENT = {c[1]: c[0] for c in CLIENTS}
@@ -485,9 +487,13 @@ def _seed_static_rules(db) -> None:
             )
 
     existing_clients = {row[0] for row in db.query(StationClient.client_id).all()}
-    for client_id, station_id, ip in CLIENTS:
+    for client_id, station_id, ip, app_version in CLIENTS:
         if client_id not in existing_clients:
-            db.add(StationClient(client_id=client_id, station_id=station_id, ip_address=ip))
+            db.add(
+                StationClient(
+                    client_id=client_id, station_id=station_id, ip_address=ip, app_version=app_version
+                )
+            )
     db.commit()
 
 
@@ -648,17 +654,21 @@ def _ensure_scenario_clients(db) -> None:
     会出现"会话里的机台在机台档案中查不到"。既有的库升级时尤其需要这一步。
     """
     existing = {row[0] for row in db.query(StationClient.client_id).all()}
-    for client_id, station_id, ip in (
-        ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11"),
-        ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17"),
-        ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18"),
-        ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19"),
-        ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12"),
-        ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11"),
+    for client_id, station_id, ip, app_version in (
+        ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11", "V1.4.2"),
+        ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17", "V1.4.1"),
+        ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18", "V1.4.2"),
+        ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19", None),
+        ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12", "V1.4.2"),
+        ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11", "V1.4.2"),
     ):
         # 已存在则跳过：本函数的目的是"确保档案存在"，不该覆盖管理员改过的绑定/IP
         if client_id not in existing:
-            db.add(StationClient(client_id=client_id, station_id=station_id, ip_address=ip))
+            db.add(
+                StationClient(
+                    client_id=client_id, station_id=station_id, ip_address=ip, app_version=app_version
+                )
+            )
     db.commit()
 
 

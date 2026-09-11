@@ -32,11 +32,6 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableStatus')" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(statusKey(row))" size="small">{{ statusLabel(row) }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column :label="$t('products.tableProgress')" min-width="130">
           <template #default="{ row }">
             <div class="progress-cell">
@@ -48,6 +43,11 @@
               />
               <span class="progress-text muted">{{ row.passed_count }}/{{ row.total_steps }}</span>
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column :label="$t('products.tableStatus')" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(statusKey(row))" size="small">{{ statusLabel(row) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="fail_count" :label="$t('products.tableFailCount')" width="96" align="center">

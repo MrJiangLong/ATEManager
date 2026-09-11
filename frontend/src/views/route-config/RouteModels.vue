@@ -10,7 +10,7 @@
       <el-button type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="filtered" stripe size="small">
+    <el-table v-loading="loading" :data="paged" stripe size="small">
       <el-table-column prop="product_model" :label="t('configs.modelId')" width="180">
         <template #default="{ row }"><span class="code">{{ row.product_model }}</span></template>
       </el-table-column>
@@ -40,6 +40,18 @@
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
+
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="filtered.length"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        background
+        size="small"
+      />
+    </div>
 
     <el-dialog
       v-model="dialogVisible"
@@ -87,6 +99,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { modelApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
@@ -109,6 +122,7 @@ const form = reactive({
 const filtered = computed(() =>
   processFilter.value ? list.value.filter((m) => m.process_id === processFilter.value) : list.value
 )
+const { page, pageSize, paged } = useLocalPagination(filtered)
 
 // 停用（归档）的流程不再接受新绑定；但已绑该流程的机型仍需可见可改，故保留当前值
 const selectableProcesses = computed(() =>
@@ -194,7 +208,10 @@ async function onDelete(row) {
   }
 }
 
-watch(processFilter, () => loadModels())
+watch(processFilter, () => {
+  page.value = 1
+  loadModels()
+})
 onMounted(async () => {
   await loadProcesses()
   await loadModels()

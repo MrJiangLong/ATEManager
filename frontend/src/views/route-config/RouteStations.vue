@@ -4,7 +4,7 @@
       <el-button type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="list" stripe size="small">
+    <el-table v-loading="loading" :data="paged" stripe size="small">
       <el-table-column prop="station_id" :label="t('configs.stationId')" width="180">
         <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
       </el-table-column>
@@ -20,6 +20,18 @@
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
+
+    <div class="pager">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="list.length"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        background
+        size="small"
+      />
+    </div>
 
     <el-dialog
       v-model="dialogVisible"
@@ -54,12 +66,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { stationApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
 const { loadProcesses } = useProcesses()
 const list = ref([])
 const loading = ref(false)
+const { page, pageSize, paged } = useLocalPagination(list)
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)
