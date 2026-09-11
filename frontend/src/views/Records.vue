@@ -39,8 +39,12 @@
                 · {{ $t('records.durationMs') }}: {{ fmtDurationMs(row.duration_ms) }}
               </div>
               <el-table :data="row.executed_items?.items || []" size="small" border>
-                <el-table-column prop="case_id" :label="$t('configs.caseId')" min-width="220" show-overflow-tooltip>
-                  <template #default="{ row: it }"><span class="code">{{ it.case_id }}</span></template>
+                <el-table-column :label="$t('configs.caseId')" min-width="220">
+                  <template #default="{ row: it }">
+                    <el-tooltip :content="it.case_id" placement="top" :show-after="400">
+                      <CaseIdText :value="it.case_id" />
+                    </el-tooltip>
+                  </template>
                 </el-table-column>
                 <el-table-column :label="$t('common.result')" width="90">
                   <template #default="{ row: it }">
@@ -120,6 +124,7 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import { useProcesses } from '../composables/useProcesses'
 import { TEST_RESULTS } from '../utils/constants'
+import CaseIdText from '../components/CaseIdText.vue'
 import { fmtDateTime, fmtDurationMs, resultTagType } from '../utils/format'
 
 const { t } = useI18n()

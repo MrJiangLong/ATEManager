@@ -19,8 +19,12 @@
       <el-table-column prop="station_id" :label="t('configs.tabStations')" width="150">
         <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
       </el-table-column>
-      <el-table-column prop="case_id" :label="t('configs.caseId')" min-width="240" show-overflow-tooltip>
-        <template #default="{ row }"><span class="code">{{ row.case_id }}</span></template>
+      <el-table-column :label="t('configs.caseId')" min-width="240">
+        <template #default="{ row }">
+          <el-tooltip :content="row.case_id" placement="top" :show-after="400">
+            <CaseIdText :value="row.case_id" />
+          </el-tooltip>
+        </template>
       </el-table-column>
       <el-table-column prop="item_name" :label="t('configs.itemName')" min-width="200" show-overflow-tooltip />
       <el-table-column :label="t('configs.mandatory')" width="100" align="center">
@@ -92,6 +96,7 @@ import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import { useProcesses } from '../../composables/useProcesses'
+import CaseIdText from '../../components/CaseIdText.vue'
 
 const { t } = useI18n()
 const { processes, stations, loadProcesses } = useProcesses()

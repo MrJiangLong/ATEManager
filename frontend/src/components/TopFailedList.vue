@@ -9,7 +9,7 @@
     >
       <span class="rank-no" :class="{ 'is-top': i < 3 }">{{ i + 1 }}</span>
       <div class="rank-main">
-        <span class="rank-id code">{{ row.case_id }}</span>
+        <CaseIdText :value="row.case_id" class="rank-id" />
         <span v-if="row.item_name && row.item_name !== row.case_id" class="rank-name muted">
           {{ row.item_name }}
         </span>
@@ -24,6 +24,7 @@
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import EmptyState from './EmptyState.vue'
+import CaseIdText from './CaseIdText.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
