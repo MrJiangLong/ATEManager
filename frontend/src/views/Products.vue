@@ -24,7 +24,7 @@
         <el-table-column prop="sn" :label="$t('products.tableSn')" width="152" fixed show-overflow-tooltip>
           <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableModel')" width="128" show-overflow-tooltip>
+        <el-table-column :label="$t('products.tableModel')" width="168" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="model-cell">
               <span>{{ row.product_model }}</span>
@@ -34,10 +34,10 @@
         </el-table-column>
         <el-table-column :label="$t('products.tableStatus')" width="100" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.current_status)" size="small">{{ statusLabel(row) }}</el-tag>
+            <el-tag :type="statusTagType(statusKey(row))" size="small">{{ statusLabel(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableProgress')" min-width="150">
+        <el-table-column :label="$t('products.tableProgress')" min-width="130">
           <template #default="{ row }">
             <div class="progress-cell">
               <el-progress
@@ -50,7 +50,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="fail_count" :label="$t('products.tableFailCount')" width="80" align="center">
+        <el-table-column prop="fail_count" :label="$t('products.tableFailCount')" width="96" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.fail_count" type="danger" size="small">{{ row.fail_count }}</el-tag>
             <span v-else class="muted">0</span>
@@ -182,9 +182,13 @@ function search() {
   else page.value = 1
 }
 
+// 已完工是派生状态：库里 current_status 仍是 IDLE，靠 is_completed 区分。
+// 文案与配色必须共用同一个状态键，否则会出现「文字已完工、颜色仍是待处理的灰」。
+function statusKey(row) {
+  return row.is_completed ? 'COMPLETED' : row.current_status
+}
 function statusLabel(row) {
-  if (row.is_completed) return t('status.COMPLETED')
-  return t(`status.${row.current_status}`)
+  return t(`status.${statusKey(row)}`)
 }
 function progressPct(row) {
   if (!row.total_steps) return 0

@@ -9,7 +9,7 @@
   >
     <template v-if="row">
       <div class="summary">
-        <el-tag :type="statusTagType(detail?.current_status || row.current_status)" size="small">
+        <el-tag :type="statusTagType(statusKey)" size="small">
           {{ statusLabel }}
         </el-tag>
         <span class="summary-sn code">{{ row.sn }}</span>
@@ -154,11 +154,13 @@ const detail = ref(null)
 const steps = ref([])
 const events = ref([])
 
-const statusLabel = computed(() => {
-  const status = detail.value?.current_status || props.row?.current_status
-  if (props.row?.is_completed) return t('status.COMPLETED')
-  return t(`status.${status}`)
+// 已完工是派生状态（库里 current_status 仍是 IDLE），文案与配色共用同一个状态键，
+// 否则会出现「文字已完工、颜色仍是待处理的灰」
+const statusKey = computed(() => {
+  const product = detail.value || props.row
+  return product?.is_completed ? 'COMPLETED' : product?.current_status
 })
+const statusLabel = computed(() => t(`status.${statusKey.value}`))
 
 async function onOpen() {
   if (!props.row?.sn) return
