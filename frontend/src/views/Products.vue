@@ -24,7 +24,7 @@
         <el-table-column prop="sn" :label="$t('products.tableSn')" width="152" fixed show-overflow-tooltip>
           <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableModel')" width="168" show-overflow-tooltip>
+        <el-table-column :label="$t('products.tableModel')" width="210" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="model-cell">
               <span>{{ row.product_model }}</span>

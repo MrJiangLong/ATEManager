@@ -530,7 +530,10 @@ def main() -> int:
     state_dir.mkdir(exist_ok=True)
     for si, sid in enumerate(stations):
         for i in range(1, args.clients + 1):
-            cid = f"SIM-{sid}-{i:02d}"
+            # client_id 必须符合后端 ID 规则 <SITE>-<LINE>-<STAGE>-<NN>[-<USE>]：
+            # 用固定仿真线号 L9，工位的 DOMAIN 段放进可选后缀，保证跨工位唯一且可读
+            stage, _, domain = sid.partition("-")
+            cid = f"SZ-L9-{stage}-{i:02d}-{domain}" if domain else f"SZ-L9-{stage}-{i:02d}"
             admin.ensure_client(cid, sid, f"10.9.{si + 1}.{10 + i}")
             workers.append(Station(
                 client_id=cid, station_id=sid, base_url=args.base_url, api_key=args.api_key,
