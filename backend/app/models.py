@@ -224,7 +224,7 @@ class StationClient(Base):
     __tablename__ = "station_clients"
 
     client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    # 展示名：client_id 是 CAL-DESK-01 这类工位编码，补一个可读名称便于现场辨认
+    # 展示名：client_id 是 SZ-L1-CAL-01 这类工位编码，补一个可读名称便于现场辨认
     client_name: Mapped[Optional[str]] = mapped_column(String(128))
     # 可为空：/client/resolve 会自动注册未绑定工位的机台，工位由 Web 端后补。
     # 用 NULL 而非空串 —— 空串会撞 stations 外键（PG 生效、SQLite 未开 pragma 而放行）。

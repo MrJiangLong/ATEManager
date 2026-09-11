@@ -14,6 +14,7 @@
     G. 台账追溯与仪表盘统计
 """
 
+import itertools
 import os
 import sys
 import time
@@ -54,53 +55,53 @@ client = TestClient(app)
 
 # ---------------- 夹具 ----------------
 STAMP = int(time.time())
-P_MSO = f"PROC_MSOX-{STAMP}"
-P_DPO = f"PROC_DPOX-{STAMP}"
+P_MSO = f"PROC-TEST-MSO-{STAMP}"
+P_DPO = f"PROC-TEST-DPO-{STAMP}"
 M_MSO = "MSO4054B"
 M_DPO = "DPO4054B"
 FW = "V3.20"
 
 STATIONS = [
-    ("CAL_PARAM", "校准-指标测试站位", 1800),
-    ("CAL_IFACE", "校准-接口测试站位", 600),
-    ("CAL_AWG", "校准-AWG站位", 300),
-    ("TST_PARAM", "测试-指标测试站位", 1800),
-    ("TST_IFACE", "测试-接口测试站位", 900),
-    ("TST_AWG", "测试-AWG站位", 600),
+    ("CAL-PARAM", "校准-指标测试站位", 1800),
+    ("CAL-IFACE", "校准-接口测试站位", 600),
+    ("CAL-AWG", "校准-AWG站位", 300),
+    ("TST-PARAM", "测试-指标测试站位", 1800),
+    ("TST-IFACE", "测试-接口测试站位", 900),
+    ("TST-AWG", "测试-AWG站位", 600),
 ]
 CLIENTS = {
-    "CAL_PARAM": f"CLI-{STAMP}-CALP",
-    "CAL_IFACE": f"CLI-{STAMP}-CALI",
-    "CAL_AWG": f"CLI-{STAMP}-CALA",
-    "TST_PARAM": f"CLI-{STAMP}-TSTP",
-    "TST_IFACE": f"CLI-{STAMP}-TSTI",
-    "TST_AWG": f"CLI-{STAMP}-TSTA",
+    "CAL-PARAM": "SZ-L1-CAL-01",
+    "CAL-IFACE": "SZ-L1-CAL-02",
+    "CAL-AWG": "SZ-L1-CAL-03",
+    "TST-PARAM": "SZ-L1-TST-01",
+    "TST-IFACE": "SZ-L1-TST-02",
+    "TST-AWG": "SZ-L1-TST-03",
 }
 # MSO 6 站 / DPO 4 站（物理剔除 AWG）
 MSO_TOPOLOGY = [
-    ("CAL_PARAM", 10, []),
-    ("CAL_IFACE", 20, ["CAL_PARAM"]),
-    ("CAL_AWG", 30, ["CAL_PARAM"]),
-    ("TST_PARAM", 40, ["CAL_PARAM", "CAL_IFACE", "CAL_AWG"]),
-    ("TST_IFACE", 50, ["TST_PARAM"]),
-    ("TST_AWG", 60, ["TST_PARAM"]),
+    ("CAL-PARAM", 10, []),
+    ("CAL-IFACE", 20, ["CAL-PARAM"]),
+    ("CAL-AWG", 30, ["CAL-PARAM"]),
+    ("TST-PARAM", 40, ["CAL-PARAM", "CAL-IFACE", "CAL-AWG"]),
+    ("TST-IFACE", 50, ["TST-PARAM"]),
+    ("TST-AWG", 60, ["TST-PARAM"]),
 ]
 DPO_TOPOLOGY = [
-    ("CAL_PARAM", 10, []),
-    ("CAL_IFACE", 20, ["CAL_PARAM"]),
-    ("TST_PARAM", 30, ["CAL_PARAM", "CAL_IFACE"]),
-    ("TST_IFACE", 40, ["TST_PARAM"]),
+    ("CAL-PARAM", 10, []),
+    ("CAL-IFACE", 20, ["CAL-PARAM"]),
+    ("TST-PARAM", 30, ["CAL-PARAM", "CAL-IFACE"]),
+    ("TST-IFACE", 40, ["TST-PARAM"]),
 ]
 ITEMS = {
-    "CAL_PARAM": ["test_amp_cal", "test_phase_cal"],
-    "CAL_IFACE": ["test_noise", "test_touch"],
-    "CAL_AWG": ["test_1k_dc"],
-    "TST_PARAM": ["test_timebase", "test_amp_ac"],
-    "TST_IFACE": ["test_line_trig", "test_runt_trig"],
-    "TST_AWG": ["test_aux_chk", "test_afg_sine_osc"],
+    "CAL-PARAM": ["test_amp_cal", "test_phase_cal"],
+    "CAL-IFACE": ["test_noise", "test_touch"],
+    "CAL-AWG": ["test_1k_dc"],
+    "TST-PARAM": ["test_timebase", "test_amp_ac"],
+    "TST-IFACE": ["test_line_trig", "test_runt_trig"],
+    "TST-AWG": ["test_aux_chk", "test_afg_sine_osc"],
 }
 
-# MSO 流程生效的用例ID总数（CAL_PARAM 2 + CAL_IFACE 2 + CAL_AWG 1 + TST_PARAM 2 + TST_IFACE 2 + TST_AWG 2）
+# MSO 流程生效的用例ID总数（CAL-PARAM 2 + CAL-IFACE 2 + CAL-AWG 1 + TST-PARAM 2 + TST-IFACE 2 + TST-AWG 2）
 MSO_ITEM_COUNT = sum(len(v) for v in ITEMS.values())
 
 API_KEY = "test-api-key-12345"
@@ -143,6 +144,17 @@ def admin(method, path, body=None, params=None):
 
 def new_sn(tag):
     return f"SN-{STAMP}-{tag}"
+
+
+_CLIENT_SEQ = itertools.count(1)
+
+
+def new_client_id(stage: str = "CAL") -> str:
+    """合规且唯一的机台编号（README 7.2）。
+
+    测试专用 L9 产线，避免与夹具 CLIENTS 占用的 L1 序号冲突。
+    """
+    return f"SZ-L9-{stage}-{next(_CLIENT_SEQ):02d}"
 
 
 def checkin(station, sn, model=M_DPO, firmware=FW, case_ids=None):
@@ -242,7 +254,7 @@ def test_topology_and_items():
         check(len(resp.json()) == len(topology), f"topology size {pid}: {resp.text}")
 
         for sid, case_ids in ITEMS.items():
-            if pid == P_DPO and sid in ("CAL_AWG", "TST_AWG"):
+            if pid == P_DPO and sid in ("CAL-AWG", "TST-AWG"):
                 continue
             for case_id in case_ids:
                 resp = admin(
@@ -264,13 +276,13 @@ def test_validate_ok_and_cycle():
         check(resp.status_code == 200 and resp.json()["ok"] is True, f"validate {pid}: {resp.text}")
 
     # 人为制造成环
-    bad = f"PROC_BAD-{STAMP}"
+    bad = f"PROC-TEST-BAD-{STAMP}"
     admin("POST", "/api/admin/processes", {"process_id": bad, "process_name": "cycle demo"})
-    admin("POST", "/api/admin/stations", {"station_id": "S1", "station_name": "S1"})
-    admin("POST", "/api/admin/stations", {"station_id": "S2", "station_name": "S2"})
+    admin("POST", "/api/admin/stations", {"station_id": "TST-CYCLE1", "station_name": "TST-CYCLE1"})
+    admin("POST", "/api/admin/stations", {"station_id": "TST-CYCLE2", "station_name": "TST-CYCLE2"})
     cycle = [
-        {"station_id": "S1", "step_order": 10, "depends_on": ["S2"]},
-        {"station_id": "S2", "step_order": 20, "depends_on": ["S1"]},
+        {"station_id": "TST-CYCLE1", "step_order": 10, "depends_on": ["TST-CYCLE2"]},
+        {"station_id": "TST-CYCLE2", "step_order": 20, "depends_on": ["TST-CYCLE1"]},
     ]
     # 保存前校验会拦下成环拓扑
     resp = admin("PUT", "/api/admin/routing/stations", cycle, params={"process_id": bad})
@@ -294,7 +306,7 @@ def test_validate_ok_and_cycle():
 def test_delete_guards():
     resp = admin("DELETE", f"/api/admin/processes/{P_MSO}")
     check(resp.status_code == 409 and "process_has_models" in resp.json()["code"], f"process guard: {resp.text}")
-    resp = admin("DELETE", f"/api/admin/stations/CAL_PARAM")
+    resp = admin("DELETE", f"/api/admin/stations/CAL-PARAM")
     check(resp.status_code == 409 and "station_in_topology" in resp.json()["code"], f"station guard: {resp.text}")
 
     # 机型无在制品时可删；删后重建，避免影响后续用例
@@ -309,7 +321,7 @@ def test_delete_guards():
 
     # 存在在制品时拒绝删除
     sn = new_sn("GUARD")
-    pass_station("CAL_PARAM", sn)
+    pass_station("CAL-PARAM", sn)
     resp = admin("DELETE", f"/api/admin/product-models/{M_DPO}")
     check(resp.status_code == 409 and resp.json()["code"] == "model_in_use", f"model guard: {resp.text}")
 
@@ -321,14 +333,14 @@ def test_station_item_guards():
     - 工步被移出拓扑时，其测试项须连带清理
     - 工位字典被测试项引用时拒绝删除；删除流程则连带清理
     """
-    pid = f"PROC_GUARD-{STAMP}"
+    pid = f"PROC-TEST-GUARD-{STAMP}"
     admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "item guard"})
     admin(
         "PUT",
         "/api/admin/routing/stations",
         [
-            {"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []},
-            {"station_id": "CAL_IFACE", "step_order": 20, "depends_on": ["CAL_PARAM"]},
+            {"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []},
+            {"station_id": "CAL-IFACE", "step_order": 20, "depends_on": ["CAL-PARAM"]},
         ],
         params={"process_id": pid},
     )
@@ -340,29 +352,29 @@ def test_station_item_guards():
             {"process_id": pid, "station_id": station_id, "case_id": case_id, "item_name": case_id},
         )
 
-    resp = create_item("CAL_PARAM", "tests/guard_a.py::test_one")
+    resp = create_item("CAL-PARAM", "tests/guard_a.py::test_one")
     check(resp.status_code == 201, f"item in topology must be 201: {resp.text}")
 
-    resp = create_item("TST_PARAM", "tests/guard_b.py::test_two")
+    resp = create_item("TST-PARAM", "tests/guard_b.py::test_two")
     check(
         resp.status_code == 400 and resp.json()["code"] == "station_not_in_process",
         f"item outside topology must be 400: {resp.text}",
     )
 
-    create_item("CAL_IFACE", "tests/guard_c.py::test_three")
+    create_item("CAL-IFACE", "tests/guard_c.py::test_three")
     admin(
         "PUT",
         "/api/admin/routing/stations",
-        [{"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []}],
+        [{"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []}],
         params={"process_id": pid},
     )
     resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid})
     stations = {i["station_id"] for i in resp.json()}
-    check("CAL_IFACE" not in stations, f"removed step items must be purged: {stations}")
-    check("CAL_PARAM" in stations, f"kept step items must survive: {stations}")
+    check("CAL-IFACE" not in stations, f"removed step items must be purged: {stations}")
+    check("CAL-PARAM" in stations, f"kept step items must survive: {stations}")
 
     # 工位是跨流程共享字典，被测试项引用时拒绝删除
-    orphan_station = f"S_GUARD-{STAMP}"
+    orphan_station = f"TST-GUARD{STAMP}"
     admin("POST", "/api/admin/stations", {"station_id": orphan_station, "station_name": "orphan"})
     with SessionLocal() as db:
         db.add(
@@ -381,7 +393,7 @@ def test_station_item_guards():
     admin("PUT", "/api/admin/routing/stations", [], params={"process_id": pid})
     resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid})
     stations = {i["station_id"] for i in resp.json()}
-    check("CAL_PARAM" not in stations, f"items must be purged with topology: {stations}")
+    check("CAL-PARAM" not in stations, f"items must be purged with topology: {stations}")
 
     # 存量孤儿项不得让流程永远删不掉
     with SessionLocal() as db:
@@ -403,7 +415,7 @@ def test_station_item_guards():
 
 def test_client_unbound_state():
     """上位机自动注册的机台处于未绑定态：可保持解绑、可改 IP，进站时 403。"""
-    cid = f"CLI-{STAMP}-UNBOUND"
+    cid = new_client_id("CAL")
     resp = v1("resolve", {"client_id": cid, "ip_address": "10.1.60.99"})
     check(resp.status_code == 200, f"auto register: {resp.text}")
     check(resp.json()["data"]["bound"] is False, f"auto registered must be unbound: {resp.text}")
@@ -414,8 +426,8 @@ def test_client_unbound_state():
     check(resp.json()["ip_address"] == "10.1.60.100", f"ip updated: {resp.text}")
     check(not resp.json()["station_id"], f"must stay unbound: {resp.text}")
 
-    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL_PARAM"})
-    check(resp.status_code == 200 and resp.json()["station_id"] == "CAL_PARAM", f"bind: {resp.text}")
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL-PARAM"})
+    check(resp.status_code == 200 and resp.json()["station_id"] == "CAL-PARAM", f"bind: {resp.text}")
     resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": ""})
     check(resp.status_code == 200 and not resp.json()["station_id"], f"unbind: {resp.text}")
 
@@ -431,7 +443,7 @@ def test_client_unbound_state():
 
 
 def test_clone_process():
-    target = f"PROC_CLONE-{STAMP}"
+    target = f"PROC-TEST-CLONE-{STAMP}"
     resp = admin("POST", "/api/admin/routing/clone", {"from_process": P_MSO, "to_process": target})
     check(resp.status_code == 200, f"clone: {resp.text}")
     data = resp.json()
@@ -444,7 +456,7 @@ def test_clone_process():
 def test_dpo_full_flow():
     """DPO 无 AWG：4 站流程，AWG 站位从未出现。"""
     sn = new_sn("DPO-OK")
-    for station in ("CAL_PARAM", "CAL_IFACE", "TST_PARAM", "TST_IFACE"):
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM", "TST-IFACE"):
         resp = checkin(station, sn)
         check(resp.status_code == 200, f"DPO check-in {station}: {resp.status_code} {resp.text}")
         case_ids = rules_of(resp)
@@ -460,7 +472,7 @@ def test_dpo_full_flow():
     check(resp.json()["total_steps"] == 4, f"DPO should have 4 steps: {resp.json()}")
     check(resp.json()["is_completed"] is True, f"should be completed: {resp.json()}")
     check(
-        sorted(resp.json()["passed_stations"]) == ["CAL_IFACE", "CAL_PARAM", "TST_IFACE", "TST_PARAM"],
+        sorted(resp.json()["passed_stations"]) == ["CAL-IFACE", "CAL-PARAM", "TST-IFACE", "TST-PARAM"],
         f"stamps: {resp.json()}",
     )
 
@@ -468,7 +480,7 @@ def test_dpo_full_flow():
 def test_mso_full_flow():
     """MSO 带 AWG：6 站完整流程，且校准三站未齐前不得进入测试阶段。"""
     sn = new_sn("MSO-OK")
-    for station in ("CAL_PARAM", "CAL_IFACE", "CAL_AWG"):
+    for station in ("CAL-PARAM", "CAL-IFACE", "CAL-AWG"):
         resp = checkin(station, sn, model=M_MSO)
         check(resp.status_code == 200, f"MSO check-in {station}: {resp.status_code} {resp.text}")
         resp = checkout(station, sn, rules_of(resp))
@@ -478,7 +490,7 @@ def test_mso_full_flow():
     check(resp.json()["total_steps"] == 6, "MSO should have 6 steps")
 
     # 补齐剩余三站
-    for station in ("TST_PARAM", "TST_IFACE", "TST_AWG"):
+    for station in ("TST-PARAM", "TST-IFACE", "TST-AWG"):
         resp = checkin(station, sn, model=M_MSO)
         check(resp.status_code == 200, f"MSO check-in {station}: {resp.status_code} {resp.text}")
         resp = checkout(station, sn, rules_of(resp))
@@ -489,38 +501,38 @@ def test_mso_full_flow():
 
 
 def test_mso_gate_requires_all_cal():
-    """MSO：校准三站未齐 → TST_PARAM 拦截（方案中的闸门工位）。"""
+    """MSO：校准三站未齐 → TST-PARAM 拦截（方案中的闸门工位）。"""
     sn = new_sn("MSO-GATE")
-    for station in ("CAL_PARAM", "CAL_IFACE"):
+    for station in ("CAL-PARAM", "CAL-IFACE"):
         resp = checkin(station, sn, model=M_MSO)
         check(resp.status_code == 200, f"check-in {station}: {resp.text}")
         checkout(station, sn, rules_of(resp))
 
-    resp = checkin("TST_PARAM", sn, model=M_MSO)
+    resp = checkin("TST-PARAM", sn, model=M_MSO)
     check(resp.status_code == 403, f"gate must be 403: {resp.status_code} {resp.text}")
-    check(resp.json()["data"]["missing"] == ["CAL_AWG"], f"missing: {resp.json()}")
+    check(resp.json()["data"]["missing"] == ["CAL-AWG"], f"missing: {resp.json()}")
 
 
 # ================= C. 需求 2：卡控 =================
 def test_jump_station_blocked_403():
-    """跳过 CAL_IFACE 直奔 TST_PARAM → 403。"""
+    """跳过 CAL-IFACE 直奔 TST-PARAM → 403。"""
     sn = new_sn("JUMP")
-    pass_station("CAL_PARAM", sn)
+    pass_station("CAL-PARAM", sn)
 
-    resp = checkin("TST_PARAM", sn)
+    resp = checkin("TST-PARAM", sn)
     check(resp.status_code == 403, f"jump must be 403, got {resp.status_code} {resp.text}")
     body = resp.json()
     check(body["code"] == "missing_prereq", f"code: {body}")
     check(body["exit_code"] == 10, f"exit_code: {body}")
-    check("CAL_IFACE" in body["data"]["missing"], f"missing: {body}")
+    check("CAL-IFACE" in body["data"]["missing"], f"missing: {body}")
 
 
 def test_retest_blocked_409():
     """已盖章工位严禁复测 → 409。"""
     sn = new_sn("RETEST")
-    pass_station("CAL_PARAM", sn)
+    pass_station("CAL-PARAM", sn)
 
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 409, f"retest must be 409, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "station_already_passed", f"code: {resp.json()}")
 
@@ -528,14 +540,14 @@ def test_retest_blocked_409():
 def test_wrong_process_blocked_400():
     """DPO 机型进入 AWG 工位（不在其流程中）→ 400。"""
     sn = new_sn("WRONGP")
-    resp = checkin("TST_AWG", sn, model=M_DPO)
+    resp = checkin("TST-AWG", sn, model=M_DPO)
     check(resp.status_code == 400, f"wrong process must be 400, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "station_not_in_process", f"code: {resp.json()}")
 
 
 def test_firmware_mismatch_403():
     sn = new_sn("FW")
-    resp = checkin("CAL_PARAM", sn, firmware="V3.10")
+    resp = checkin("CAL-PARAM", sn, firmware="V3.10")
     check(resp.status_code == 403, f"fw mismatch must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "firmware_mismatch", f"code: {resp.json()}")
 
@@ -543,7 +555,7 @@ def test_firmware_mismatch_403():
 def test_case_id_mismatch_400():
     """上报的用例ID未覆盖必测清单 → 400。"""
     sn = new_sn("CASEID")
-    resp = checkin("CAL_PARAM", sn, case_ids=[ITEMS["CAL_PARAM"][0]])
+    resp = checkin("CAL-PARAM", sn, case_ids=[ITEMS["CAL-PARAM"][0]])
     check(resp.status_code == 400, f"case_id mismatch must be 400, got {resp.status_code} {resp.text}")
     body = resp.json()
     check(body["code"] == "case_id_mismatch", f"code: {body}")
@@ -551,34 +563,34 @@ def test_case_id_mismatch_400():
     check(len(body["data"]["missing_case_ids"]) > 0, f"missing: {body}")
 
     # 完整清单放行
-    resp = checkin("CAL_PARAM", sn, case_ids=list(ITEMS["CAL_PARAM"]))
+    resp = checkin("CAL-PARAM", sn, case_ids=list(ITEMS["CAL-PARAM"]))
     check(resp.status_code == 200, f"full case IDs should pass: {resp.text}")
 
 
 def test_first_station_required():
     """未建档的机器不得从中间工位开局。"""
     sn = new_sn("MIDDLE")
-    resp = checkin("TST_IFACE", sn)
+    resp = checkin("TST-IFACE", sn)
     check(resp.status_code == 403, f"must start at first station: {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "missing_prereq", f"code: {resp.json()}")
 
 
 def test_model_mismatch():
     sn = new_sn("MODELM")
-    pass_station("CAL_PARAM", sn, model=M_DPO)
-    resp = checkin("CAL_IFACE", sn, model=M_MSO)
+    pass_station("CAL-PARAM", sn, model=M_DPO)
+    resp = checkin("CAL-IFACE", sn, model=M_MSO)
     check(resp.status_code == 403 and resp.json()["code"] == "model_mismatch", f"{resp.status_code} {resp.text}")
 
 
 # ================= D. 需求 1：落库 ACK =================
 def test_ack_and_idempotent_replay():
     sn = new_sn("ACK")
-    pass_station("CAL_PARAM", sn)
-    resp = checkin("CAL_IFACE", sn)
+    pass_station("CAL-PARAM", sn)
+    resp = checkin("CAL-IFACE", sn)
     case_ids = rules_of(resp)
     cid = uuid.uuid4().hex
 
-    first = checkout("CAL_IFACE", sn, case_ids, checkout_id=cid)
+    first = checkout("CAL-IFACE", sn, case_ids, checkout_id=cid)
     check(first.status_code == 201, f"checkout: {first.status_code} {first.text}")
     body = first.json()
     check(body["data"]["acknowledged"] is True, f"ack flag: {body}")
@@ -586,7 +598,7 @@ def test_ack_and_idempotent_replay():
     record_id = body["data"]["record_id"]
 
     # 网络重传：同一 checkout_id
-    second = checkout("CAL_IFACE", sn, case_ids, checkout_id=cid)
+    second = checkout("CAL-IFACE", sn, case_ids, checkout_id=cid)
     check(second.status_code == 201, f"replay: {second.status_code} {second.text}")
     check(second.json()["data"]["idempotent_replay"] is True, f"replay flag: {second.json()}")
     check(second.json()["data"]["record_id"] == record_id, "record_id must be identical")
@@ -613,11 +625,11 @@ def test_ack_and_idempotent_replay():
 # ================= E. 漏测与锁定 =================
 def test_missing_mandatory_400():
     sn = new_sn("MISSING")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     case_ids = rules_of(resp)
     session_id = resp.json()["data"]["session_id"]
     # 漏掉一个必测项
-    resp = checkout("CAL_PARAM", sn, case_ids[:-1])
+    resp = checkout("CAL-PARAM", sn, case_ids[:-1])
     check(resp.status_code == 400, f"missing mandatory must be 400, got {resp.status_code} {resp.text}")
     body = resp.json()
     check(body["code"] == "missing_mandatory", f"code: {body}")
@@ -632,15 +644,15 @@ def test_missing_mandatory_400():
         check(product.lock_token is None, "lock_token must be cleared")
 
     # SKIP 视为漏测
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-enter after fail: {resp.text}")
-    resp = checkout("CAL_PARAM", sn, case_ids, skip=(case_ids[-1],))
+    resp = checkout("CAL-PARAM", sn, case_ids, skip=(case_ids[-1],))
     check(resp.status_code == 400 and resp.json()["code"] == "missing_mandatory", f"skip: {resp.text}")
 
     # 已执行但判定 FAIL → 真实失败，201 + exit_code 1，不拦截
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-enter: {resp.text}")
-    resp = checkout("CAL_PARAM", sn, case_ids, fail=(case_ids[0],))
+    resp = checkout("CAL-PARAM", sn, case_ids, fail=(case_ids[0],))
     check(resp.status_code == 201, f"fail should be recorded: {resp.status_code} {resp.text}")
     body = resp.json()
     check(body["exit_code"] == 1 and body["data"]["overall_result"] == "FAIL", f"exit_code: {body}")
@@ -649,15 +661,15 @@ def test_missing_mandatory_400():
 def test_fail_streak_lock_403():
     sn = new_sn("LOCK")
     for i in range(3):
-        resp = checkin("CAL_PARAM", sn)
+        resp = checkin("CAL-PARAM", sn)
         check(resp.status_code == 200, f"check-in round {i}: {resp.text}")
         case_ids = rules_of(resp)
-        resp = checkout("CAL_PARAM", sn, case_ids, fail=(case_ids[0],))
+        resp = checkout("CAL-PARAM", sn, case_ids, fail=(case_ids[0],))
         check(resp.status_code == 201 and resp.json()["data"]["overall_result"] == "FAIL", f"round {i}: {resp.text}")
         locked = resp.json()["data"]["product_locked"]
         check(locked is (i == 2), f"round {i} lock flag: {resp.json()['data']}")
 
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 403, f"locked must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "product_locked", f"code: {resp.json()}")
     check(resp.json()["exit_code"] == 16, f"exit_code: {resp.json()}")
@@ -665,18 +677,18 @@ def test_fail_streak_lock_403():
     # RETEST 处置后解锁
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "工程师确认后重投"})
     check(resp.status_code == 201, f"reset: {resp.text}")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"unlocked: {resp.text}")
 
 
 def test_lock_conflict_409_and_timeout_takeover():
     sn = new_sn("CONFLICT")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
 
     # 另一台同工位机台抢占 → 409
-    other = f"CLI-{STAMP}-OTHER"
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL_PARAM"})
+    other = new_client_id("CAL")
+    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
     resp = v1(
         "check-in",
         {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW},
@@ -685,7 +697,7 @@ def test_lock_conflict_409_and_timeout_takeover():
     check(resp.json()["code"] == "lock_conflict", f"code: {resp.json()}")
 
     # 心跳续期
-    resp = v1("heartbeat", {"client_id": CLIENTS["CAL_PARAM"], "sn": sn})
+    resp = v1("heartbeat", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn})
     check(resp.status_code == 200 and resp.json()["data"]["holding_lock"] is True, f"heartbeat: {resp.text}")
     check(resp.json()["data"]["remaining_sec"] > 0, "remaining should be positive")
 
@@ -703,50 +715,50 @@ def test_lock_conflict_409_and_timeout_takeover():
     check(resp.status_code == 200, f"takeover after timeout: {resp.status_code} {resp.text}")
 
     # 原持锁方超时后出站 → 403 lock_expired
-    resp = checkout("CAL_PARAM", sn, rules_of(resp))
+    resp = checkout("CAL-PARAM", sn, rules_of(resp))
     check(resp.status_code == 403, f"stale lock must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "lock_invalid", f"code: {resp.json()}")
 
 
 def test_scrap_blocked():
     sn = new_sn("SCRAP")
-    pass_station("CAL_PARAM", sn)
+    pass_station("CAL-PARAM", sn)
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "SCRAP", "reason": "主板损伤"})
     check(resp.status_code == 201, f"scrap: {resp.text}")
-    resp = checkin("CAL_IFACE", sn)
+    resp = checkin("CAL-IFACE", sn)
     check(resp.status_code == 403 and resp.json()["code"] == "product_scrapped", f"{resp.status_code} {resp.text}")
 
 
 # ================= F. 维修处置 =================
 def test_repair_actions():
     sn = new_sn("REPAIR")
-    for station in ("CAL_PARAM", "CAL_IFACE", "TST_PARAM"):
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM"):
         pass_station(station, sn)
 
-    # RETEST：收回 TST_PARAM 印章，作废旧记录
+    # RETEST：收回 TST-PARAM 印章，作废旧记录
     resp = admin(
         "POST",
         "/api/admin/repairs",
-        {"sn": sn, "repair_action": "RETEST", "target_station": "TST_PARAM", "reason": "抽检漂移"},
+        {"sn": sn, "repair_action": "RETEST", "target_station": "TST-PARAM", "reason": "抽检漂移"},
     )
     check(resp.status_code == 201, f"retest: {resp.text}")
     resp = admin("GET", f"/api/admin/products/{sn}")
-    check("TST_PARAM" not in resp.json()["passed_stations"], f"stamp removed: {resp.json()}")
-    resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "TST_PARAM", "is_valid": False})
+    check("TST-PARAM" not in resp.json()["passed_stations"], f"stamp removed: {resp.json()}")
+    resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "TST-PARAM", "is_valid": False})
     check(resp.json()["total"] == 1, f"invalidated record: {resp.json()['total']}")
 
     # 重测通过
-    pass_station("TST_PARAM", sn)
+    pass_station("TST-PARAM", sn)
 
-    # ROLLBACK：回退到 CAL_IFACE（清除其及之后所有印章）
+    # ROLLBACK：回退到 CAL-IFACE（清除其及之后所有印章）
     resp = admin(
         "POST",
         "/api/admin/repairs",
-        {"sn": sn, "repair_action": "ROLLBACK", "target_station": "CAL_IFACE", "reason": "批量异常"},
+        {"sn": sn, "repair_action": "ROLLBACK", "target_station": "CAL-IFACE", "reason": "批量异常"},
     )
     check(resp.status_code == 201, f"rollback: {resp.text}")
     resp = admin("GET", f"/api/admin/products/{sn}")
-    check(sorted(resp.json()["passed_stations"]) == ["CAL_PARAM"], f"rollback result: {resp.json()}")
+    check(sorted(resp.json()["passed_stations"]) == ["CAL-PARAM"], f"rollback result: {resp.json()}")
 
     # SCRAP
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "SCRAP", "reason": "报废"})
@@ -763,16 +775,16 @@ def test_repair_actions():
 
 def test_repair_guards():
     sn = new_sn("RGUARD")
-    pass_station("CAL_PARAM", sn)
+    pass_station("CAL-PARAM", sn)
     # 目标工位未通过
     resp = admin(
         "POST",
         "/api/admin/repairs",
-        {"sn": sn, "repair_action": "RETEST", "target_station": "TST_PARAM", "reason": "x"},
+        {"sn": sn, "repair_action": "RETEST", "target_station": "TST-PARAM", "reason": "x"},
     )
     check(resp.status_code == 400 and resp.json()["code"] == "station_not_passed", f"{resp.text}")
     # 持锁中禁止处置
-    checkin("CAL_IFACE", sn)
+    checkin("CAL-IFACE", sn)
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "x"})
     check(resp.status_code == 409 and resp.json()["code"] == "product_holding_lock", f"{resp.text}")
 
@@ -780,7 +792,7 @@ def test_repair_guards():
 # ================= G. 台账与统计 =================
 def test_trace():
     sn = new_sn("TRACE")
-    for station in ("CAL_PARAM", "CAL_IFACE"):
+    for station in ("CAL-PARAM", "CAL-IFACE"):
         pass_station(station, sn)
 
     resp = admin("GET", f"/api/admin/records/trace/{sn}")
@@ -802,7 +814,7 @@ def test_metrics():
     body = resp.json()
     check(body["wip"]["total"] > 0, f"wip: {body['wip']}")
     check(len(body["trend"]) == 14, f"trend: {len(body['trend'])}")
-    check(any(r["key"] == "CAL_PARAM" for r in body["station_yield"]), f"station yield: {body['station_yield']}")
+    check(any(r["key"] == "CAL-PARAM" for r in body["station_yield"]), f"station yield: {body['station_yield']}")
     check(any(r["key"] == P_DPO for r in body["process_yield"]), f"process yield: {body['process_yield']}")
     check(body["clients"]["total"] >= 6, f"clients: {body['clients']}")
 
@@ -815,7 +827,7 @@ def test_no_bilingual():
     resp = api(
         "POST",
         "/api/v1/client/resolve",
-        body={"client_id": CLIENTS["CAL_PARAM"]},
+        body={"client_id": CLIENTS["CAL-PARAM"]},
         api_key=API_KEY,
         headers={"Accept-Language": "zh-CN"},
     )
@@ -823,7 +835,7 @@ def test_no_bilingual():
     resp = api(
         "POST",
         "/api/v1/client/resolve",
-        body={"client_id": CLIENTS["CAL_PARAM"]},
+        body={"client_id": CLIENTS["CAL-PARAM"]},
         api_key=API_KEY,
         headers={"Accept-Language": "en-US"},
     )
@@ -850,7 +862,7 @@ def _backdate(sn, **deltas):
 def test_status_filter_separates_completed_from_idle():
     """已完工是派生状态：筛"待测试"不得混入，筛"已完工"应能单独查到。"""
     done_sn = new_sn("WIPDONE")
-    for station in ("CAL_PARAM", "CAL_IFACE", "TST_PARAM", "TST_IFACE"):
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM", "TST-IFACE"):
         pass_station(station, done_sn)
 
     resp = admin("GET", "/api/admin/products", params={"current_status": "COMPLETED", "sn": done_sn})
@@ -862,7 +874,7 @@ def test_status_filter_separates_completed_from_idle():
     check(resp.json()["total"] == 0, f"已完工不得出现在待测试: {resp.json()['total']}")
 
     wip_sn = new_sn("WIPIDLE")
-    pass_station("CAL_PARAM", wip_sn)
+    pass_station("CAL-PARAM", wip_sn)
     resp = admin("GET", "/api/admin/products", params={"current_status": "IDLE", "sn": wip_sn})
     check(resp.json()["total"] == 1, f"未完工在制品应在待测试: {resp.json()['total']}")
 
@@ -870,13 +882,13 @@ def test_status_filter_separates_completed_from_idle():
 def test_lock_lost_takeover():
     """机台失联（心跳断流 > grace）→ 新机台立即接管，旧持锁方写入被拒。"""
     sn = new_sn("LOST")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     stale_token = resp.json()["data"]["lock_token"]
     check(bool(stale_token), "lock_token must be issued")
 
-    other = f"CLI-{STAMP}-LOST2"
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL_PARAM"})
+    other = new_client_id("CAL")
+    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
 
     # 未失联 → 仍然 409
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
@@ -888,14 +900,14 @@ def test_lock_lost_takeover():
     check(resp.status_code == 200, f"takeover: {resp.status_code} {resp.text}")
     body = resp.json()["data"]
     check(body["takeover"] is True, f"takeover flag: {body}")
-    check(body["takeover_from"] == CLIENTS["CAL_PARAM"], f"takeover_from: {body}")
+    check(body["takeover_from"] == CLIENTS["CAL-PARAM"], f"takeover_from: {body}")
     check(body["lock_token"] != stale_token, "新持锁方必须换发 token")
 
     # 旧持锁方持旧 token 出站 → 403，绝不污染数据
     resp = v1(
         "check-out",
         {
-            "client_id": CLIENTS["CAL_PARAM"],
+            "client_id": CLIENTS["CAL-PARAM"],
             "sn": sn,
             "checkout_id": uuid.uuid4().hex,
             "items": items_for(["test_amp_cal", "test_phase_cal"]),
@@ -908,25 +920,25 @@ def test_lock_lost_takeover():
 def test_heartbeat_does_not_extend_hard_timeout():
     """心跳只续失联窗口，不续硬超时。"""
     sn = new_sn("LEASE")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     first_lease = resp.json()["data"]["timeout_sec"]
 
-    resp = v1("heartbeat", {"client_id": CLIENTS["CAL_PARAM"], "sn": sn})
+    resp = v1("heartbeat", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn})
     body = resp.json()["data"]
     check(body["lease_remaining_sec"] <= first_lease, "心跳不得延长硬超时")
     check(body["heartbeat_count"] == 1, f"heartbeat_count: {body}")
 
     # 心跳新鲜（未失联）但持锁已超硬超时 → 出站判 lock_expired
     _backdate(sn, lock_acquired_at=1900, testing_started_at=1900)
-    resp = checkout("CAL_PARAM", sn, ["test_amp_cal", "test_phase_cal"])
+    resp = checkout("CAL-PARAM", sn, ["test_amp_cal", "test_phase_cal"])
     check(resp.status_code == 403 and resp.json()["code"] == "lock_expired", f"{resp.status_code} {resp.text}")
 
 
 def test_checkpoint_resume_and_merge():
     """崩溃续测：断点上报 → 重进站拿到已完成清单 → 出站补齐未提交用例。"""
     sn = new_sn("RESUME")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     data = resp.json()["data"]
     session_id = data["session_id"]
@@ -936,7 +948,7 @@ def test_checkpoint_resume_and_merge():
     resp = v1(
         "checkpoint",
         {
-            "client_id": CLIENTS["CAL_PARAM"],
+            "client_id": CLIENTS["CAL-PARAM"],
             "sn": sn,
             "session_id": session_id,
             "lock_token": token,
@@ -951,7 +963,7 @@ def test_checkpoint_resume_and_merge():
     resp = v1(
         "checkpoint",
         {
-            "client_id": CLIENTS["CAL_PARAM"],
+            "client_id": CLIENTS["CAL-PARAM"],
             "sn": sn,
             "session_id": session_id,
             "lock_token": token,
@@ -961,7 +973,7 @@ def test_checkpoint_resume_and_merge():
     check(resp.json()["data"]["merged_count"] == 1, f"idempotent: {resp.text}")
 
     # 崩溃重启：同机台重进站自动续测
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-checkin: {resp.text}")
     data = resp.json()["data"]
     check(data["session_id"] == session_id, "必须复用同一会话")
@@ -971,12 +983,12 @@ def test_checkpoint_resume_and_merge():
     check(data["resume"]["cursor"] == {"step": 1}, f"cursor: {data}")
 
     # 只跑剩余用例即可出站，未提交的由 checkpoint 补齐
-    resp = checkout("CAL_PARAM", sn, ["test_phase_cal"], lock_token=data["lock_token"])
+    resp = checkout("CAL-PARAM", sn, ["test_phase_cal"], lock_token=data["lock_token"])
     check(resp.status_code == 201, f"checkout: {resp.status_code} {resp.text}")
     ack = resp.json()["data"]
     check(ack["checkpoint_merged_count"] == 1, f"merged: {ack}")
     resp = admin("GET", f"/api/admin/records/trace/{sn}")
-    record = [r for r in resp.json()["records"] if r["station_id"] == "CAL_PARAM"][0]
+    record = [r for r in resp.json()["records"] if r["station_id"] == "CAL-PARAM"][0]
     case_ids = sorted(i["case_id"] for i in record["executed_items"]["items"])
     check(case_ids == ["test_amp_cal", "test_phase_cal"], f"merged items: {case_ids}")
 
@@ -986,7 +998,7 @@ def test_sweeper_releases_orphan_lock():
     from app.services.sweeper import run_once
 
     sn = new_sn("SWEEP")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     session_id = resp.json()["data"]["session_id"]
 
@@ -1003,15 +1015,15 @@ def test_sweeper_releases_orphan_lock():
         check(session.status == models.SESSION_ABORTED, f"session: {session.status}")
 
     # 解锁后新机台可直接进站
-    other = f"CLI-{STAMP}-SWEEP2"
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL_PARAM"})
+    other = new_client_id("CAL")
+    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 200, f"re-checkin after sweep: {resp.text}")
 
 
 def test_client_app_version_tracked():
     """机台上报的程序版本要落库：现场"同机型结果不可比"的常见根因是版本漂移。"""
-    cid = f"CLI-{STAMP}-VER"
+    cid = new_client_id("CAL")
     resp = v1("resolve", {"client_id": cid, "ip_address": "10.1.60.77", "app_version": "2.4.1"})
     check(resp.status_code == 200, f"resolve: {resp.text}")
 
@@ -1027,7 +1039,7 @@ def test_client_app_version_tracked():
     check(row["station_id"] is None, f"auto registered must be unbound: {row}")
 
     # 进站同样刷新版本（此前 CheckInIn 收了 app_version 却没落库）
-    admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL_PARAM"})
+    admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL-PARAM"})
     resp = v1(
         "check-in",
         {
@@ -1042,28 +1054,28 @@ def test_client_app_version_tracked():
     check(fetch()["app_version"] == "2.5.0", f"app_version must refresh on check-in: {fetch()}")
 
     # 手工注册也允许登记版本
-    manual = f"CLI-{STAMP}-VERM"
+    manual = new_client_id("CAL")
     resp = admin(
         "POST",
         "/api/admin/clients",
-        {"client_id": manual, "station_id": "CAL_PARAM", "app_version": "2.6.0"},
+        {"client_id": manual, "station_id": "CAL-PARAM", "app_version": "2.6.0"},
     )
     check(resp.status_code == 201 and resp.json()["app_version"] == "2.6.0", f"manual register: {resp.text}")
 
     # client_name：可填展示名，未填时回退为 client_id，保证列表永远有可读内容
-    named = f"CLI-{STAMP}-NAME"
+    named = new_client_id("CAL")
     resp = admin(
         "POST",
         "/api/admin/clients",
-        {"client_id": named, "station_id": "CAL_PARAM", "client_name": "Line1 Cal Bench A"},
+        {"client_id": named, "station_id": "CAL-PARAM", "client_name": "Line1 Cal Bench A"},
     )
     check(
         resp.status_code == 201 and resp.json()["client_name"] == "Line1 Cal Bench A",
         f"explicit name: {resp.text}",
     )
 
-    fallback = f"CLI-{STAMP}-FALLBACK"
-    resp = admin("POST", "/api/admin/clients", {"client_id": fallback, "station_id": "CAL_PARAM"})
+    fallback = new_client_id("CAL")
+    resp = admin("POST", "/api/admin/clients", {"client_id": fallback, "station_id": "CAL-PARAM"})
     check(
         resp.status_code == 201 and resp.json()["client_name"] == fallback,
         f"name must fall back to client_id: {resp.text}",
@@ -1083,13 +1095,13 @@ def test_firmware_match_rule():
 
     min 规则下必须按数字段比较，否则 "V3.9" > "V3.20" 的字典序会放行旧固件。
     """
-    pid = f"PROC_FWRULE-{STAMP}"
+    pid = f"PROC-TEST-FW-{STAMP}"
     model = f"MODEL_FWRULE-{STAMP}"
     admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "fw rule"})
     admin(
         "PUT",
         "/api/admin/routing/stations",
-        [{"station_id": "CAL_PARAM", "step_order": 10, "depends_on": []}],
+        [{"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []}],
         params={"process_id": pid},
     )
     resp = admin(
@@ -1107,8 +1119,8 @@ def test_firmware_match_rule():
 
     def try_firmware(firmware, tag):
         # 每次换机台 + 换 SN，避免工位锁互相干扰
-        cid = f"CLI-{STAMP}-FW-{tag}"
-        admin("POST", "/api/admin/clients", {"client_id": cid, "station_id": "CAL_PARAM"})
+        cid = new_client_id("CAL")
+        admin("POST", "/api/admin/clients", {"client_id": cid, "station_id": "CAL-PARAM"})
         return v1(
             "check-in",
             {"client_id": cid, "sn": new_sn(f"FW-{tag}"), "product_model": model, "firmware": firmware},
@@ -1139,7 +1151,7 @@ def test_firmware_match_rule():
 
 def test_process_status():
     """流程停用后不再接受新机型绑定，重新启用后恢复。"""
-    pid = f"PROC_VER-{STAMP}"
+    pid = f"PROC-TEST-VER-{STAMP}"
     resp = admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "status demo"})
     check(resp.status_code == 201, f"create process: {resp.text}")
     check(resp.json()["is_active"] is True, f"default must be active: {resp.text}")
@@ -1171,9 +1183,9 @@ def test_process_status():
 def test_client_release_lock():
     """上位机主动放弃锁：释放锁与会话，但不计失败、不动画章，同工位可立即接管。"""
     sn = new_sn("RELEASE")
-    pass_station("CAL_PARAM", sn)  # 先正常通过首站，留下印章作为"不应被改动"的基线
+    pass_station("CAL-PARAM", sn)  # 先正常通过首站，留下印章作为"不应被改动"的基线
 
-    resp = checkin("CAL_IFACE", sn)
+    resp = checkin("CAL-IFACE", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     session_id = resp.json()["data"]["session_id"]
     lock_token = resp.json()["data"]["lock_token"]
@@ -1186,7 +1198,7 @@ def test_client_release_lock():
     resp = v1(
         "release",
         {
-            "client_id": CLIENTS["CAL_IFACE"],
+            "client_id": CLIENTS["CAL-IFACE"],
             "sn": sn,
             "lock_token": lock_token,
             "reason": "操作员取消测试",
@@ -1211,13 +1223,13 @@ def test_client_release_lock():
     check("操作员取消测试" in (resp.json()["end_reason"] or ""), f"end reason: {resp.json()}")
 
     # 同工位另一台机台应能立即进站，证明锁确实释放了
-    other = f"CLI-{STAMP}-RELEASE-OTHER"
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL_IFACE"})
+    other = new_client_id("CAL")
+    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-IFACE"})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 200, f"re-check-in after release: {resp.status_code} {resp.text}")
 
     # 未持锁的机台调用 release：不报错，但绝不能释放他人持有的锁
-    resp = v1("release", {"client_id": CLIENTS["CAL_PARAM"], "sn": sn, "reason": "无关机台"})
+    resp = v1("release", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn, "reason": "无关机台"})
     check(resp.status_code == 200, f"release by non-holder: {resp.text}")
     check(resp.json()["data"]["released"] is False, f"must not release others: {resp.json()}")
     with SessionLocal() as db:
@@ -1226,16 +1238,47 @@ def test_client_release_lock():
         check(product.current_client == other, f"holder unchanged: {product.current_client}")
 
 
+def test_id_format_enforced():
+    """编号规范在写入口强制校验（README 7.2）：不合规一律 422，合规放行。"""
+    rejected = [
+        ("/api/admin/processes", {"process_id": "PROC_TEK_MSO"}),  # 用了下划线
+        ("/api/admin/processes", {"process_id": "PROC-SCOPE-MSO"}),  # 缺构型段
+        ("/api/admin/stations", {"station_id": "CAL_PARAM"}),  # 用了下划线
+        ("/api/admin/stations", {"station_id": "CAL"}),  # 缺测试域
+        ("/api/admin/clients", {"client_id": "CAL-DESK-01", "station_id": "CAL-PARAM"}),  # 缺厂区/产线
+        ("/api/admin/clients", {"client_id": "SZ-L1-CAL-1", "station_id": "CAL-PARAM"}),  # 序号须两位
+    ]
+    for path, body in rejected:
+        resp = admin("POST", path, body)
+        check(resp.status_code == 422, f"must reject {body}: {resp.status_code} {resp.text}")
+
+    resp = admin("POST", "/api/admin/processes", {"process_id": f"PROC-TEST-FMT-{STAMP}"})
+    check(resp.status_code == 201, f"process must be accepted: {resp.text}")
+    resp = admin("POST", "/api/admin/stations", {"station_id": f"TST-FMT{STAMP}"})
+    check(resp.status_code == 201, f"station must be accepted: {resp.text}")
+    resp = admin(
+        "POST",
+        "/api/admin/clients",
+        {"client_id": "SZ-L1-TST-99", "station_id": "TST-PARAM"},
+    )
+    check(resp.status_code == 201, f"client must be accepted: {resp.text}")
+
+    # 更新接口不校验：三者投产即冻结，换编号走「新建 + 停用」而不是原地改名
+    admin("DELETE", "/api/admin/clients/SZ-L1-TST-99")
+    admin("DELETE", f"/api/admin/stations/TST-FMT{STAMP}")
+    admin("DELETE", f"/api/admin/processes/PROC-TEST-FMT-{STAMP}")
+
+
 def test_force_release_and_sessions_api():
     """运维强制解锁 + 会话管理接口。"""
     sn = new_sn("FORCE")
-    resp = checkin("CAL_PARAM", sn)
+    resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
     session_id = resp.json()["data"]["session_id"]
 
     resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "机台蓝屏"})
     check(resp.status_code == 200, f"force-release: {resp.text}")
-    check(resp.json()["previous_client"] == CLIENTS["CAL_PARAM"], f"previous: {resp.text}")
+    check(resp.json()["previous_client"] == CLIENTS["CAL-PARAM"], f"previous: {resp.text}")
 
     with SessionLocal() as db:
         product = db.get(models.ProductStatus, sn)
@@ -1298,6 +1341,7 @@ TESTS = [
     test_firmware_match_rule,
     test_process_status,
     test_client_release_lock,
+    test_id_format_enforced,
     test_force_release_and_sessions_api,
 ]
 

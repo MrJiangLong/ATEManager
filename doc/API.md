@@ -99,7 +99,7 @@ Content-Type: application/json
 
 ```http
 POST /api/admin/clients
-{"client_id": "CAL-DESK-01", "station_id": "CAL_PARAM", "ip_address": "10.1.60.11"}
+{"client_id": "SZ-L1-CAL-01", "station_id": "CAL-PARAM", "ip_address": "10.1.60.11"}
 ```
 
 也可用 `POST /api/v1/client/resolve` 自动注册（此时 `station_id` 为空，仍需 Web 端补录绑定）。
@@ -219,15 +219,15 @@ NULL ─────────────→ IDLE ─────────
 | `app_version` | string(50) | 否 | 上位机版本，便于追溯 |
 
 ```jsonc
-{"client_id": "CAL-DESK-01", "ip_address": "10.1.60.11", "app_version": "ate-client/1.0"}
+{"client_id": "SZ-L1-CAL-01", "ip_address": "10.1.60.11", "app_version": "ate-client/1.0"}
 ```
 
 **响应 `data`**
 
 ```jsonc
 {
-  "client_id": "CAL-DESK-01",
-  "station_id": "CAL_PARAM",     // 未绑定时为 null
+  "client_id": "SZ-L1-CAL-01",
+  "station_id": "CAL-PARAM",     // 未绑定时为 null
   "ip_address": "10.1.60.11",
   "bound": true,                 // false 时进站会 403 client_not_bound
   "last_seen_at": "2026-09-08T13:58:01.386992+00:00",
@@ -255,7 +255,7 @@ NULL ─────────────→ IDLE ─────────
 
 ```jsonc
 {
-  "client_id": "CAL-DESK-01",
+  "client_id": "SZ-L1-CAL-01",
   "sn": "C020001",
   "product_model": "DPO4054B",
   "firmware": "V3.20",
@@ -270,8 +270,8 @@ NULL ─────────────→ IDLE ─────────
 {
   "sn": "C020001",
   "product_model": "DPO4054B",
-  "process_id": "PROC_TEK_DPO",
-  "station_id": "CAL_PARAM",
+  "process_id": "PROC-SCOPE-DPO-BASE",
+  "station_id": "CAL-PARAM",
   "station_name": "校准-指标测试站位",
   "timeout_sec": 1800,                 // 硬超时上限（秒）
   "is_first_station": true,
@@ -281,7 +281,7 @@ NULL ─────────────→ IDLE ─────────
      "item_name": "CHn幅度校准", "is_mandatory": true}
   ],
   "passed_stations": [],               // 已盖章工位
-  "next_stations": [{"station_id": "CAL_IFACE", "station_name": "...", "step_order": 20}],
+  "next_stations": [{"station_id": "CAL-IFACE", "station_name": "...", "step_order": 20}],
   "server_time": "...",
 
   "session_id": "3f2a...",             // 会话ID，务必持久化
@@ -346,7 +346,7 @@ NULL ─────────────→ IDLE ─────────
 **请求**
 
 ```jsonc
-{"client_id": "CAL-DESK-01", "sn": "C020001", "lock_token": "b1c9..."}
+{"client_id": "SZ-L1-CAL-01", "sn": "C020001", "lock_token": "b1c9..."}
 ```
 
 **响应 `data`**
@@ -394,7 +394,7 @@ NULL ─────────────→ IDLE ─────────
 
 ```jsonc
 {
-  "client_id": "CAL-DESK-01",
+  "client_id": "SZ-L1-CAL-01",
   "sn": "C020001",
   "session_id": "3f2a...",
   "lock_token": "b1c9...",
@@ -439,7 +439,7 @@ NULL ─────────────→ IDLE ─────────
 
 ```jsonc
 {
-  "client_id": "CAL-DESK-01",
+  "client_id": "SZ-L1-CAL-01",
   "sn": "C020001",
   "checkout_id": "<客户端生成并持久化的幂等键>",
   "lock_token": "b1c9...",
@@ -459,7 +459,7 @@ NULL ─────────────→ IDLE ─────────
   "session_id": "3f2a...",
   "checkpoint_merged_count": 2,  // 由断点补齐的用例数
   "sn": "C020001",
-  "station_id": "CAL_PARAM",
+  "station_id": "CAL-PARAM",
   "overall_result": "PASS",      // PASS / FAIL
   "idempotent_replay": false,    // true = 命中重试回放
   "fail_count": 0,
@@ -496,7 +496,7 @@ NULL ─────────────→ IDLE ─────────
 ### 5.6 `POST /api/v1/client/release` — 主动放弃锁
 
 ```jsonc
-{"client_id": "CAL-DESK-01", "sn": "C020001", "lock_token": "b1c9...", "reason": "操作员取消"}
+{"client_id": "SZ-L1-CAL-01", "sn": "C020001", "lock_token": "b1c9...", "reason": "操作员取消"}
 ```
 
 **不计产品失败**，锁立即释放，会话置为 `ABORTED`。
@@ -698,7 +698,7 @@ def run_all(cli, cases):
         cli.checkpoint([run(case)])          # 也可能直接抛 409 session_aborted
 
 # 或回调式（无需轮询）
-cli = AteClient(url, key, client_id="CAL-DESK-01",
+cli = AteClient(url, key, client_id="SZ-L1-CAL-01",
                 on_lost_lock=lambda reason: pytest.exit(reason, returncode=3))
 ```
 
@@ -798,7 +798,7 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 |---|---|---|
 | `--clients` | 5 | 机台数量（自动注册为 `SIM-<工位>-NN`） |
 | `--units` | 12 | 投产被测件数量 |
-| `--station` | CAL_PARAM | 模拟工位（该工位需有 5 条必测用例） |
+| `--station` | CAL-PARAM | 模拟工位（该工位需有 5 条必测用例） |
 | `--items` | 5 | 每件的测试项数量 |
 | `--mode` | chaos | `normal` 全正常 / `chaos` 注入崩溃 |
 | `--crash-rate` | 0.12 | 每个测试项执行后的崩溃概率 |
@@ -816,7 +816,7 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 | C099003 | 崩溃过一次，正在续测 attempt=2 | 会话页 `attempt>1` 标记 |
 | C099004 | 硬超时：持锁 35min、心跳仍在 | 出站时 `403 lock_expired` |
 | C099005 | 历史：崩溃后续测成功出库 | 1 条 ABORTED + 1 条 COMPLETED |
-| C099006 | 历史：被备用机台 CAL-DESK-09 接管 | TAKEN_OVER + RUNNING |
+| C099006 | 历史：被备用机台 SZ-L1-CAL-09 接管 | TAKEN_OVER + RUNNING |
 | C099007 | 连续失联 3 次 → 已计一次失败 | 3 条 ABORTED |
 | C099008 | 历史：硬超时终止（计失败） | EXPIRED |
 
@@ -843,7 +843,7 @@ STATE_FILE = Path(".ate_session.json")
 def pytest_addoption(parser):
     parser.addoption("--ate-url", default="http://127.0.0.1:8000")
     parser.addoption("--ate-key", default="")
-    parser.addoption("--ate-client", default="CAL-DESK-01")
+    parser.addoption("--ate-client", default="SZ-L1-CAL-01")
 
 
 @pytest.fixture(scope="session")

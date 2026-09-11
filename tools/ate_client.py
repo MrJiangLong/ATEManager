@@ -18,7 +18,7 @@
         tests/test_cal_param.py::TestAmp::test_amp_cal
 
 最小调用序列
-    cli = AteClient(base_url, api_key, client_id="CAL-DESK-01", state_file=Path(".state.json"))
+    cli = AteClient(base_url, api_key, client_id="SZ-L1-CAL-01", state_file=Path(".state.json"))
     cli.resolve()                                   # 机台身份上报（可选）
     state = cli.check_in(sn, model, firmware, case_ids=case_ids)
     for case_id in case_ids:                        # 每跑完一个用例即上报断点
@@ -405,7 +405,7 @@ class AteClient:
 
     典型用法（推荐用 with，保证心跳线程一定被回收）：
 
-        with AteClient(url, key, client_id="CAL-DESK-01", state_file=Path(".s.json")) as cli:
+        with AteClient(url, key, client_id="SZ-L1-CAL-01", state_file=Path(".s.json")) as cli:
             state = cli.check_in(sn, model, fw, case_ids=cases)
             ...
             cli.check_out(items)
@@ -751,7 +751,7 @@ def demo_normal(cli: AteClient, sn: str, model: str, firmware: str) -> None:
 def demo_gate(base_url: str, api_key: str, sn: str, model: str, firmware: str) -> None:
     """需求 2：跳站卡控——未做前工序，直接进第二站应被 403 拦截。"""
     print(f"\n=== 场景 2：防跳站拦截（需求 2，SN={sn}）===", flush=True)
-    second = AteClient(base_url, api_key, client_id="CAL-DESK-02")
+    second = AteClient(base_url, api_key, client_id="SZ-L1-CAL-02")
     try:
         second.check_in(sn, model, firmware, case_ids=CAL_PARAM_CASES)
         print("  !! 未被拦截，防跳站失效", flush=True)
@@ -763,8 +763,8 @@ def demo_gate(base_url: str, api_key: str, sn: str, model: str, firmware: str) -
     finally:
         second.stop_heartbeat()
 
-    print(f"  → 先回到首站 {CAL_PARAM_CASES and 'CAL_PARAM'} 完成前工序", flush=True)
-    first = AteClient(base_url, api_key, client_id="CAL-DESK-01")
+    print(f"  → 先回到首站 {CAL_PARAM_CASES and 'CAL-PARAM'} 完成前工序", flush=True)
+    first = AteClient(base_url, api_key, client_id="SZ-L1-CAL-01")
     try:
         run_station(first, sn=sn, model=model, firmware=firmware, case_ids=CAL_PARAM_CASES)
         print("  OK 首站通过，第二站闸门应放行", flush=True)
@@ -788,7 +788,7 @@ def demo_gate(base_url: str, api_key: str, sn: str, model: str, firmware: str) -
 def demo_resume(base_url: str, api_key: str, sn: str, model: str, firmware: str, state_file: Path) -> None:
     """崩溃 → 重启 → 断点续测（attempt+1，跳过已完成用例）。"""
     print(f"\n=== 场景 3：崩溃 → 断点续测（SN={sn}）===", flush=True)
-    crashed = AteClient(base_url, api_key, client_id="CAL-DESK-01", state_file=state_file)
+    crashed = AteClient(base_url, api_key, client_id="SZ-L1-CAL-01", state_file=state_file)
     try:
         run_station(crashed, sn=sn, model=model, firmware=firmware, case_ids=CAL_PARAM_CASES, crash_after=1)
     except SimulatedCrash:
@@ -797,7 +797,7 @@ def demo_resume(base_url: str, api_key: str, sn: str, model: str, firmware: str,
         crashed.stop_heartbeat()
 
     print("  → 模拟重启：新建客户端，从本地断点文件恢复", flush=True)
-    restarted = AteClient(base_url, api_key, client_id="CAL-DESK-01", state_file=state_file)
+    restarted = AteClient(base_url, api_key, client_id="SZ-L1-CAL-01", state_file=state_file)
     try:
         ack = run_station(restarted, sn=sn, model=model, firmware=firmware, case_ids=CAL_PARAM_CASES)
         attempt = restarted.state.attempt if restarted.state else 0
@@ -875,8 +875,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="服务地址（默认 %(default)s）")
     parser.add_argument("--api-key", default="", help="X-API-Key（后端 V1_API_KEY）")
-    parser.add_argument("--client-id", default="CAL-DESK-01", help="本机台 ID")
-    parser.add_argument("--backup-client-id", default="CAL-DESK-09", help="备用机台 ID（接管场景）")
+    parser.add_argument("--client-id", default="SZ-L1-CAL-01", help="本机台 ID")
+    parser.add_argument("--backup-client-id", default="SZ-L1-CAL-09", help="备用机台 ID（接管场景）")
     parser.add_argument("--model", default="DPO4054B", help="被测机型（*IDN? 直读）")
     parser.add_argument("--firmware", default="V3.20", help="固件版本（*IDN? 直读）")
     parser.add_argument("--admin-user", default="admin")

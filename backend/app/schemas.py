@@ -1,5 +1,6 @@
 """Pydantic 输入输出模型：API 契约的唯一声明处。"""
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,30 @@ from typing_extensions import Annotated
 from .models import FW_RULE_EXACT, FW_RULE_MIN
 
 _FW_RULE_PATTERN = rf"^({FW_RULE_EXACT}|{FW_RULE_MIN})$"
+
+# 编号规范（见 README 7.2）。三者都是自然主键，且被 test_records / test_sessions /
+# product_status 冗余引用，一旦投产就改不动，故在写入口强制约束格式。
+_ID_RULES = {
+    "process_id": (
+        r"^PROC-[A-Z0-9]+(-[A-Z0-9]+){2}$",
+        "PROC-<FAMILY>-<SERIES>-<VARIANT>, e.g. PROC-SCOPE-MSO-AWG",
+    ),
+    "station_id": (
+        r"^[A-Z]{2,4}-[A-Z0-9]+(-[0-9]{2})?$",
+        "<STAGE>-<DOMAIN>[-<NN>], e.g. CAL-PARAM or CAL-PARAM-01",
+    ),
+    "client_id": (
+        r"^[A-Z]{2}-L[0-9]+-[A-Z]{2,4}-[0-9]{2}(-[A-Z]+)?$",
+        "<SITE>-<LINE>-<STAGE>-<NN>[-<USE>], e.g. SZ-L1-CAL-01",
+    ),
+}
+
+
+def _checked_id(value: str, kind: str) -> str:
+    pattern, hint = _ID_RULES[kind]
+    if not re.match(pattern, value or ""):
+        raise ValueError(f"invalid {kind}: expected {hint}")
+    return value
 
 
 def _strip(value):
@@ -311,6 +336,11 @@ class ProcessCreateIn(BaseModel):
     process_name: Trimmed = Field(default="", max_length=128)
     is_active: bool = True
 
+    @field_validator("process_id")
+    @classmethod
+    def _valid_process_id(cls, v):
+        return _checked_id(v, "process_id")
+
 
 class ProcessUpdateIn(BaseModel):
     process_name: Trimmed = Field(default=None, max_length=128)
@@ -350,6 +380,11 @@ class StationCreateIn(BaseModel):
     station_name: Trimmed = Field(default="", max_length=128)
     timeout_sec: int = Field(default=1800, ge=30, le=86400)
 
+    @field_validator("station_id")
+    @classmethod
+    def _valid_station_id(cls, v):
+        return _checked_id(v, "station_id")
+
 
 class StationUpdateIn(BaseModel):
     station_name: Trimmed = Field(default=None, max_length=128)
@@ -375,6 +410,11 @@ class ClientCreateIn(BaseModel):
     client_name: Trimmed = Field(default="", max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
     app_version: Trimmed = Field(default=None, max_length=50)
+
+    @field_validator("client_id")
+    @classmethod
+    def _valid_client_id(cls, v):
+        return _checked_id(v, "client_id")
 
 
 class ClientUpdateIn(BaseModel):

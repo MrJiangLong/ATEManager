@@ -5,8 +5,8 @@
     python -m app.seed --reset --products 60   指定随机在制品数量
 
 静态规则严格按方案预置：
-    PROC_TEK_MSO  带 AWG 选件，6 站完整流程
-    PROC_TEK_DPO  无 AWG 标准，4 站流程（物理剔除所有 AWG 工步）
+    PROC-SCOPE-MSO-AWG  带 AWG 选件，6 站完整流程
+    PROC-SCOPE-DPO-BASE  无 AWG 标准，4 站流程（物理剔除所有 AWG 工步）
 """
 
 import argparse
@@ -45,36 +45,36 @@ TARGET_FW = "V3.20"
 # 静态工艺规则（方案给定）
 # ---------------------------------------------------------------------
 PROCESSES = [
-    ("PROC_TEK_MSO", "TEK数字示波器-带AWG选件流程"),
-    ("PROC_TEK_DPO", "TEK数字示波器-无AWG标准流程"),
+    ("PROC-SCOPE-MSO-AWG", "TEK数字示波器-带AWG选件流程"),
+    ("PROC-SCOPE-DPO-BASE", "TEK数字示波器-无AWG标准流程"),
 ]
 
 STATIONS = [
-    ("CAL_PARAM", "校准-指标测试站位", 1800),
-    ("CAL_IFACE", "校准-接口测试站位", 600),
-    ("CAL_AWG", "校准-AWG站位", 300),
-    ("TST_PARAM", "测试-指标测试站位", 1800),
-    ("TST_IFACE", "测试-接口测试站位", 900),
-    ("TST_AWG", "测试-AWG站位", 600),
+    ("CAL-PARAM", "校准-指标测试站位", 1800),
+    ("CAL-IFACE", "校准-接口测试站位", 600),
+    ("CAL-AWG", "校准-AWG站位", 300),
+    ("TST-PARAM", "测试-指标测试站位", 1800),
+    ("TST-IFACE", "测试-接口测试站位", 900),
+    ("TST-AWG", "测试-AWG站位", 600),
 ]
 
 MODELS = [
-    ("MSO4054B", "PROC_TEK_MSO"),
-    ("DPO4054B", "PROC_TEK_DPO"),
+    ("MSO4054B", "PROC-SCOPE-MSO-AWG"),
+    ("DPO4054B", "PROC-SCOPE-DPO-BASE"),
 ]
 
 # (process_id, station_id, step_order, depends_on)
 TOPOLOGY = [
-    ("PROC_TEK_MSO", "CAL_PARAM", 10, []),
-    ("PROC_TEK_MSO", "CAL_IFACE", 20, ["CAL_PARAM"]),
-    ("PROC_TEK_MSO", "CAL_AWG", 30, ["CAL_PARAM"]),
-    ("PROC_TEK_MSO", "TST_PARAM", 40, ["CAL_PARAM", "CAL_IFACE", "CAL_AWG"]),
-    ("PROC_TEK_MSO", "TST_IFACE", 50, ["TST_PARAM"]),
-    ("PROC_TEK_MSO", "TST_AWG", 60, ["TST_PARAM"]),
-    ("PROC_TEK_DPO", "CAL_PARAM", 10, []),
-    ("PROC_TEK_DPO", "CAL_IFACE", 20, ["CAL_PARAM"]),
-    ("PROC_TEK_DPO", "TST_PARAM", 30, ["CAL_PARAM", "CAL_IFACE"]),
-    ("PROC_TEK_DPO", "TST_IFACE", 40, ["TST_PARAM"]),
+    ("PROC-SCOPE-MSO-AWG", "CAL-PARAM", 10, []),
+    ("PROC-SCOPE-MSO-AWG", "CAL-IFACE", 20, ["CAL-PARAM"]),
+    ("PROC-SCOPE-MSO-AWG", "CAL-AWG", 30, ["CAL-PARAM"]),
+    ("PROC-SCOPE-MSO-AWG", "TST-PARAM", 40, ["CAL-PARAM", "CAL-IFACE", "CAL-AWG"]),
+    ("PROC-SCOPE-MSO-AWG", "TST-IFACE", 50, ["TST-PARAM"]),
+    ("PROC-SCOPE-MSO-AWG", "TST-AWG", 60, ["TST-PARAM"]),
+    ("PROC-SCOPE-DPO-BASE", "CAL-PARAM", 10, []),
+    ("PROC-SCOPE-DPO-BASE", "CAL-IFACE", 20, ["CAL-PARAM"]),
+    ("PROC-SCOPE-DPO-BASE", "TST-PARAM", 30, ["CAL-PARAM", "CAL-IFACE"]),
+    ("PROC-SCOPE-DPO-BASE", "TST-IFACE", 40, ["TST-PARAM"]),
 ]
 
 # (station_id, nodeid, item_name)
@@ -82,46 +82,46 @@ TOPOLOGY = [
 # 完整 nodeid 形式：tests/test_<station>.py::Test<Class>::test_<method>
 # 长度上限由 station_items.nodeid(String(256)) 保障。
 ITEMS = [
-    ("CAL_PARAM", "tests/test_cal_param.py::TestAmp::test_amp_cal", "CHn幅度校准"),
-    ("CAL_PARAM", "tests/test_cal_param.py::TestPhase::test_phase_cal", "CHn_相位校准"),
-    ("CAL_PARAM", "tests/test_cal_param.py::TestAmpDc::test_amp_dc_1m", "CHn_幅度DC_1MΩ测试"),
-    ("CAL_PARAM", "tests/test_cal_param.py::TestBandwidth::test_bw_hi_z", "CHn_带宽测试_高阻测试_全通道(部分档位)"),
-    ("CAL_PARAM", "tests/test_cal_param.py::TestFastEdge::test_fast_edge_1m", "CHn_快沿_1MΩ测试"),
-    ("CAL_IFACE", "tests/test_cal_iface.py::TestNoise::test_noise", "基线噪声测试"),
-    ("CAL_IFACE", "tests/test_cal_iface.py::TestTouch::test_touch", "触屏测试"),
-    ("CAL_IFACE", "tests/test_cal_iface.py::TestAux::test_aux", "AUX"),
-    ("CAL_AWG",   "tests/test_cal_awg.py::TestDac::test_1k_dc", "1k&DC"),
-    ("TST_PARAM", "tests/test_tst_param.py::TestTimebase::test_timebase", "时基精度测试"),
-    ("TST_PARAM", "tests/test_tst_param.py::TestAmp::test_amp_ac", "CHn_幅度AC测试"),
-    ("TST_PARAM", "tests/test_tst_param.py::TestAmpDc::test_amp_dc_1m", "CHn_幅度DC_1MΩ测试"),
-    ("TST_PARAM", "tests/test_tst_param.py::TestBandwidth::test_bw_full", "CHn_带宽测试_高阻测试_全通道"),
-    ("TST_PARAM", "tests/test_tst_param.py::TestBandwidth::test_bw_single", "CHn_带宽测试_高阻测试_单通道"),
-    ("TST_IFACE", "tests/test_tst_iface.py::TestNoise::test_noise", "基线噪声测试"),
-    ("TST_IFACE", "tests/test_tst_iface.py::TestLineTrig::test_line_trig", "市电触发测试"),
-    ("TST_IFACE", "tests/test_tst_iface.py::TestRuntTrig::test_runt_trig", "欠幅脉冲触发测试"),
-    ("TST_AWG",   "tests/test_tst_awg.py::TestAuxChk::test_aux_chk", "AUX检查"),
-    ("TST_AWG",   "tests/test_tst_awg.py::TestAfgDc::test_afg_dc_ut8806", "AFG DC校验功能1通道测试(UT8806)"),
-    ("TST_AWG",   "tests/test_tst_awg.py::TestAfgSine::test_afg_sine_osc", "AFG 通道1正弦波测试(OSC)"),
-    ("TST_AWG",   "tests/test_tst_awg.py::TestAfgSquare::test_afg_square_osc", "AFG 通道1方波测试(OSC)"),
+    ("CAL-PARAM", "tests/test_cal_param.py::TestAmp::test_amp_cal", "CHn幅度校准"),
+    ("CAL-PARAM", "tests/test_cal_param.py::TestPhase::test_phase_cal", "CHn_相位校准"),
+    ("CAL-PARAM", "tests/test_cal_param.py::TestAmpDc::test_amp_dc_1m", "CHn_幅度DC_1MΩ测试"),
+    ("CAL-PARAM", "tests/test_cal_param.py::TestBandwidth::test_bw_hi_z", "CHn_带宽测试_高阻测试_全通道(部分档位)"),
+    ("CAL-PARAM", "tests/test_cal_param.py::TestFastEdge::test_fast_edge_1m", "CHn_快沿_1MΩ测试"),
+    ("CAL-IFACE", "tests/test_cal_iface.py::TestNoise::test_noise", "基线噪声测试"),
+    ("CAL-IFACE", "tests/test_cal_iface.py::TestTouch::test_touch", "触屏测试"),
+    ("CAL-IFACE", "tests/test_cal_iface.py::TestAux::test_aux", "AUX"),
+    ("CAL-AWG",   "tests/test_cal_awg.py::TestDac::test_1k_dc", "1k&DC"),
+    ("TST-PARAM", "tests/test_tst_param.py::TestTimebase::test_timebase", "时基精度测试"),
+    ("TST-PARAM", "tests/test_tst_param.py::TestAmp::test_amp_ac", "CHn_幅度AC测试"),
+    ("TST-PARAM", "tests/test_tst_param.py::TestAmpDc::test_amp_dc_1m", "CHn_幅度DC_1MΩ测试"),
+    ("TST-PARAM", "tests/test_tst_param.py::TestBandwidth::test_bw_full", "CHn_带宽测试_高阻测试_全通道"),
+    ("TST-PARAM", "tests/test_tst_param.py::TestBandwidth::test_bw_single", "CHn_带宽测试_高阻测试_单通道"),
+    ("TST-IFACE", "tests/test_tst_iface.py::TestNoise::test_noise", "基线噪声测试"),
+    ("TST-IFACE", "tests/test_tst_iface.py::TestLineTrig::test_line_trig", "市电触发测试"),
+    ("TST-IFACE", "tests/test_tst_iface.py::TestRuntTrig::test_runt_trig", "欠幅脉冲触发测试"),
+    ("TST-AWG",   "tests/test_tst_awg.py::TestAuxChk::test_aux_chk", "AUX检查"),
+    ("TST-AWG",   "tests/test_tst_awg.py::TestAfgDc::test_afg_dc_ut8806", "AFG DC校验功能1通道测试(UT8806)"),
+    ("TST-AWG",   "tests/test_tst_awg.py::TestAfgSine::test_afg_sine_osc", "AFG 通道1正弦波测试(OSC)"),
+    ("TST-AWG",   "tests/test_tst_awg.py::TestAfgSquare::test_afg_square_osc", "AFG 通道1方波测试(OSC)"),
 ]
 
 # DPO 流程剔除 AWG 站位
-DPO_EXCLUDED = {"CAL_AWG", "TST_AWG"}
+DPO_EXCLUDED = {"CAL-AWG", "TST-AWG"}
 
 CLIENTS = [
-    ("CAL-DESK-01", "CAL_PARAM", "10.1.60.11"),
-    ("CAL-DESK-02", "CAL_IFACE", "10.1.60.12"),
-    ("CAL-DESK-03", "CAL_AWG", "10.1.60.13"),
+    ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11"),
+    ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12"),
+    ("SZ-L1-CAL-03", "CAL-AWG", "10.1.60.13"),
     # 备用机台：与主机台同工位，用于承载演示场景数据
     # 一台机台同时只应持有一把工位锁，故每个持锁的场景件各占一台
-    ("CAL-DESK-07", "CAL_PARAM", "10.1.60.17"),
-    ("CAL-DESK-08", "CAL_PARAM", "10.1.60.18"),
-    ("TST-DESK-01", "TST_PARAM", "10.1.61.11"),
-    ("TST-DESK-02", "TST_IFACE", "10.1.61.12"),
-    ("TST-DESK-03", "TST_AWG", "10.1.61.13"),
+    ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17"),
+    ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18"),
+    ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11"),
+    ("SZ-L1-TST-02", "TST-IFACE", "10.1.61.12"),
+    ("SZ-L1-TST-03", "TST-AWG", "10.1.61.13"),
     # 备用机台：与主机台同工位，用于演示"崩溃后被接管"
-    ("CAL-DESK-09", "CAL_PARAM", "10.1.60.19"),
-    ("TST-DESK-09", "TST_PARAM", "10.1.61.19"),
+    ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19"),
+    ("SZ-L1-TST-09", "TST-PARAM", "10.1.61.19"),
 ]
 
 STATION_CLIENT = {c[1]: c[0] for c in CLIENTS}
@@ -469,7 +469,7 @@ def _seed_static_rules(db) -> None:
     }
     for process_id in (p[0] for p in PROCESSES):
         for station_id, case_id, item_name in ITEMS:
-            if process_id == "PROC_TEK_DPO" and station_id in DPO_EXCLUDED:
+            if process_id == "PROC-SCOPE-DPO-BASE" and station_id in DPO_EXCLUDED:
                 continue
             if (process_id, station_id, case_id) in existing_items:
                 continue
@@ -649,12 +649,12 @@ def _ensure_scenario_clients(db) -> None:
     """
     existing = {row[0] for row in db.query(StationClient.client_id).all()}
     for client_id, station_id, ip in (
-        ("CAL-DESK-01", "CAL_PARAM", "10.1.60.11"),
-        ("CAL-DESK-07", "CAL_PARAM", "10.1.60.17"),
-        ("CAL-DESK-08", "CAL_PARAM", "10.1.60.18"),
-        ("CAL-DESK-09", "CAL_PARAM", "10.1.60.19"),
-        ("CAL-DESK-02", "CAL_IFACE", "10.1.60.12"),
-        ("TST-DESK-01", "TST_PARAM", "10.1.61.11"),
+        ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11"),
+        ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17"),
+        ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18"),
+        ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19"),
+        ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12"),
+        ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11"),
     ):
         # 已存在则跳过：本函数的目的是"确保档案存在"，不该覆盖管理员改过的绑定/IP
         if client_id not in existing:
@@ -681,20 +681,20 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         db.commit()
 
     dpo = db.get(ProductModel, "DPO4054B")
-    process_id = dpo.process_id if dpo else "PROC_TEK_DPO"
+    process_id = dpo.process_id if dpo else "PROC-SCOPE-DPO-BASE"
 
     # --- 1) 正常持锁：心跳 20s 前，已上报 3/5 断点 ---
     p = _mk_product(
         db, sn=SCENARIO_SNS["healthy"], product_model="DPO4054B",
         status="TESTING", passed=[],
     )
-    items = _partial_items(db, process_id, "CAL_PARAM", rng, 3)
+    items = _partial_items(db, process_id, "CAL-PARAM", rng, 3)
     session = _mk_session(
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-01", attempt=1,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-01", attempt=1,
         status="RUNNING", started_at=now - timedelta(seconds=120),
         last_heartbeat_at=now - timedelta(seconds=20), items=items,
     )
-    p.current_client = "CAL-DESK-01"
+    p.current_client = "SZ-L1-CAL-01"
     p.lock_token = session.lock_token
     p.lock_acquired_at = now - timedelta(seconds=120)
     p.lock_last_seen_at = now - timedelta(seconds=20)
@@ -707,13 +707,13 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         db, sn=SCENARIO_SNS["lost"], product_model="DPO4054B",
         status="TESTING", passed=[],
     )
-    items = _partial_items(db, process_id, "CAL_PARAM", rng, 2)
+    items = _partial_items(db, process_id, "CAL-PARAM", rng, 2)
     session = _mk_session(
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-08", attempt=1,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-08", attempt=1,
         status="RUNNING", started_at=now - timedelta(seconds=600),
         last_heartbeat_at=now - timedelta(seconds=300), items=items,
     )
-    p.current_client = "CAL-DESK-08"
+    p.current_client = "SZ-L1-CAL-08"
     p.lock_token = session.lock_token
     p.lock_acquired_at = now - timedelta(seconds=600)
     p.lock_last_seen_at = now - timedelta(seconds=300)
@@ -726,21 +726,21 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         db, sn=SCENARIO_SNS["resuming"], product_model="DPO4054B",
         status="TESTING", passed=[],
     )
-    items = _partial_items(db, process_id, "CAL_PARAM", rng, 4)
+    items = _partial_items(db, process_id, "CAL-PARAM", rng, 4)
     _mk_session(  # 第一次尝试：崩溃失联
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-07", attempt=1,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-07", attempt=1,
         status="ABORTED", started_at=now - timedelta(seconds=900),
         last_heartbeat_at=now - timedelta(seconds=780),
-        items=_partial_items(db, process_id, "CAL_PARAM", rng, 1),
+        items=_partial_items(db, process_id, "CAL-PARAM", rng, 1),
         end_reason="client_lost: no heartbeat for 180s", ended_by="sweeper",
         ended_at=now - timedelta(seconds=600),
     )
     session = _mk_session(  # 第二次尝试：续测中
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-07", attempt=2,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-07", attempt=2,
         status="RUNNING", started_at=now - timedelta(seconds=300),
         last_heartbeat_at=now - timedelta(seconds=30), items=items,
     )
-    p.current_client = "CAL-DESK-07"
+    p.current_client = "SZ-L1-CAL-07"
     p.lock_token = session.lock_token
     p.lock_acquired_at = now - timedelta(seconds=300)
     p.lock_last_seen_at = now - timedelta(seconds=30)
@@ -751,15 +751,15 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     # --- 4) 硬超时：持锁 35min、心跳仍在（长测试跑满工位 timeout_sec）---
     p = _mk_product(
         db, sn=SCENARIO_SNS["expired"], product_model="DPO4054B",
-        status="TESTING", passed=["CAL_PARAM", "CAL_IFACE"],
+        status="TESTING", passed=["CAL-PARAM", "CAL-IFACE"],
     )
-    items = _partial_items(db, process_id, "TST_PARAM", rng, 5)
+    items = _partial_items(db, process_id, "TST-PARAM", rng, 5)
     session = _mk_session(
-        db, sn=p.sn, station_id="TST_PARAM", client_id="TST-DESK-01", attempt=1,
+        db, sn=p.sn, station_id="TST-PARAM", client_id="SZ-L1-TST-01", attempt=1,
         status="RUNNING", started_at=now - timedelta(seconds=2100),
         last_heartbeat_at=now - timedelta(seconds=25), items=items,
     )
-    p.current_client = "TST-DESK-01"
+    p.current_client = "SZ-L1-TST-01"
     p.lock_token = session.lock_token
     p.lock_acquired_at = now - timedelta(seconds=2100)
     p.lock_last_seen_at = now - timedelta(seconds=25)
@@ -770,27 +770,27 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     # --- 5) 历史：崩溃后续测成功出库（attempt1 失联 + attempt2 完成）---
     p = _mk_product(
         db, sn=SCENARIO_SNS["resumed"], product_model="DPO4054B",
-        status="IDLE", passed=["CAL_PARAM", "CAL_IFACE"],
+        status="IDLE", passed=["CAL-PARAM", "CAL-IFACE"],
     )
     _mk_session(
-        db, sn=p.sn, station_id="CAL_IFACE", client_id="CAL-DESK-02", attempt=1,
+        db, sn=p.sn, station_id="CAL-IFACE", client_id="SZ-L1-CAL-02", attempt=1,
         status="ABORTED", started_at=now - timedelta(hours=3),
         last_heartbeat_at=now - timedelta(hours=3) + timedelta(seconds=90),
-        items=_partial_items(db, process_id, "CAL_IFACE", rng, 1),
+        items=_partial_items(db, process_id, "CAL-IFACE", rng, 1),
         end_reason="client_lost: no heartbeat for 150s", ended_by="sweeper",
         ended_at=now - timedelta(hours=3) + timedelta(seconds=240),
     )
     resumed_session = _mk_session(
-        db, sn=p.sn, station_id="CAL_IFACE", client_id="CAL-DESK-02", attempt=2,
+        db, sn=p.sn, station_id="CAL-IFACE", client_id="SZ-L1-CAL-02", attempt=2,
         status="COMPLETED", started_at=now - timedelta(hours=2),
         last_heartbeat_at=now - timedelta(hours=2) + timedelta(seconds=180),
-        items=_partial_items(db, process_id, "CAL_IFACE", rng, 1),
+        items=_partial_items(db, process_id, "CAL-IFACE", rng, 1),
         end_reason="checked out", ended_at=now - timedelta(hours=2) + timedelta(seconds=200),
     )
     # 台账：本次出站由 checkpoint 补回了 2 个崩溃前已跑完的用例
-    all_items = _make_items(db, process_id, "CAL_IFACE", rng, False)
+    all_items = _make_items(db, process_id, "CAL-IFACE", rng, False)
     record = _write_record(
-        db, sn=p.sn, station_id="CAL_IFACE",
+        db, sn=p.sn, station_id="CAL-IFACE",
         items=all_items, overall="PASS",
         when=now - timedelta(hours=2) + timedelta(seconds=200),
         firmware=TARGET_FW, duration_ms=182000,
@@ -810,20 +810,20 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         status="TESTING", passed=[],
     )
     _mk_session(
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-01", attempt=1,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-01", attempt=1,
         status="TAKEN_OVER", started_at=now - timedelta(seconds=800),
         last_heartbeat_at=now - timedelta(seconds=700),
-        items=_partial_items(db, process_id, "CAL_PARAM", rng, 2),
-        end_reason="taken over by CAL-DESK-09", ended_by="CAL-DESK-09",
+        items=_partial_items(db, process_id, "CAL-PARAM", rng, 2),
+        end_reason="taken over by SZ-L1-CAL-09", ended_by="SZ-L1-CAL-09",
         ended_at=now - timedelta(seconds=180),
     )
     session = _mk_session(
-        db, sn=p.sn, station_id="CAL_PARAM", client_id="CAL-DESK-09", attempt=1,
+        db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-09", attempt=1,
         status="RUNNING", started_at=now - timedelta(seconds=180),
         last_heartbeat_at=now - timedelta(seconds=15),
-        items=_partial_items(db, process_id, "CAL_PARAM", rng, 1),
+        items=_partial_items(db, process_id, "CAL-PARAM", rng, 1),
     )
-    p.current_client = "CAL-DESK-09"
+    p.current_client = "SZ-L1-CAL-09"
     p.lock_token = session.lock_token
     p.lock_acquired_at = now - timedelta(seconds=180)
     p.lock_last_seen_at = now - timedelta(seconds=15)
@@ -834,16 +834,16 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     # --- 7) 连续失联达阈值 → 已计一次失败 ---
     p = _mk_product(
         db, sn=SCENARIO_SNS["lost_repeat"], product_model="DPO4054B",
-        status="IDLE", passed=["CAL_PARAM"], fail_count=1,
+        status="IDLE", passed=["CAL-PARAM"], fail_count=1,
         locked_reason=None,
     )
     for i in range(settings.LOST_LOCK_FAIL_THRESHOLD):
         _mk_session(
-            db, sn=p.sn, station_id="CAL_IFACE", client_id="CAL-DESK-02", attempt=1,
+            db, sn=p.sn, station_id="CAL-IFACE", client_id="SZ-L1-CAL-02", attempt=1,
             status="ABORTED",
             started_at=now - timedelta(hours=6 - i * 2),
             last_heartbeat_at=now - timedelta(hours=6 - i * 2) + timedelta(seconds=60),
-            items=_partial_items(db, process_id, "CAL_IFACE", rng, 1),
+            items=_partial_items(db, process_id, "CAL-IFACE", rng, 1),
             end_reason="client_lost: no heartbeat for 200s", ended_by="sweeper",
             ended_at=now - timedelta(hours=6 - i * 2) + timedelta(seconds=260),
         )
@@ -851,19 +851,19 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     # --- 8) 历史：硬超时终止（计失败）---
     p = _mk_product(
         db, sn=SCENARIO_SNS["timeout"], product_model="DPO4054B",
-        status="IDLE", passed=["CAL_PARAM", "CAL_IFACE"], fail_count=1,
+        status="IDLE", passed=["CAL-PARAM", "CAL-IFACE"], fail_count=1,
     )
     expired_at = now - timedelta(hours=5)
     _mk_session(
-        db, sn=p.sn, station_id="TST_PARAM", client_id="TST-DESK-01", attempt=1,
+        db, sn=p.sn, station_id="TST-PARAM", client_id="SZ-L1-TST-01", attempt=1,
         status="EXPIRED", started_at=expired_at - timedelta(seconds=1900),
         last_heartbeat_at=expired_at,
-        items=_partial_items(db, process_id, "TST_PARAM", rng, 3),
+        items=_partial_items(db, process_id, "TST-PARAM", rng, 3),
         end_reason="lock timeout (1800s)", ended_by="sweeper", ended_at=expired_at,
     )
     _write_record(
-        db, sn=p.sn, station_id="TST_PARAM",
-        items=_make_items(db, process_id, "TST_PARAM", rng, True),
+        db, sn=p.sn, station_id="TST-PARAM",
+        items=_make_items(db, process_id, "TST-PARAM", rng, True),
         overall="FAIL", when=expired_at, firmware=TARGET_FW, duration_ms=1900000,
     )
 

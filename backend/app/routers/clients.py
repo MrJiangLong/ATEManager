@@ -18,7 +18,7 @@ def _holding_sn(db: Session, client_id: str) -> Optional[str]:
     """该机台当前持有的在制品 SN（TESTING 且持锁方是它自己）。
 
     正常约束下一台机台只持有一把工位锁；但存量/演示数据可能出现一台机台对应
-    多个 TESTING 件（如 seed 场景里 C099001~C099003 同属 CAL-DESK-01）。
+    多个 TESTING 件（如 seed 场景里 C099001~C099003 同属 SZ-L1-CAL-01）。
     原先这里用 .scalar()，结果多于一行时会抛 MultipleResultsFound → 机台清单
     按该工位筛选直接 500；改为按 lock_acquired_at 取最近一把，确定性且不再抛错。
     """

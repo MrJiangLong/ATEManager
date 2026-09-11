@@ -135,8 +135,8 @@ routers  ──▶  services  ──▶  models
 
 | 流程 | 机型 | 工步数 | 说明 |
 |---|---|---|---|
-| `PROC_TEK_MSO` | `MSO4054B` | 6 | 带 AWG 选件，含 `CAL_AWG` / `TST_AWG` |
-| `PROC_TEK_DPO` | `DPO4054B` | 4 | 无 AWG 标准流程，物理剔除所有 AWG 工步 |
+| `PROC-SCOPE-MSO-AWG` | `MSO4054B` | 6 | 带 AWG 选件，含 `CAL-AWG` / `TST-AWG` |
+| `PROC-SCOPE-DPO-BASE` | `DPO4054B` | 4 | 无 AWG 标准流程，物理剔除所有 AWG 工步 |
 
 机型只需绑定 `process_id`，上位机按用例ID清单执行，服务端按拓扑判定 —— 运行期零分支。
 
@@ -415,23 +415,21 @@ URL、SCPI 指令、日志文件名里都无需转义。
 - 同型号的不同固件基线仍用同一个 `product_model`，差异由
   `target_fw_version` + `fw_match_rule` 表达。
 
-#### 存量数据与迁移
+#### 强制校验
 
-现有种子数据（`PROC_TEK_MSO`、`CAL_PARAM`、`CAL-DESK-01`）**不符合**本规范：
-用了下划线、缺厂区/产线段。系统不强制，存量可继续使用，不会报错。
+服务端在**写入口**强制校验格式，不合规直接 `422` 并返回期望格式：
 
-建议节奏：**新产线 / 新机台按新规范命名**；存量在换线或停产窗口期用
-「新建 → 停用旧的」迁移。注意 `test_records` / `test_sessions` 里的
-`station_id` / `client_id` 是**冗余快照而非外键**，历史记录仍显示当时的值 ——
-这是刻意设计（保证历史可追溯），迁移时**不要**去改写历史。
+| 字段 | 校验时机 | 正则 |
+|---|---|---|
+| `process_id` | `POST /api/admin/processes` | `^PROC-[A-Z0-9]+(-[A-Z0-9]+){2}$` |
+| `station_id` | `POST /api/admin/stations` | `^[A-Z]{2,4}-[A-Z0-9]+(-[0-9]{2})?$` |
+| `client_id` | `POST /api/admin/clients` | `^[A-Z]{2}-L[0-9]+-[A-Z]{2,4}-[0-9]{2}(-[A-Z]+)?$` |
 
-#### 参考正则（如需强制校验）
+**更新接口不做校验**：三者投产即冻结，原地改名会让历史台账失联，
+要换编号只能「新建合规编号 → 停用旧的」。
 
-```
-^PROC-[A-Z0-9]+(-[A-Z0-9]+){2}$                       # process_id
-^[A-Z]{2,4}-[A-Z0-9]+(-[0-9]{2})?$                    # station_id
-^[A-Z]{2}-L[0-9]+-[A-Z]{2,4}-[0-9]{2}(-[A-Z]+)?$      # client_id
-```
+`test_records` / `test_sessions` 里的 `station_id` / `client_id` 是**冗余快照而非外键**，
+历史记录始终显示当时的值 —— 这是刻意设计（保证历史可追溯），迁移时**不要**去改写历史。
 
 ### 7.3 运行时数据（上位机高频读写）
 
@@ -502,8 +500,8 @@ URL、SCPI 指令、日志文件名里都无需转义。
 
 ```json
 { "ok": false, "exit_code": 10, "code": "missing_prereq",
-  "message": "missing_prereq: C020001 must finish CAL_IFACE before TST_PARAM",
-  "data": { "missing": ["CAL_IFACE"] } }
+  "message": "missing_prereq: C020001 must finish CAL-IFACE before TST-PARAM",
+  "data": { "missing": ["CAL-IFACE"] } }
 ```
 
 > 完整错误码表见 `doc/API.md` 第 6 章。
@@ -549,7 +547,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 ```python
 from ate_client import AteClient
 
-cli = AteClient("http://127.0.0.1:8000", api_key, client_id="CAL-DESK-01",
+cli = AteClient("http://127.0.0.1:8000", api_key, client_id="SZ-L1-CAL-01",
                 state_file=Path(".ate_session.json"))
 state = cli.check_in(sn, model, firmware, case_ids=case_ids)   # 403/409 → 终止
 for case_id in case_ids:

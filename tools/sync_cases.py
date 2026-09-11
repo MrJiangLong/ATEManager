@@ -9,22 +9,22 @@ r"""用一份 JSON 全量同步用例ID（nodeid）到服务端 station_items。
 JSON 格式（多流程，一次更新多条；同名工位在不同流程是两份独立清单）：
 {
   "processes": {
-    "PROC_TEK_MSO": {
-      "CAL_PARAM": [
+    "PROC-SCOPE-MSO-AWG": {
+      "CAL-PARAM": [
         "tests/test_cal_param.py::TestAmp::test_amp_cal",
         {"case_id": "tests/test_cal_param.py::TestPhase::test_phase_cal",
          "item_name": "CHn_相位校准", "is_mandatory": true}
       ],
-      "TST_AWG": ["tests/test_tst_awg.py::TestDac::test_1k_dc"]
+      "TST-AWG": ["tests/test_tst_awg.py::TestDac::test_1k_dc"]
     },
-    "PROC_TEK_DPO": {
-      "CAL_PARAM": ["tests/test_cal_param.py::TestAmp::test_amp_cal"]
+    "PROC-SCOPE-DPO-BASE": {
+      "CAL-PARAM": ["tests/test_cal_param.py::TestAmp::test_amp_cal"]
     }
   }
 }
 
 单条流程也用同一格式，只写一个 key 即可：
-{"processes": {"PROC_TEK_MSO": {"CAL_PARAM": [...]}}}
+{"processes": {"PROC-SCOPE-MSO-AWG": {"CAL-PARAM": [...]}}}
 
 有会话在跑时怎么办（--abort-running）
     换清单会让进行中会话的断点"缺新必测项"，故默认拒绝同步。
