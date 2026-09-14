@@ -10,7 +10,7 @@ services:
       APP_DEBUG: "false"
       LOG_LEVEL: INFO
       LOG_FILE: /app/data/logs/app.log
-      V1_API_KEY: ce15ef39ae60c65f19b501bf360305e6a4f43e1097a9ffc7
+      V1_API_KEY: a1bb70ab8ac61c0be56c950b0bb2ce56959c5f96d86f4da3
       JWT_SECRET: GmegCtqmrl2Bxqe2vDFdeUJWh0UulhgkiGtyeAybTGwU7Kk6r3YVOysBXJwWWky1
       DEFAULT_ADMIN_USERNAME: admin
       DEFAULT_ADMIN_PASSWORD: admin123
