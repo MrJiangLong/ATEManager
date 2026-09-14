@@ -612,10 +612,9 @@ class AteClient:
                     "reason": reason,
                 },
             )
-        finally:
-            # 只清本地断点文件：内存中的 state 保留，便于调用方读取 attempt / checkout_id 做诊断
-            self._clear_persisted()
-
+        except ApiError:
+            raise
+        self._clear_persisted()
         LOGGER.debug("出库 record_id=%s result=%s", data.get("record_id"), data.get("overall_result"))
         return data
 
@@ -624,19 +623,18 @@ class AteClient:
         if not self.state:
             return {}
         self.stop_heartbeat()
-        try:
-            return self.http.data(
-                "POST",
-                "/api/v1/client/release",
-                body={
-                    "client_id": self.client_id,
-                    "sn": self.state.sn,
-                    "lock_token": self.state.lock_token,
-                    "reason": reason,
-                },
-            )
-        finally:
-            self._clear_persisted()
+        data = self.http.data(
+            "POST",
+            "/api/v1/client/release",
+            body={
+                "client_id": self.client_id,
+                "sn": self.state.sn,
+                "lock_token": self.state.lock_token,
+                "reason": reason,
+            },
+        )
+        self._clear_persisted()
+        return data
 
     def ack(self, sn: Optional[str] = None, checkout_id: Optional[str] = None) -> bool:
         """上传闭环校验：确认服务端已落库。命中返回 True。"""

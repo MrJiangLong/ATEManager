@@ -725,6 +725,9 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 - 采用"临时文件 + `os.replace`"原子写入，避免崩溃时写坏文件
 - **写入失败绝不能中断测试**（Windows 上杀毒/索引占用文件很常见），续测只是优化
 - 成功出站后删除该文件
+- 出站/释放**失败时必须保留**该文件：`checkout_id` / 待补传断点都在里面，凭同一
+  `checkout_id` 重试，服务端按 `(sn, checkout_id)` 幂等回放；文件一丢就可能换新 ID
+  重发产生双账
 
 ### 10.4 必做与禁做
 
@@ -735,6 +738,24 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 | 出站后校验 `acknowledged` | 未拿到 ACK 就放行流转 |
 | 收到 `lock_invalid` 立即停机 | 用旧 token 反复重试 |
 | `checkout_id` 持久化并复用 | 每次重试生成新的 `checkout_id` |
+
+### 10.5 宿主职责分工与接入指引
+
+SDK（`tools/ate_client.py`，单文件零第三方依赖）已覆盖传输层全部职责（重试退避、
+断点队列、幂等重传、失锁感知），宿主只负责四件事：执行测试、调 `checkpoint`、
+失锁停机、出站重试。完整 conftest.py 骨架见**附录 A**。
+
+**断网重传各场景的分工**（宿主无需自己实现队列）：
+
+| 场景 | 处理者 |
+|---|---|
+| 秒级抖动 | SDK `HttpClient` 指数退避重试，对调用方透明 |
+| 断网数分钟继续测 | `checkpoint()` 失败自动进 `pending_items` 落盘，不抛异常 |
+| 网络恢复后补传 | 下次 `checkpoint` / `check_out` 自动合并队列，服务端按 `case_id` 去重 |
+| 出站瞬间断网 | 宿主按上例退避重试，复用同一 `checkout_id` |
+| 服务端已落库但响应丢失 | 同 `checkout_id` 重试 → 幂等回放既有回执，不会双账 |
+| 断网 + 进程崩溃 | 断点文件恢复会话（同 `state_file` 路径重新进站） |
+| 断网太久锁被回收/接管 | `lost_lock` 置位 → `pytest.exit` 停机，重新进站 |
 
 ---
 
@@ -856,60 +877,104 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 
 ## 14. 附录
 
-### 附录 A：pytest 接入示例（conftest 片段）
+### 附录 A：完整接入示例（conftest.py）
 
-以下片段展示产线 pytest 工程如何接入，可直接裁剪使用：
+产线 pytest 工程只需把 `tools/ate_client.py` 拷为工程内模块，再写一个 conftest。
+职责分工（谁管断网重传、谁管停机）见 **10.5**，本附录给出完整骨架：
 
 ```python
-# conftest.py（节选）
-import pytest
+# conftest.py
+import threading
+import time
 from pathlib import Path
-from ate_client import AteClient, ApiError, identity_from_report, to_ate_items
 
-STATE_FILE = Path(".ate_session.json")
+import pytest
+
+from ate_client import AteClient, identity_from_report, to_ate_items
+
+STATE_FILE = Path("D:/atedata/.ate_state.json")   # 断点文件放独立数据目录
 
 
 def pytest_addoption(parser):
     parser.addoption("--ate-url", default="http://127.0.0.1:8000")
-    parser.addoption("--ate-key", default="")
-    parser.addoption("--ate-client", default="SZ-L1-CAL-01")
+    parser.addoption("--ate-key", default="")                  # 与服务端 V1_API_KEY 一致
+    parser.addoption("--ate-client", default="SZ-L1-CAL-01")   # 机台编号，Web 端绑定工位
 
 
+# ---------- 1. 收集每个用例的结果（pytest 标准钩子） ----------
+_report_rows = []
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call":
+        _report_rows.append({
+            "nodeid": item.nodeid,
+            "duration": rep.duration,
+            "result": rep.outcome,
+            "exception": str(rep.longrepr) if rep.failed else "",
+        })
+
+# ---------- 2. 客户端夹具 ----------
 @pytest.fixture(scope="session")
 def ate(request):
     opt = request.config.getoption
-    with AteClient(opt("--ate-url"), opt("--ate-key"),
-                   client_id=opt("--ate-client"), state_file=STATE_FILE) as cli:
-        yield cli
 
+    def on_lost_lock(reason):
+        # 心跳线程调用：不能在回调里 pytest.exit（SystemExit 只会杀掉心跳线程），
+        # 必须 interrupt_main 把 KeyboardInterrupt 注入主线程，长用例也能被打断
+        threading.interrupt_main()
 
+    cli = AteClient(opt("--ate-url"), opt("--ate-key"),
+                    client_id=opt("--ate-client"),
+                    state_file=STATE_FILE, on_lost_lock=on_lost_lock)
+    yield cli
+    cli.stop_heartbeat()
+
+# ---------- 3. 会话级：进站 → 测试 → 出站 ----------
 @pytest.fixture(scope="session", autouse=True)
-def project_session_start(request, ate, dst_instr):
-    """进站（yield 前）/ 出站（yield 后）。用例结果由 makereport 钩子收集。"""
-    report = {"sn": "", "model": "", "version": "", "data": []}
-    sn, model, fw = identity_from_report(dst_instr.idn())   # *IDN? 直读
-    report.update(serialNumber=sn, model=model, version=fw)
+def ate_session(ate, request):
+    sn, model, fw = identity_from_report(read_idn())   # 仪器 *IDN? 直读，工程内实现
 
-    case_ids = [item.nodeid for item in request.session.items]
-    ate.check_in(sn, model, fw, case_ids=case_ids)
-    yield report
-    try:
-        ack = ate.check_out(to_ate_items(report["data"]))
-        if not ack.get("acknowledged"):
-            pytest.exit("未拿到落库回执，禁止流转", returncode=1)
-    except ApiError as exc:
-        pytest.exit(f"出站失败：{exc}", returncode=1)
+    case_ids = [item.nodeid for item in request.session.items]  # pytest collection
+    state = ate.check_in(sn, model, fw, case_ids=case_ids)
+    if state.attempt > 1:  # 断点续测：服务端已记录完成的用例可跳过
+        print(f"[ATE] 续测 attempt={state.attempt}，已完成 {len(state.completed_case_ids)} 条")
 
+    yield
 
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """每跑完一个用例即上报断点（崩溃不丢进度）。"""
-    outcome = yield
-    rep = outcome.get_result()
-    if rep.when != "call":
-        return
-    ...
+    # 出站：指数退避重试，复用同一 checkout_id（服务端按 (sn, checkout_id) 幂等回放）
+    items = to_ate_items(_report_rows)
+    for attempt in range(6):
+        try:
+            ack = ate.check_out(items, duration_ms=elapsed_ms())   # elapsed_ms 为工程内计时
+            if not ack.get("acknowledged"):
+                pytest.exit("未拿到落库回执，禁止流转", returncode=1)
+            return
+        except Exception:
+            if ate.lost_lock:
+                pytest.exit("session aborted by operator", returncode=3)
+            time.sleep(min(2 ** attempt, 30))
+    pytest.exit("checkout failed after retries", returncode=4)
+
+# ---------- 4. 每个用例之间：上报断点 + 失锁自检 ----------
+@pytest.fixture(autouse=True)
+def ate_case_gate(ate):
+    yield
+    if _report_rows:
+        ate.checkpoint(to_ate_items(_report_rows))   # 断网时自动进待补传队列，勿自行包重试
+        _report_rows.clear()
+    if ate.lost_lock:
+        pytest.exit("lock lost: aborted by operator", returncode=3)
 ```
+
+既有产线工程接入时只需对齐三点：
+
+1. **参数注入**：URL / API-Key / 机台编号改走 `--ate-*` 命令行参数（见上方 `pytest_addoption`）；
+2. **身份来源**：SN / 机型 / 固件由仪器 `*IDN?` 直读，经 `identity_from_report()` 解析三要素；
+3. **结果来源**：既有报告字典（`report["data"]` 的 nodeid / duration / result / exception 列表）
+   经 `to_ate_items()` 转换后即可喂给 `checkpoint` / `check_out`，字段映射见附录 B。
 
 ### 附录 B：字段映射表
 
