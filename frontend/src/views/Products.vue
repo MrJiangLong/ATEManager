@@ -32,15 +32,14 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableProgress')" min-width="130">
+        <el-table-column :label="$t('products.tableProgress')" min-width="150">
           <template #default="{ row }">
             <div class="progress-cell">
-              <el-progress
-                :percentage="progressPct(row)"
-                :stroke-width="8"
-                :show-text="false"
-                class="progress-bar"
-              />
+              <el-tooltip :content="stageTip(row)" placement="top" :disabled="!row.total_steps">
+                <div class="progress-track">
+                  <div class="progress-fill" :style="{ width: progressPct(row) + '%' }" />
+                </div>
+              </el-tooltip>
               <span class="progress-text muted">{{ row.passed_count }}/{{ row.total_steps }}</span>
             </div>
           </template>
@@ -194,6 +193,10 @@ function progressPct(row) {
   if (!row.total_steps) return 0
   return Math.round((row.passed_count / row.total_steps) * 100)
 }
+function stageTip(row) {
+  const path = (row.passed_stations || []).join(' → ')
+  return path ? `${row.passed_count}/${row.total_steps} · ${path}` : `${row.passed_count}/${row.total_steps}`
+}
 function goTrace(sn) {
   router.push(`/trace/${encodeURIComponent(sn)}`)
 }
@@ -317,7 +320,20 @@ usePolling(load, 20000)
 /* 机型 + 流程两行：把工艺列的信息并入机型列，省一整列 */
 .model-cell { display: flex; flex-direction: column; line-height: 1.35; }
 .model-process { font-size: 11px; }
-.progress-bar { flex: 1; min-width: 48px; }
+/* 工艺进度条：细轨道 + 淡蓝填充，保持安静；阶段明细（站点顺序）交给悬浮提示 */
+.progress-track {
+  flex: 1;
+  min-width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--app-border, #eef1f7);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(47, 107, 255, 0.35);
+}
 .progress-text { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* 锁列两行：上行为状态标签，下行为持锁时长与心跳断流时长 */

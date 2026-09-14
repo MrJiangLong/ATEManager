@@ -693,7 +693,12 @@ while not stop.wait(interval):          # interval = heartbeat_interval_sec / 2
 pytest 工程接入示例：
 
 ```python
+import logging
+import threading
+
 import pytest
+
+LOGGER = logging.getLogger(__name__)
 
 def run_all(cli, cases):
     for case in cases:
@@ -701,9 +706,15 @@ def run_all(cli, cases):
             pytest.exit("lock lost: session aborted by operator", returncode=3)
         cli.checkpoint([run(case)])          # 也可能直接抛 409 session_aborted
 
-# 或回调式（无需轮询）
-cli = AteClient(url, key, client_id="SZ-L1-CAL-01",
-                on_lost_lock=lambda reason: pytest.exit(reason, returncode=3))
+# 或回调式（无需轮询，但注意线程边界）
+# on_lost_lock 由心跳线程调用：直接 pytest.exit() 抛出的 SystemExit 只会杀掉
+# 心跳线程，主线程的 pytest 继续跑。必须用 interrupt_main 把 KeyboardInterrupt
+# 注入主线程——pytest 原生处理 KeyboardInterrupt，且能打断正在跑的长用例。
+def _on_lost_lock(reason: str):
+    LOGGER.error("lock lost: %s", reason)
+    threading.interrupt_main()
+
+cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 ```
 
 被中止的件回到 `IDLE` 且未盖章，**重新进站跑一遍即可**，不计失败、不会工程锁定。

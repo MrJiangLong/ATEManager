@@ -4,7 +4,7 @@
     station_items     用例ID静态清单（防漏测依据）
 """
 
-from typing import List
+from typing import Dict, List
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -139,6 +139,35 @@ def delete_step(
     db.commit()
 
 
+def _running_sessions_on(db: Session, process_id: str, station_id: str) -> int:
+    """该流程 + 工位上正在跑的会话数。
+
+    test_sessions 没有 process_id 字段，只能按 SN 反查（与 abort-running 口径一致）：
+    会话 SN → 在制品机型 → 机型所属流程。同名工位在别的流程上跑不拦，避免误伤。
+    """
+    models_in = [
+        m.product_model
+        for m in db.query(models.ProductModel)
+        .filter(models.ProductModel.process_id == process_id)
+        .all()
+    ]
+    sns = [
+        p.sn
+        for p in db.query(models.ProductStatus)
+        .filter(models.ProductStatus.product_model.in_(models_in or [""]))
+        .all()
+    ]
+    return (
+        db.query(models.TestSession)
+        .filter(
+            models.TestSession.station_id == station_id,
+            models.TestSession.sn.in_(sns or [""]),
+            models.TestSession.status == models.SESSION_RUNNING,
+        )
+        .count()
+    )
+
+
 # ==================== 用例ID测试项 ====================
 @router.get("/items", response_model=List[schemas.StationItemOut], summary="测试项清单")
 def list_items(
@@ -196,12 +225,20 @@ def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(curren
 
 @router.post("/items/import", response_model=schemas.StationItemImportOut, summary="批量导入用例ID清单(幂等upsert)")
 def import_items(
-    payload: schemas.StationItemImportIn, db: Session = Depends(get_db), user=Depends(current_user)
+    payload: schemas.StationItemImportIn,
+    force: bool = Query(False, description="忽略 RUNNING 会话闸门强行同步"),
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
 ):
     """整批同步某工位的用例ID清单，供上位机脚本自动对齐（pytest --collect-only 的输出）。
 
     匹配键 (process_id, station_id, case_id) 与唯一约束一致，故重复导入幂等：
     第二次执行全部 unchanged，不会产生重复行，也不会因已存在而报 409。
+
+    闸门：本次导入会"新增必测项"（新用例 / 停用复活 / is_mandatory 翻 true）且该
+    工位有 RUNNING 会话时默认 409 拒绝 —— 运行中会话的断点里没有新必测项，出站会被
+    missing_mandatory 误计一次失败（FAIL_LIMIT 次 → LOCKED）。先停会话再同步，或
+    force=true 强行覆盖。只收缩清单（停用/降级/改名）不拦，随时可做。
     """
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
@@ -217,9 +254,12 @@ def import_items(
         )
         .all()
     }
+    # 导入前的生效状态快照，用于判定哪些用例被"新增为必测"（闸门依据）
+    prev_state = {cid: (bool(r.is_active), bool(r.is_mandatory)) for cid, r in existing.items()}
 
     warnings: List[str] = []
     seen = set()
+    mand: Dict[str, bool] = {}
     created = updated = unchanged = 0
     for row_in in payload.items:
         case_id = row_in.case_id
@@ -229,6 +269,7 @@ def import_items(
             warnings.append(f"duplicate case_id in payload: {case_id}")
             continue
         seen.add(case_id)
+        mand[case_id] = bool(row_in.is_mandatory)
 
         row = existing.get(case_id)
         # 未传 item_name 时：新增用 case_id 兜底，已存在的保留原名（不把中文名抹成 nodeid）
@@ -259,6 +300,27 @@ def import_items(
             changed = True
         updated += 1 if changed else 0
         unchanged += 1 if not changed else 0
+
+    # 闸门：本次导入会把哪些用例"变成必测"？（不在快照里 / 原先停用 / 原先非必测）
+    newly_mandatory = sorted(
+        cid for cid, m in mand.items() if m and (cid not in prev_state or not all(prev_state[cid]))
+    )
+    if newly_mandatory and not force:
+        running = _running_sessions_on(db, payload.process_id, payload.station_id)
+        if running:
+            if payload.dry_run:
+                warnings.append(
+                    f"would_block: {running} RUNNING session(s) on {payload.station_id} "
+                    f"lack newly mandatory case(s); abort them first or pass force=true"
+                )
+            else:
+                raise conflict_error(
+                    "running_session_block",
+                    f"running_session_block: {running} RUNNING session(s) on "
+                    f"{payload.process_id}/{payload.station_id} would fail checkout "
+                    f"missing_mandatory for: {', '.join(newly_mandatory)}",
+                    data={"running_sessions": running, "newly_mandatory": newly_mandatory},
+                )
 
     # 清单外仍启用的项：upsert 只报告（保持必测），replace 才停用
     orphans = sorted(

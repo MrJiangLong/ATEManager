@@ -1302,6 +1302,78 @@ def test_force_release_and_sessions_api():
     check("locks" in resp.json(), f"metrics locks: {resp.text}")
 
 
+def test_import_blocks_running_session():
+    """导入闸门：工位有 RUNNING 会话时，"新增必测"默认 409；收缩清单放行，dry-run 转告警，force 放行。"""
+    sn = new_sn("IMPBLK")
+    resp = checkin("CAL-PARAM", sn)
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    session_id = resp.json()["data"]["session_id"]
+
+    add_new = {
+        "process_id": P_DPO,
+        "station_id": "CAL-PARAM",
+        "mode": "replace",
+        "items": [{"case_id": "tests/new_case.py::test_new", "item_name": "新用例", "is_mandatory": True}],
+    }
+
+    # 新增必测项 → 409 running_session_block
+    resp = admin("POST", "/api/admin/routing/items/import", add_new)
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "running_session_block",
+        f"add mandatory with RUNNING session must 409: {resp.status_code} {resp.text}",
+    )
+    check(resp.json()["data"]["running_sessions"] >= 1, f"data: {resp.text}")
+
+    # dry-run：不落库，转为 would_block 告警
+    resp = admin("POST", "/api/admin/routing/items/import", {**add_new, "dry_run": True})
+    check(resp.status_code == 200, f"dry-run must pass: {resp.text}")
+    body = resp.json()
+    check(
+        any(w.startswith("would_block") for w in body["warnings"]),
+        f"dry-run must warn would_block: {body['warnings']}",
+    )
+    resp = admin(
+        "GET", "/api/admin/routing/items", params={"process_id": P_DPO, "station_id": "CAL-PARAM"}
+    )
+    ids = {i["case_id"] for i in resp.json()}
+    check("tests/new_case.py::test_new" not in ids, f"dry-run must not write: {ids}")
+
+    # 只收缩清单（停用其一）→ 放行（收缩只会放宽出站校验，不会误伤在跑会话）
+    keep = ITEMS["CAL-PARAM"][0]
+    resp = admin(
+        "POST",
+        "/api/admin/routing/items/import",
+        {
+            "process_id": P_DPO,
+            "station_id": "CAL-PARAM",
+            "mode": "replace",
+            "items": [{"case_id": keep, "is_mandatory": True}],
+        },
+    )
+    check(
+        resp.status_code == 200 and resp.json()["deactivated"] == 1,
+        f"shrink must pass: {resp.status_code} {resp.text}",
+    )
+
+    # force=true 强行新增 → 放行
+    resp = admin("POST", "/api/admin/routing/items/import", add_new, params={"force": "true"})
+    check(resp.status_code == 200 and resp.json()["created"] == 1, f"force must pass: {resp.text}")
+
+    # 收尾：中止会话并恢复原清单，避免影响后续用例
+    admin("POST", f"/api/admin/sessions/{session_id}/abort", {"reason": "test cleanup"})
+    restore = {
+        "process_id": P_DPO,
+        "station_id": "CAL-PARAM",
+        "mode": "replace",
+        "items": [{"case_id": c, "is_mandatory": True} for c in ITEMS["CAL-PARAM"]],
+    }
+    resp = admin("POST", "/api/admin/routing/items/import", restore, params={"force": "true"})
+    check(
+        resp.status_code == 200 and resp.json()["total_active"] == len(ITEMS["CAL-PARAM"]),
+        f"restore: {resp.status_code} {resp.text}",
+    )
+
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1343,6 +1415,7 @@ TESTS = [
     test_client_release_lock,
     test_id_format_enforced,
     test_force_release_and_sessions_api,
+    test_import_blocks_running_session,
 ]
 
 if __name__ == "__main__":

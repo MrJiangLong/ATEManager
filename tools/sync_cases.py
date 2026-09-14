@@ -28,6 +28,8 @@ JSON 格式（多流程，一次更新多条；同名工位在不同流程是两
 
 有会话在跑时怎么办（--abort-running）
     换清单会让进行中会话的断点"缺新必测项"，故默认拒绝同步。
+    服务端也有兜底闸门：新增必测项时若该工位有 RUNNING 会话，import 直接 409
+    （running_session_block），需先停会话；只收缩清单（停用/降级）不受限。
     --abort-running 会先批量中止这些会话（只关会话 + 放锁，不计失败），
     然后等待 --settle-sec 秒让上位机通过心跳感知停机（默认 = 心跳间隔 + 余量），
     确认 RUNNING 归零后才同步。被中止的件回到 IDLE 未盖章，需重新进站跑一遍。
@@ -84,6 +86,25 @@ def login(base: str, user: str, password: str) -> str:
             return json.loads(resp.read().decode())["access_token"]
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"[ERROR] login failed: {exc.code} {exc.read().decode(errors='replace')}")
+
+
+def fetch_all_running(base: str, token: str) -> List[dict]:
+    """拉取全部 RUNNING 会话：page_size 上限 200，必须循环翻页直到取完，
+    否则超 200 台在跑时会漏判 busy，带着"没有会话"的错误结论直接同步。"""
+    items: List[dict] = []
+    page = 1
+    while True:
+        res = http_json(
+            "GET",
+            f"{base}/api/admin/sessions?status=RUNNING&page_size=200&page={page}",
+            token,
+        )
+        batch = res.get("items") or []
+        items += batch
+        total = int(res.get("total") or len(items))
+        if not batch or len(items) >= total:
+            return items
+        page += 1
 
 
 def parse_items(raw) -> List[dict]:
@@ -156,9 +177,7 @@ def main() -> int:
             print(f"[warn] {process_id}: stations not in JSON (left untouched): {', '.join(missing)}")
 
     # 2) 中止范围按流程圈定：abort 接口会用 SN 的机型反查所属流程，不会误伤别的流程
-    running_items = http_json(
-        "GET", f"{args.base_url}/api/admin/sessions?status=RUNNING&page_size=200", token
-    ).get("items") or []
+    running_items = fetch_all_running(args.base_url, token)
     running_stations = {s.get("station_id") for s in running_items}
     busy_processes = sorted(
         pid for pid, stations in processes.items() if running_stations & set(stations)
@@ -180,9 +199,7 @@ def main() -> int:
                 wait = args.settle_sec or (HEARTBEAT_SEC + 15)
                 print(f"[abort ] waiting {wait}s for clients to notice via heartbeat...")
                 time.sleep(wait)
-                still_items = http_json(
-                    "GET", f"{args.base_url}/api/admin/sessions?status=RUNNING&page_size=200", token
-                ).get("items") or []
+                still_items = fetch_all_running(args.base_url, token)
                 still_stations = {s.get("station_id") for s in still_items}
                 still = sorted(
                     pid for pid, stations in processes.items() if still_stations & set(stations)

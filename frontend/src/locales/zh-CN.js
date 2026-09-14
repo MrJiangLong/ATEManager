@@ -312,6 +312,10 @@ export default {
     snRequired: '请输入产品 SN',
     reasonRequired: '请输入处置原因',
     created: '处置已登记',
+    snLooking: '正在查询在制状态…',
+    snNotFound: '未找到该 SN 的在制记录，请核对序列号',
+    snTestingHint: '该件正在测试中，需先停止会话或等待测试结束',
+    noPassedStation: '该件没有已盖章工位，RETEST / ROLLBACK 不可用',
   },
 
   clients: {

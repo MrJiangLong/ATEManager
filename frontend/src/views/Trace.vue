@@ -174,7 +174,7 @@
       <DataCard :title="$t('trace.repairs')">
         <el-table :data="data.repairs" stripe size="small">
           <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90" />
-          <el-table-column :label="$t('repairs.tableAction')" width="130">
+          <el-table-column :label="$t('repairs.tableAction')" width="130" align="center">
             <template #default="{ row }">
               <el-tag :type="repairTagType(row.repair_action)" size="small">{{ $t(`repair.${row.repair_action}`) }}</el-tag>
             </template>

@@ -311,6 +311,10 @@ export default {
     snRequired: 'Serial number is required',
     reasonRequired: 'Reason is required',
     created: 'Repair recorded',
+    snLooking: 'Looking up WIP status…',
+    snNotFound: 'No WIP record found for this SN',
+    snTestingHint: 'Under test; stop the session or wait for it to finish',
+    noPassedStation: 'No stamped stations; RETEST / ROLLBACK unavailable',
   },
 
   clients: {
