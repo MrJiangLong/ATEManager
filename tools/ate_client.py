@@ -303,7 +303,6 @@ def to_ate_items(report_data: Sequence[dict]) -> List[dict]:
                 "values": {"duration_s": round(duration, 3)},
                 "duration_ms": int(duration * 1000),
                 "message": (row.get("exception") or "")[:500] or None,
-                "item_name": row.get("description") or None,
             }
         )
     return items

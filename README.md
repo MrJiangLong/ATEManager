@@ -114,6 +114,7 @@ routers  ──▶  services  ──▶  models
 |---|---|
 | `services/routing.py` | 静态拓扑：流程装载、依赖闸门、用例ID清单、DAG 校验 |
 | `services/gate.py` | 运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修处置 |
+| `services/firmware.py` | 固件基线匹配（`exact` 精确 / `min` 不低于基线），进站卡控与展示共用 |
 | `services/sweeper.py` | 孤儿锁回收后台任务（失联 / 硬超时） |
 | `services/metrics.py` | 仪表盘聚合（流程缓存 / 在制品 / 日趋势 / TOP 失效 / 窗口良率） |
 | `services/views.py` | ORM 实体 → 展示模型的派生与组装 |
@@ -215,7 +216,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，38 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，40 项全部通过 |
 | 上位机链路 | `python tools/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -232,7 +233,7 @@ python -m app.seed --backfill-completed   # 回填 is_completed 冗余列
 
 预置静态规则：
 
-- 2 条流程（MSO 6 站 / DPO 4 站）、6 个工位、2 个机型、**8 台机台**（含 2 台备用）
+- 2 条流程（MSO 6 站 / DPO 4 站）、6 个工位、2 个机型、**10 台机台**（含 4 台备用/演示台，部分预置 `app_version`）
 - 用例ID测试项 **37 条**（MSO 21 条 + DPO 16 条，如 `tests/test_cal_param.py::TestAmp::test_amp_cal`）
 - 随机数据：60 台在制品（含在制/锁定/报废/固件非基线场景）及其完整事件台账 + 5 条维修履历
 - **8 组租约锁/会话场景数据**（SN 前缀 `C0990xx`）：正常持锁 / 僵尸锁可接管 / 崩溃续测中（attempt=2）/
@@ -260,6 +261,7 @@ ATEManager/
 │   │   ├── services/
 │   │   │   ├── routing.py    静态拓扑：流程装载、依赖闸门、用例ID清单、DAG 校验
 │   │   │   ├── gate.py       运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修
+│   │   │   ├── firmware.py   固件基线匹配（exact / min 口径）
 │   │   │   ├── sweeper.py    孤儿锁回收后台任务（失联 / 硬超时）
 │   │   │   ├── metrics.py    仪表盘聚合（在制品 / 日趋势 / 窗口良率 / TOP 失效）
 │   │   │   ├── views.py      ORM → 展示模型的派生与组装
@@ -276,7 +278,7 @@ ATEManager/
 │   │       ├── sessions.py   测试会话：续测断点 / 僵尸锁 / 强制终止
 │   │       ├── clients.py    机台档案与工位绑定
 │   │       └── metrics.py    仪表盘统计
-│   └── tests/test_backend.py 端到端回归测试（38 项）
+│   └── tests/test_backend.py 端到端回归测试（40 项）
 ├── tools/                    运维与验证脚本（Python，仅标准库）
 │   ├── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
 │   ├── sim_local.py          本地测试库一键仿真（--attach 只对运行中后端）
@@ -332,8 +334,8 @@ ATEManager/
 | `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定 |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门；整体覆盖式保存，保存后校验成环等结构问题，不通过则整体回滚 |
-| `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测 |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门；整体覆盖式保存，保存前校验成环/缺工位等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
+| `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
 > ORM 层用 `mapped_column("nodeid")` 将属性名映射为 `case_id`。
@@ -353,7 +355,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 分隔符 | 段与段之间用 `-`，段内不再分段 |
 | 长度 | 建议 ≤ 32 字符（字段上限 64） |
 | 稳定性 | **投产即冻结** —— 一旦产出过测试记录便不可改名，只能新建并停用旧的 |
-| 当前校验 | 服务端不强制（自由字符串）；如需强制，可用文末正则在管理端加校验 |
+| 当前校验 | 服务端在写入口强制校验正则（不合规返回 422，详见本章末尾各编号的规则表） |
 
 #### 工艺流程 `process_id`：`PROC-<产品族>-<系列>-<构型>`
 
@@ -435,7 +437,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 
 | 表 | 主键 | 作用 |
 |---|---|---|
-| `station_clients` | `client_id` | 物理工控机档案，绑定逻辑工位；`app_version` 留档上位机程序版本 |
+| `station_clients` | `client_id` | 物理工控机档案，绑定逻辑工位（允许未绑定态存在，显式传空即解绑）；`app_version` 留档上位机程序版本，`created_at` 留档建档时间 |
 | `product_status` | `sn` | 在制品状态机，`passed_stations` 为已盖章工位集合 |
 | `test_records` | `record_id` | 事件底账，`executed_items` JSONB 为执行快照 |
 | `repair_records` | `repair_id` | 维修处置与回滚履历 |
@@ -531,10 +533,10 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机型 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}` |
 | 工位 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
 | 工艺拓扑 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`GET /api/admin/routing/item-summary` |
-| 在制品 | `GET /api/admin/products`、`GET /api/admin/products/{sn}`、`POST /api/admin/products/repair`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
+| 在制品 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}` |
 | 维修履历 | `GET /api/admin/repairs`、`POST /api/admin/repairs` |
-| 测试会话 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort` |
+| 测试会话 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
 | 机台 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
 | 统计 | `GET /api/admin/metrics/overview` |
 
@@ -581,7 +583,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `APP_DEBUG` | `true` | 调试模式（影响日志级别与错误详情），生产必须 `false` |
 | `LOG_LEVEL` | `DEBUG`（跟随 APP_DEBUG）/ `INFO` | 控制台与文件日志级别 |
 | `LOG_FILE` | `logs/app.log` | 滚动日志路径（容器内推荐 `/app/data/logs/app.log`） |
-| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | 监听地址 |
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | 监听地址（后端不读取此配置，实际由启动脚本 `scripts\dev-backend.bat` 或 docker-compose 决定） |
 | `CORS_ORIGINS` | `http://localhost:5173,...` | 跨域白名单，多值用英文逗号分隔 |
 
 ### 11.2 数据库
@@ -640,7 +642,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 38 项，覆盖全部卡控场景
+python tests/test_backend.py      # 40 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

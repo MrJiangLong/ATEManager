@@ -33,7 +33,8 @@ v2：补齐产线状态
     --units 12             本轮投产的被测件数量
     --model DPO4054B       机型（自动取其流程与基线固件）
     --station CAL-PARAM    单工位模式（不做流程推进）
-    --mode chaos           随机注入崩溃（normal = 全正常）
+    --mode chaos           随机注入崩溃（normal 仅关闭崩溃注入，
+                           其余 --fail-rate 等注入速率仍然生效）
     --crash-rate 0.12      崩溃概率
     --fail-rate 0.08       不良件比例（→ LOCKED / 重测通过）
     --missing-rate 0.05    漏报必测项比例（→ missing_mandatory）

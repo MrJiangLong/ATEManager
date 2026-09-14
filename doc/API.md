@@ -6,7 +6,7 @@
 | 项 | 值 |
 |---|---|
 | 文档版本 | v1.0 |
-| 适用服务端 | ATE Manager API ≥ 3.0 |
+| 适用服务端 | ATE Manager API ≥ 1.0.0 |
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
@@ -140,6 +140,7 @@ POST /api/admin/clients
 | `403` | 防呆拦截 / 锁失效 | **不重试**；按 `code` 分支处理 |
 | `404` | 实体不存在（机台/SN/会话/ACK） | 检查参数 |
 | `409` | 状态冲突（复测拦截 / 锁冲突） | 锁冲突可等待后重试 |
+| `422` | 请求体校验失败（字段格式不符，如编号规则） | **不重试**，修正请求 |
 | `5xx` | 服务端故障 | 可重试（指数退避） |
 
 ### 3.3 exit_code 数值表
@@ -321,6 +322,8 @@ NULL ─────────────→ IDLE ─────────
 | 409 | `station_already_passed` | **复测拦截**：该工位已盖章 | 提示推错车，禁止复测 |
 | 409 | `lock_conflict` | 锁被其他机台持有且未失联 | 等待或换机台 |
 | 409 | `session_completed` | 指定的 `resume_session_id` 已出站 | 不要续测，重新进站 |
+| 400 | `session_mismatch` | `resume_session_id` 与 SN/工位不符 | 不要续测，重新进站 |
+| 404 | `client_not_registered` | 机台未注册 | 先调 resolve 自动注册 |
 
 > `lock_conflict` 的 `data` 含 `lock_idle_sec` 与 `grace_sec`，可用于估算"还要等多久才能接管"。
 
@@ -489,6 +492,7 @@ NULL ─────────────→ IDLE ─────────
 | 400 | `station_not_in_process` | 工艺配置错误 |
 | 403 | `lock_invalid` | 锁被接管，停机重新进站 |
 | 403 | `lock_expired` | 锁超时，停机重新进站 |
+| 403 | `client_not_bound` | 机台未绑定工位，联系运维绑定 |
 | 404 | `product_not_found` | SN 不存在 |
 
 ---
@@ -534,8 +538,8 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
 | 403 | `product_scrapped` | 10 | check-in | 已报废 |
 | 403 | `product_locked` | 16 | check-in | 已工程锁定 |
-| 403 | `lock_invalid` | 14 | check-out / checkpoint / release / heartbeat | 锁被接管或失效 |
-| 403 | `lock_expired` | 14 | check-out / check-in | 锁超过硬超时 |
+| 403 | `lock_invalid` | 14 | check-out / checkpoint / release | 锁被接管或失效 |
+| 403 | `lock_expired` | 14 | check-out | 锁超过硬超时 |
 | 404 | `client_not_registered` | 10 | 全部 | 机台未注册 |
 | 404 | `product_not_found` | 10 | check-out / 管理端 | SN 不存在 |
 | 404 | `process_not_found` | 10 | check-in | 流程不存在 |
@@ -544,7 +548,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `station_already_passed` | 10 | check-in | 复测拦截 |
 | 409 | `lock_conflict` | 11 | check-in / 管理端 | 锁被他人持有 |
 | 409 | `session_completed` | 10 | check-in / checkpoint | 会话已出站 |
-| 409 | `session_aborted` | 11 | checkpoint | 会话已被运维中止（换测试用例清单前），须立即停机 |
+| 409 | `session_aborted` | 14 | checkpoint | 会话已被运维中止（换测试用例清单前），须立即停机 |
 | 409 | `product_holding_lock` | 11 | 管理端 | 在制品被持锁，禁止处置 |
 
 ### 6.2 处理决策
@@ -734,8 +738,10 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01",
 | `GET /api/admin/sessions/zombie-locks` | 失联僵尸锁清单（可被接管/强制解锁） |
 | `GET /api/admin/sessions/{id}` | 会话详情，含 checkpoint 明细（"跑到哪崩的"） |
 | `POST /api/admin/sessions/{id}/abort` | 强制终止会话并解锁（body: `{"reason": "..."}`） |
+| `POST /api/admin/sessions/abort-running` | 批量终止运行中的会话；body 至少给一个过滤条件 `station_id / process_id / sn / client_id`（否则 400 `scope_required`），支持 `dry_run` 预演 |
 | `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`），不动印章与失败计数 |
 | `GET /api/admin/products/{sn}/sessions` | 该 SN 的会话时间线 |
+| `GET /api/admin/products` | 在制品清单，支持 `zombie_only=true` 过滤失联锁 |
 | `GET /api/admin/metrics/overview` | 运行概况，含 `locks: {active, zombie, sessions_running, sessions_abnormal}` |
 | `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN） |
 | `POST /api/admin/clients` | 注册机台并绑定工位 |
@@ -796,13 +802,25 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--clients` | 5 | 机台数量（自动注册为 `SIM-<工位>-NN`） |
+| `--clients` | 2 | 每工位机台数量（自动注册为 `SZ-L9-<工段>-<NN>[-<工位>]`，符合服务端编号规则） |
 | `--units` | 12 | 投产被测件数量 |
-| `--station` | CAL-PARAM | 模拟工位（该工位需有 5 条必测用例） |
-| `--items` | 5 | 每件的测试项数量 |
-| `--mode` | chaos | `normal` 全正常 / `chaos` 注入崩溃 |
+| `--model` | DPO4054B | 机型（自动取其流程与基线固件） |
+| `--station` | 空 | 不传 = 全流程逐站推进；指定工位则进入单工位模式 |
+| `--items` | 0 | 每件的测试项数量（0 = 全量必测项） |
+| `--mode` | chaos | `normal` 仅关闭崩溃注入；`chaos` 随机注入崩溃 |
 | `--crash-rate` | 0.12 | 每个测试项执行后的崩溃概率 |
+| `--fail-rate` | 0.08 | 不良件比例 → 判 FAIL / 连败工程锁定 |
+| `--missing-rate` | 0.05 | 漏报必测项比例 → 400 missing_mandatory |
+| `--bad-fw-rate` | 0.05 | 非基线固件比例 → 403 firmware_mismatch |
+| `--jump-rate` | 0.05 | 跳站比例 → 403 missing_prereq |
+| `--abandon-rate` | 0.05 | 中途主动放弃比例 → 停在半途 |
+| `--stop-rate` | 0.25 | 过站后停线比例 → 停在半途（下班/待处理） |
+| `--crash-handoff` | 关 | 崩溃后由备用机台接管（而不是原机台续测） |
+| `--repair-locked` | 关 | 结束后对工程锁定件自动送修回流（有印章 RETEST 重测该工位 / 一件未过 RESET 重来）并重新投产复测 |
 | `--no-chaos-resume` | 关 | 崩溃后不续测，直接换件 |
+| `--seed` | 随机 | 固定随机种子（复现某一轮结果） |
+
+`--fail-rate` 等注入参数在 `normal` 模式下依然生效（normal 只关崩溃注入）。
 
 输出含每台机台的 `出库 / 崩溃 / 续测 / 接管 / 失败` 统计与服务端侧校验
 （活跃锁、僵尸锁、运行会话、异常会话）。实测 5 台 × 5 项 × 15 件约 5 秒跑完。
