@@ -995,7 +995,7 @@ def check_out(
 
     # 5) 漏测拦截：必测用例ID必须被实际执行
     #    未提交 / 被 SKIP  → 漏测，400 拦截
-    #    已执行但判定 FAIL → 真实失败，计入 overall_result，不拦截
+    #    已执行但判定 FAIL → 真实失败；必测 FAIL 计入 overall_result（见步骤 6）
     submitted = {it.get("case_id"): it for it in merged_items}
     required = mandatory_case_ids(graph, station_id)
     absent = [c for c in required if c not in submitted or submitted[c].get("result") == RESULT_SKIP]
@@ -1013,7 +1013,18 @@ def check_out(
             data={"case_ids": absent},
         )
 
-    overall = RESULT_FAIL if any(it.get("result") == RESULT_FAIL for it in merged_items) else RESULT_PASS
+    # 6) overall 判定：仅必测用例的 FAIL 判 FAIL，非必测（选做）用例只记录不判停。
+    #    选做用例常为探索/加测项，其失败不应阻塞流转、更不应触发连续失败锁定；
+    #    结果仍完整保留在 executed_items 里（台账/TopFailed 可见），只是不影响放行。
+    mandatory_set = set(required)
+    overall = (
+        RESULT_FAIL
+        if any(
+            it.get("result") == RESULT_FAIL and it.get("case_id") in mandatory_set
+            for it in merged_items
+        )
+        else RESULT_PASS
+    )
 
     # 6) 落库（executed_items 内携带 checkout_id，作为 ACK 凭据）
     record = models.TestRecord(
