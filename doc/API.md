@@ -479,6 +479,8 @@ NULL ─────────────→ IDLE ─────────
 
 - **只提交本次实际跑的用例即可**；崩溃前已上报但未提交的会由 checkpoint 自动补齐，不会误判漏测
 - **必测用例上报 `SKIP` 等同于未执行** → 触发漏测拦截
+- **overall 判定只看必测用例**：必测 FAIL → 工位 FAIL；非必测（选做/加测）用例的
+  结果仅记录在 `executed_items`（台账与 TopFailed 可见），不影响放行、不计失败
 - `403 lock_invalid` = 锁已被接管 → **结果作废，停止测试，重新进站**
 - `403 lock_expired` = 超过工位硬超时 → 计一次失败，需重新进站
 - `400 missing_mandatory` = 漏测拦截 → 计一次失败
@@ -722,6 +724,9 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 ### 10.3 断点文件
 
 - 进站后立即写入 `session_id` / `lock_token` / `checkout_id` / `cursor`
+- **`state_file` 传目录时按 SN 分文件**（`.ate_state_{sn}.json`）：一台设备中途离站、
+  另一台顶上测试时旧断点不被覆盖，设备拿回工位仍可续测；传具体 `.json` 文件则保持
+  旧的单文件语义（同一时刻只测一台件的场景）
 - 采用"临时文件 + `os.replace`"原子写入，避免崩溃时写坏文件
 - **写入失败绝不能中断测试**（Windows 上杀毒/索引占用文件很常见），续测只是优化
 - 成功出站后删除该文件
@@ -890,9 +895,9 @@ from pathlib import Path
 
 import pytest
 
-from ate_client import AteClient, identity_from_report, to_ate_items
+from ate_client import AteClient, ApiError, identity_from_report, to_ate_items
 
-STATE_FILE = Path("D:/atedata/.ate_state.json")   # 断点文件放独立数据目录
+STATE_FILE = Path("D:/atedata")   # 断点目录：SDK 按 SN 分文件，多台件交替测试互不覆盖
 
 
 def pytest_addoption(parser):
@@ -902,21 +907,39 @@ def pytest_addoption(parser):
 
 
 # ---------- 1. 收集每个用例的结果（pytest 标准钩子） ----------
+# setup/teardown 失败也必须收集为 FAIL：若只收 call，异常用例会"凭空消失"，
+# 出站时触发 missing_mandatory 把整个工位卡死。
 _report_rows = []
+_t0 = 0.0
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
-    if rep.when == "call":
+    if rep.when == "call" or (rep.when in ("setup", "teardown") and rep.failed):
         _report_rows.append({
             "nodeid": item.nodeid,
             "duration": rep.duration,
-            "result": rep.outcome,
+            "result": rep.outcome,   # setup 异常 outcome 为 error，SDK 映射为 FAIL
             "exception": str(rep.longrepr) if rep.failed else "",
         })
 
-# ---------- 2. 客户端夹具 ----------
+# ---------- 2. 仪器身份与计时（按你的仪器层实现） ----------
+def read_idn():
+    """仪器 *IDN? 直读 → identity_from_report 所需字典。pyvisa 示例：
+        idn = inst.query("*IDN?")     # "Keysight,DSOX4104A,CN1234,03.00"
+        vendor, model, serial, fw = [p.strip() for p in idn.split(",")]
+        return {"model": model, "serialNumber": serial, "version": fw}
+    model / firmware 必须与 Web 端机型注册一致，否则 model_mismatch / firmware_mismatch 403。
+    """
+    raise NotImplementedError("read_idn(): 由工程仪器层实现")
+
+
+def elapsed_ms():
+    return int((time.monotonic() - _t0) * 1000)
+
+
+# ---------- 3. 客户端夹具 ----------
 @pytest.fixture(scope="session")
 def ate(request):
     opt = request.config.getoption
@@ -932,15 +955,41 @@ def ate(request):
     yield cli
     cli.stop_heartbeat()
 
-# ---------- 3. 会话级：进站 → 测试 → 出站 ----------
+# ---------- 4. 会话级：进站 → 续测跳过 → 测试 → 出站 ----------
 @pytest.fixture(scope="session", autouse=True)
 def ate_session(ate, request):
+    global _t0
     sn, model, fw = identity_from_report(read_idn())   # 仪器 *IDN? 直读，工程内实现
 
-    case_ids = [item.nodeid for item in request.session.items]  # pytest collection
-    state = ate.check_in(sn, model, fw, case_ids=case_ids)
-    if state.attempt > 1:  # 断点续测：服务端已记录完成的用例可跳过
-        print(f"[ATE] 续测 attempt={state.attempt}，已完成 {len(state.completed_case_ids)} 条")
+    # 进站必须携带完整 collection（含已完成用例），否则 case_id_mismatch 拦截。
+    # 注意：pytest -k 的部分运行同样被拦（防漏测属预期），调试请跑全量，
+    # 或由运维临时关闭 ENFORCE_CASE_IDS。
+    case_ids = [item.nodeid for item in request.session.items]
+
+    # lock_conflict（他机持锁 / 僵尸锁未到宽限）按退避等待重试；其余进站错误直接失败
+    state = None
+    for attempt in range(8):
+        try:
+            state = ate.check_in(sn, model, fw, case_ids=case_ids)
+            break
+        except ApiError as exc:
+            if not exc.is_lock_conflict:
+                raise
+            time.sleep(min(5 * (attempt + 1), 30))
+    if state is None:
+        pytest.exit("check-in: lock never released; run RETEST or force-release first", returncode=4)
+    _t0 = time.monotonic()
+
+    # 断点续测：服务端确认已完成的用例打 skip 标记，不重跑；
+    # 其上次结果由服务端 checkpoint 在出站时自动并入，不会误判漏测。
+    # 注意：必测用例上次 FAIL 的，FAIL 会原样并入出站、工位仍判 FAIL（要求重测时先做
+    # RETEST 处置）；选做用例的 FAIL 不影响放行，无需重跑。
+    if state.attempt > 1:
+        done = set(state.completed_case_ids)
+        for item in request.session.items:
+            if item.nodeid in done:
+                item.add_marker(pytest.mark.skip(reason=f"ATE resume: done in attempt {state.attempt}"))
+        print(f"[ATE] 续测 attempt={state.attempt}，跳过 {len(done)} 条已完成用例")
 
     yield
 
@@ -958,7 +1007,7 @@ def ate_session(ate, request):
             time.sleep(min(2 ** attempt, 30))
     pytest.exit("checkout failed after retries", returncode=4)
 
-# ---------- 4. 每个用例之间：上报断点 + 失锁自检 ----------
+# ---------- 5. 每个用例之间：上报断点 + 失锁自检 ----------
 @pytest.fixture(autouse=True)
 def ate_case_gate(ate):
     yield

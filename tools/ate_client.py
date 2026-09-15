@@ -332,7 +332,7 @@ class SessionState:
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(json.dumps(self.__dict__, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(tmp, path)
-        except Exception as exc:  # 杀毒/索引/备份占用文件在 Windows 上很常见
+        except Exception as exc: 
             LOGGER.warning("断点文件写入失败（不影响测试）：%s", exc)
 
     @classmethod
@@ -465,6 +465,19 @@ class AteClient:
             LOGGER.warning("机台 %s 尚未绑定工位，请在 Web 端「机台管理」补录", self.client_id)
         return data
 
+    def _state_path_for(self, sn: Optional[str] = None) -> Optional[Path]:
+        """断点文件路径。
+
+        state_file 传**目录**时按 SN 分文件（.ate_state_{sn}.json）：一台设备中途
+        离站、另一台顶上测试时，旧断点不会被覆盖，设备拿回工位仍可续测。
+        传具体 .json 文件则保持旧的单文件语义（同一时刻只测一台件的场景）。
+        """
+        if not self.state_file:
+            return None
+        if self.state_file.suffix:
+            return self.state_file
+        return self.state_file / f".ate_state_{sn or 'unknown'}.json"
+
     def check_in(
         self,
         sn: str,
@@ -478,7 +491,8 @@ class AteClient:
         返回 SessionState（含 session_id / lock_token / 已完成的用例清单）。
         崩溃后再次调用会自动携带 `resume_session_id`，attempt+1 并跳过已完成用例。
         """
-        previous = SessionState.load(self.state_file) if (resume and self.state_file) else None
+        state_path = self._state_path_for(sn)
+        previous = SessionState.load(state_path) if (resume and state_path is not None) else None
         payload: Dict[str, Any] = {
             "client_id": self.client_id,
             "sn": sn,
@@ -666,14 +680,16 @@ class AteClient:
 
     # ---------------- 内部 ----------------
     def _persist(self) -> None:
-        if self.state_file and self.state:
-            self.state.save(self.state_file)
+        path = self._state_path_for(self.state.sn if self.state else None)
+        if path and self.state:
+            self.state.save(path)
 
     def _clear_persisted(self) -> None:
         """删除本地断点文件。一旦成功出库或主动释放，下次进站就是全新会话。"""
-        if self.state_file:
+        path = self._state_path_for(self.state.sn if self.state else None)
+        if path:
             try:
-                self.state_file.unlink()
+                path.unlink()
             except OSError:
                 pass
 
