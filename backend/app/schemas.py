@@ -608,6 +608,16 @@ class RepairPageOut(BaseModel):
     items: List[RepairOut]
 
 
+class RepairActionStat(BaseModel):
+    action: str
+    count: int = 0
+
+
+class RepairStatsOut(BaseModel):
+    total: int = 0
+    items: List[RepairActionStat] = []
+
+
 # =====================================================================
 # 测试会话（续测与锁接管）
 # =====================================================================
@@ -781,6 +791,10 @@ class YieldRow(BaseModel):
     # FPY 的分母（件数）：工位卡的 total 是记录数，两者口径不同须分开返回，
     # 前端悬浮提示用 fpy_total 优先。0 = 未统计（视为与 total 同口径）。
     fpy_total: int = 0
+    # 件级"曾通过"：该键下任意一条记录 PASS 即算通过（不管测了多少次、中途挂过）。
+    # 与记录级良率的差别是分母为件；与 FPY 互补——FPY 低 + 曾通过高 = 返修能救回来。
+    final_pass: int = 0
+    final_pass_rate: float = 0.0
 
 
 class YieldPoint(BaseModel):

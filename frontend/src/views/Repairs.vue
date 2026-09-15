@@ -3,7 +3,8 @@
     <PageToolbar :title="$t('repairs.title')" :subtitle="$t('repairs.subtitle')" />
 
     <DataCard :title="$t('repairs.quickTitle')">
-      <el-form :model="form" label-position="top" class="quick-form" @submit.prevent="submit">
+      <div class="quick-flex">
+        <el-form :model="form" label-position="top" class="quick-form" @submit.prevent="submit">
         <el-form-item :label="t('common.sn')" required>
           <el-input
             v-model="form.sn"
@@ -56,7 +57,22 @@
           {{ t('common.confirm') }}
         </el-button>
       </el-form>
-    </DataCard>
+      <!-- 右侧：处置动作分布环图（全量统计），提交后随 load 一并刷新 -->
+      <div class="chart-pane">
+        <div v-show="statsTotal > 0" class="chart-body">
+          <div ref="chartEl" class="chart-el" />
+          <div class="chart-side">
+            <div v-for="it in statsItems" :key="it.action" class="side-row">
+              <span class="side-dot" :style="{ background: ACTION_COLORS[it.action] || '#909399' }" />
+              <span class="side-name">{{ t(`repair.${it.action}`) }}</span>
+              <span class="side-count">{{ it.count }}</span>
+            </div>
+          </div>
+        </div>
+        <EmptyState v-if="statsLoaded && statsTotal === 0" :text="t('common.noData')" />
+      </div>
+    </div>
+  </DataCard>
 
     <DataCard :title="t('menu.repairs')">
       <template #extra>
@@ -102,10 +118,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import { recordApi, repairApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -113,7 +130,7 @@ import PageToolbar from '../components/PageToolbar.vue'
 import { REPAIR_ACTIONS, REPAIR_ACTIONS_WITH_TARGET } from '../utils/constants'
 import { fmtDateTime, repairTagType, statusTagType } from '../utils/format'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const items = ref([])
 const loading = ref(false)
@@ -126,6 +143,86 @@ const saving = ref(false)
 const form = reactive({ sn: '', repair_action: 'RETEST', target_station: '', reason: '' })
 
 const needsTarget = computed(() => REPAIR_ACTIONS_WITH_TARGET.includes(form.repair_action))
+
+// ---- 处置动作分布环图：与表格同源的全量统计，提交后刷新 ----
+const ACTION_COLORS = { RETEST: '#f59e0b', ROLLBACK: '#7c5cff', RESET: '#909399', SCRAP: '#ef4444' }
+const chartEl = ref(null)
+let chart = null
+let containerObserver = null
+const statsTotal = ref(0)
+const statsItems = ref([])
+const statsLoaded = ref(false)
+
+async function loadStats() {
+  try {
+    const res = await repairApi.stats()
+    statsTotal.value = res.data.total || 0
+    statsItems.value = res.data.items || []
+    renderChart(statsItems.value)
+  } catch (e) {
+    ElMessage.error(e.message || t('errors.loadFailed'))
+  } finally {
+    statsLoaded.value = true
+  }
+}
+
+function renderChart(items) {
+  if (!chartEl.value || !items.length) return
+  if (!chart) chart = echarts.init(chartEl.value)
+  chart.setOption({
+    title: [
+      {
+        text: t('repairs.chartTitle'),
+        left: 'center',
+        top: 0,
+        // 与左侧表单标签（el-form-item__label 14px）字体与大小一致
+        textStyle: {
+          fontSize: 14,
+          fontWeight: 400,
+          color: '#606266',
+          fontFamily: "'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+        },
+      },
+      {
+        // 环心填总数：给"分布"一个可读的绝对量锚点
+        text: String(statsTotal.value),
+        subtext: t('repairs.chartTotal'),
+        left: 'center',
+        top: '44%',
+        textStyle: { fontSize: 26, fontWeight: 650, color: '#1f2b4d' },
+        subtextStyle: { fontSize: 11, color: '#9aa6bd' },
+      },
+    ],
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) =>
+        `${p.marker} ${p.name}：${p.value} 次（${p.percent}%）`,
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['54%', '82%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: true,
+        label: { show: false },
+        data: items.map((it) => ({
+          name: t(`repair.${it.action}`),
+          value: it.count,
+          itemStyle: { color: ACTION_COLORS[it.action] || '#909399', borderColor: '#fff', borderWidth: 2 },
+        })),
+      },
+    ],
+  })
+}
+
+function onResize() {
+  chart?.resize()
+}
+
+/** 切换语言后重绘环图：ECharts 文本画进 canvas，不会随 i18n 自动更新 */
+watch(locale, () => {
+  if (statsTotal.value > 0) renderChart(statsItems.value)
+})
 
 // ---- SN 反查回显：提交前让维修员看到该件的当前状态与可回退工位 ----
 const snInfo = ref(null) // trace 接口返回 { product, steps, records, repairs }
@@ -222,7 +319,7 @@ async function submit() {
     })
     ElMessage.success(t('repairs.created'))
     form.reason = ''
-    await Promise.all([load(), lookupSn(true)]) // 处置会改变在制状态，回显同步刷新
+    await Promise.all([load(), lookupSn(true), loadStats()]) // 处置后统计与回显同步刷新
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
@@ -233,13 +330,39 @@ async function submit() {
 watch([page, pageSize], () => load())
 watch([snFilter, actionFilter], () => search())
 
-onMounted(() => load())
+onMounted(() => {
+  load()
+  loadStats()
+  window.addEventListener('resize', onResize)
+  if (chartEl.value && typeof ResizeObserver !== 'undefined') {
+    containerObserver = new ResizeObserver(() => chart?.resize())
+    containerObserver.observe(chartEl.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  containerObserver?.disconnect()
+  chart?.dispose()
+  chart = null
+})
 </script>
 
 <style scoped>
 .repairs { display: flex; flex-direction: column; gap: 16px; }
-.quick-form { max-width: 520px; }
+.quick-form { flex: 0 0 420px; max-width: 420px; }
 .action-group { display: flex; flex-wrap: wrap; }
+/* 快速登记左右分栏：左表单、右环图 */
+.quick-flex { display: flex; gap: 24px; align-items: stretch; flex-wrap: wrap; }
+.chart-pane { flex: 1 1 480px; min-width: 360px; display: flex; flex-direction: column; }
+/* 环图 + 右侧明细列表：在剩余空间内均匀分布，不留中段空档 */
+.chart-body { display: flex; align-items: center; justify-content: center; gap: 48px; flex: 1; }
+.chart-el { flex: 0 1 400px; width: 400px; max-width: 100%; min-height: 300px; align-self: center; }
+.chart-side { display: flex; flex-direction: column; gap: 12px; flex: 0 0 150px; }
+.side-row { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.side-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.side-name { color: var(--el-text-color-regular, #606266); flex: 1; }
+.side-count { font-weight: 650; color: var(--app-text); font-variant-numeric: tabular-nums; }
 /* SN 回显：状态标签 + 失败计数 + 已盖章路径，一行排布 */
 .sn-hint { margin-top: 4px; font-size: 12.5px; }
 .sn-summary {

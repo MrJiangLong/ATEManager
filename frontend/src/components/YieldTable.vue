@@ -20,9 +20,9 @@
 
     <div v-if="shownRows.length" class="yield-head" :style="gridStyle">
       <span class="th-name">{{ columnLabel }}</span>
-      <span class="th-rate">{{ $t('dashboard.colRate') }}</span>
-      <span v-if="showFirstPass" class="th-fpy">{{ firstPassLabel || $t('dashboard.colFirstPass') }}</span>
-      <span class="th-count">{{ $t('dashboard.colSamples') }}</span>
+      <span class="th-rate" :title="$t('dashboard.colRateTip')">{{ $t('dashboard.colRate') }}</span>
+      <span v-if="showFirstPass" class="th-fpy" :title="$t('dashboard.colFpyTip')">{{ firstPassLabel || $t('dashboard.colFirstPass') }}</span>
+      <span v-if="showFirstPass" class="th-fpy" :title="$t('dashboard.colFinalPassTip')">{{ $t('dashboard.colFinalPass') }}</span>
     </div>
 
     <!-- 限高滚动区：无论多少项，卡片高度恒定，不撑长页面 -->
@@ -35,13 +35,21 @@
         :style="gridStyle"
       >
         <span class="yield-key" :title="row.key">{{ row.key }}</span>
-        <span class="yield-rate" :class="rateClass(row.pass_rate)">{{ row.pass_rate }}%</span>
+        <span
+          class="yield-rate"
+          :class="rateClass(row.pass_rate)"
+          :title="`${$t('dashboard.colRateTip')}：${row.passed} / ${row.total}`"
+        >{{ row.pass_rate }}%</span>
         <span
           v-if="showFirstPass"
           class="yield-fpy"
-          :title="`${row.first_pass} / ${row.fpy_total || row.total}`"
+          :title="`${$t('dashboard.colFpyTip')}：${row.first_pass} / ${row.fpy_total || row.total}`"
         >{{ row.first_pass_rate }}%</span>
-        <span class="yield-count">{{ row.passed }} / {{ row.total }}</span>
+        <span
+          v-if="showFirstPass"
+          class="yield-fpy"
+          :title="`${$t('dashboard.colFinalPassTip')}：${row.final_pass} / ${row.fpy_total || row.total}`"
+        >{{ row.final_pass_rate }}%</span>
       </div>
       <EmptyState v-if="!shownRows.length" :text="emptyText" />
     </div>
@@ -73,7 +81,7 @@ const props = defineProps({
   emptyText: { type: String, default: '' },
   columnLabel: { type: String, default: '' },
   searchPh: { type: String, default: '' },
-  /** 件级良率卡专用：额外显示"一次通过率"列（FPY），默认关闭不影响工位良率卡 */
+  /** 启用直通率（FPY）列；同时主良率列切换为件级"最终通过"口径（有过任一 PASS 即算过） */
   showFirstPass: { type: Boolean, default: false },
   firstPassLabel: { type: String, default: '' },
 })
@@ -88,10 +96,12 @@ const expanded = ref(false)
 
 const hasData = computed(() => (props.rows?.length || 0) > 0)
 
-/** 多一列直通率时压缩其他列宽，保持整卡宽度不变 */
-const gridStyle = computed(() => ({
-  gridTemplateColumns: props.showFirstPass ? '1fr 62px 66px 82px' : '1fr 72px 84px',
-}))
+/** 多两列（直通率 + 通过率）时压缩列宽，保持整卡宽度不变 */
+const gridStyle = computed(() =>
+  props.showFirstPass
+    ? { gridTemplateColumns: '1fr 72px 78px 78px' }
+    : { gridTemplateColumns: '1fr 84px' }
+)
 
 /** 过滤：关键词 + 仅看异常（<95% 视为需关注） */
 const filtered = computed(() => {
@@ -180,8 +190,7 @@ function rowClass(rate) {
   border-bottom: 1px solid var(--app-border);
 }
 .th-rate,
-.th-fpy,
-.th-count { text-align: right; }
+.th-fpy { text-align: center; }
 
 /* 滚动区：卡片高度恒定 */
 .yield-scroll {
@@ -210,29 +219,25 @@ function rowClass(rate) {
 }
 /* 良率：与项名（13px）同一量级，只靠字重与颜色区分主次，避免"大号数字"抢走整页重心 */
 .yield-rate {
-  text-align: right;
+  text-align: center;
   font-size: 14px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.2px;
 }
-.yield-count {
-  text-align: right;
-  font-size: 12px;
-  color: var(--app-text-sub);
-  font-variant-numeric: tabular-nums;
-}
-/* 一次通过率：主指标是良率，故这一列降一档（字重/颜色）作辅指标 */
 .yield-fpy {
-  text-align: right;
+  text-align: center;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--app-text-faint);
   font-variant-numeric: tabular-nums;
 }
-.yield-rate.good { color: #2f6bff; }
-.yield-rate.warn { color: #8aa8ff; }
-.yield-rate.bad  { color: #ef4444; }
+.yield-rate.good,
+.m-rate.good { color: #2f6bff; }
+.yield-rate.warn,
+.m-rate.warn { color: #8aa8ff; }
+.yield-rate.bad,
+.m-rate.bad { color: #ef4444; }
 
 /* 底部计数 / 展开 */
 .yield-foot {

@@ -139,6 +139,9 @@ def build_overview(
         """
         grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "passed": 0})
         first_outcome: Dict[tuple, tuple] = {}  # (sn, key) -> (created, overall_result)
+        # 件级"曾通过"集合：该键下有过任一条 PASS 记录的件
+        ever_sns: Dict[str, set] = defaultdict(set)
+        ever_passed: Dict[str, set] = defaultdict(set)
         for created, r in records:
             key = extractor(r)
             if not key:
@@ -148,6 +151,9 @@ def build_overview(
             if r.overall_result == "PASS":
                 bucket["passed"] += 1
             if with_fpy:
+                ever_sns[key].add(r.sn)
+                if r.overall_result == "PASS":
+                    ever_passed[key].add(r.sn)
                 prev = first_outcome.get((r.sn, key))
                 if prev is None or created < prev[0]:
                     first_outcome[(r.sn, key)] = (created, r.overall_result)
@@ -167,6 +173,8 @@ def build_overview(
                     "first_pass": fpy[key]["fpy"],
                     "fpy_total": fpy[key]["sns"],
                     "first_pass_rate": _rate(fpy[key]["fpy"], fpy[key]["sns"]),
+                    "final_pass": len(ever_passed[key]),
+                    "final_pass_rate": _rate(len(ever_passed[key]), len(ever_sns[key])),
                 }
             rows.append(
                 schemas.YieldRow(key=key, **stat, pass_rate=_rate(stat["passed"], stat["total"]), **extra)
@@ -220,6 +228,9 @@ def build_overview(
                 **stat,
                 pass_rate=_rate(stat["passed"], stat["total"]),
                 first_pass_rate=_rate(stat["first_pass"], stat["total"]),
+                # 已完结件的终态通过与"曾通过"语义重合，直接复用良率口径
+                final_pass=stat["passed"],
+                final_pass_rate=_rate(stat["passed"], stat["total"]),
             )
             for key, stat in sorted(grouped.items())
         ]

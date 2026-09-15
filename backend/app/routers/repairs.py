@@ -1,14 +1,17 @@
 """通道二：维修处置履历（/api/admin/repairs）—— 只读 + 授权处置。"""
 
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..security import current_user
 from ..services import apply_repair
+from ..services.timeutil import utcnow
 
 router = APIRouter(prefix="/api/admin/repairs", tags=["admin-维修处置"])
 
@@ -55,3 +58,20 @@ def create_repair(payload: schemas.RepairIn, db: Session = Depends(get_db), user
         technician_id=user.username,
     )
     return record
+
+
+@router.get("/stats", response_model=schemas.RepairStatsOut, summary="处置动作分布统计")
+def repair_stats(
+    days: int = Query(0, ge=0, le=3650, description="统计最近 N 天；0 = 全部"),
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    """按处置动作聚合条数，供饼图/环图使用。"""
+    query = db.query(
+        models.RepairRecord.repair_action, func.count(models.RepairRecord.repair_id)
+    )
+    if days > 0:
+        query = query.filter(models.RepairRecord.created_at >= utcnow() - timedelta(days=days))
+    rows = query.group_by(models.RepairRecord.repair_action).all()
+    items = [schemas.RepairActionStat(action=action.upper(), count=count) for action, count in rows]
+    return schemas.RepairStatsOut(total=sum(i.count for i in items), items=items)

@@ -137,6 +137,7 @@ export const recordApi = {
 export const repairApi = {
   list: (params) => api.get('/admin/repairs', { params }),
   create: (data) => api.post('/admin/repairs', data),
+  stats: (params) => api.get('/admin/repairs/stats', { params }),
 }
 
 /** 仪表盘统计 */
