@@ -39,7 +39,7 @@
         <span
           v-if="showFirstPass"
           class="yield-fpy"
-          :title="`${row.first_pass} / ${row.total}`"
+          :title="`${row.first_pass} / ${row.fpy_total || row.total}`"
         >{{ row.first_pass_rate }}%</span>
         <span class="yield-count">{{ row.passed }} / {{ row.total }}</span>
       </div>

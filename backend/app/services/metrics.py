@@ -128,9 +128,18 @@ def build_overview(
         pass_rate=_rate(window_passed, window_total),
     )
 
-    def yield_by(extractor) -> List[schemas.YieldRow]:
+    def yield_by(extractor, with_fpy: bool = False) -> List[schemas.YieldRow]:
+        """记录级良率分组（分母 = 窗口内的测试记录数）。
+
+        with_fpy=True 时额外计算直通率（FPY）：每件（SN）在某键上的"首条记录"
+        （窗口内最早一条）结果为 PASS 的件占比，分母是"件"不是记录。记录级良率
+        会被重测稀释——返修后重测通过会多出一条 PASS 记录、分母同步变大，一次
+        做好的比例看不出来；FPY 并列展示才能暴露"良率漂亮但重测多"的工位。
+        口径与记录级良率同窗（含 MAX_RECORDS 上限约束）。
+        """
         grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "passed": 0})
-        for _, r in records:
+        first_outcome: Dict[tuple, tuple] = {}  # (sn, key) -> (created, overall_result)
+        for created, r in records:
             key = extractor(r)
             if not key:
                 continue
@@ -138,10 +147,31 @@ def build_overview(
             bucket["total"] += 1
             if r.overall_result == "PASS":
                 bucket["passed"] += 1
-        return [
-            schemas.YieldRow(key=key, **stat, pass_rate=_rate(stat["passed"], stat["total"]))
-            for key, stat in sorted(grouped.items())
-        ]
+            if with_fpy:
+                prev = first_outcome.get((r.sn, key))
+                if prev is None or created < prev[0]:
+                    first_outcome[(r.sn, key)] = (created, r.overall_result)
+
+        fpy: Dict[str, Dict[str, int]] = defaultdict(lambda: {"sns": 0, "fpy": 0})
+        if with_fpy:
+            for (_sn, key), (_created, outcome) in first_outcome.items():
+                fpy[key]["sns"] += 1
+                if outcome == "PASS":
+                    fpy[key]["fpy"] += 1
+
+        rows = []
+        for key, stat in sorted(grouped.items()):
+            extra: dict = {}
+            if with_fpy:
+                extra = {
+                    "first_pass": fpy[key]["fpy"],
+                    "fpy_total": fpy[key]["sns"],
+                    "first_pass_rate": _rate(fpy[key]["fpy"], fpy[key]["sns"]),
+                }
+            rows.append(
+                schemas.YieldRow(key=key, **stat, pass_rate=_rate(stat["passed"], stat["total"]), **extra)
+            )
+        return rows
 
     def unit_yield_by_process():
         """按流程统计整件良率：分母只含已完结（走完全流程或报废）的件，在制不计入。
@@ -259,7 +289,7 @@ def build_overview(
         ),
         window=window,
         trend=trend,
-        station_yield=yield_by(lambda r: r.station_id),
+        station_yield=yield_by(lambda r: r.station_id, with_fpy=True),
         process_yield=yield_by(lambda r: sn_process.get(r.sn)),
         process_unit_yield=unit_yield_rows,
         process_unit_yield_pending=unit_yield_pending,

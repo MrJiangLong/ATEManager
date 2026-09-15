@@ -774,10 +774,13 @@ class YieldRow(BaseModel):
     total: int = 0
     passed: int = 0
     pass_rate: float = 0.0
-    # 仅件级良率使用：一次通过（整件无任何 FAIL 记录）的件数与占比。
-    # 良率看终检结果，直通率看返修成本，两者并列才能看出"良率漂亮但重测多"。
+    # 一次通过（FPY）：工位卡按 (SN, 工位) 首条记录判定，件级卡按整件无任何 FAIL
+    # 判定。良率看终检结果，直通率看返修成本，两者并列才能看出"良率漂亮但重测多"。
     first_pass: int = 0
     first_pass_rate: float = 0.0
+    # FPY 的分母（件数）：工位卡的 total 是记录数，两者口径不同须分开返回，
+    # 前端悬浮提示用 fpy_total 优先。0 = 未统计（视为与 total 同口径）。
+    fpy_total: int = 0
 
 
 class YieldPoint(BaseModel):

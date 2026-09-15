@@ -85,6 +85,8 @@
           :column-label="$t('dashboard.stationColName')"
           :search-ph="$t('dashboard.stationSearchPh')"
           :empty-text="$t('dashboard.noData')"
+          show-first-pass
+          :first-pass-label="$t('dashboard.colFirstPass')"
         />
       </DataCard>
       <DataCard :title="$t('dashboard.processYieldTitle')">
@@ -255,8 +257,11 @@ function renderTrend() {
         const date = params[0].axisValueLabel
         let html = `<div style="font-size:11px;color:#9aa6bd;margin-bottom:6px;letter-spacing:.3px">${date}</div>`
         params.forEach((p) => {
-          const unit = p.seriesName === t('dashboard.chartAxisPassRate') ? '%' : ''
-          const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px;vertical-align:middle"></span>`
+          const isRate = p.seriesName === t('dashboard.chartAxisPassRate')
+          const unit = isRate ? '%' : ''
+          // 良率线的点已空心化（白色填充），tooltip 圆点固定用品牌色避免白底隐身
+          const dotColor = isRate ? '#2f6bff' : p.color
+          const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-right:6px;vertical-align:middle"></span>`
           html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:18px;line-height:20px">`
           html += `<span style="color:#6b7a99">${dot}${p.seriesName}</span>`
           html += `<span style="font-weight:600;color:#1f2b4d;font-variant-numeric:tabular-nums">${p.value}${unit}</span>`
@@ -320,10 +325,11 @@ function renderTrend() {
         smooth: 0.5,
         data: trend.map((d) => d.pass_rate),
         symbol: 'circle',
-        symbolSize: 5,
-        showSymbol: false,
+        symbolSize: 6,
+        showSymbol: true,
         lineStyle: { color: '#2f6bff', width: 2.5, cap: 'round' },
-        itemStyle: { color: '#2f6bff', borderColor: '#fff', borderWidth: 2 },
+        // 空心圆点：白底 + 品牌色描边，比实心点轻，与淡蓝柱子在视觉上互不压制
+        itemStyle: { color: '#fff', borderColor: '#2f6bff', borderWidth: 1.5 },
         emphasis: { focus: 'series', scale: 1.6 },
         areaStyle: {
           // 折线下的极淡渐变面积，让"趋势"有重量

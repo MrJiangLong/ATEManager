@@ -22,6 +22,7 @@ frontend/.vite/
 # ---- 运行产物 ----
 .ate_session_*.json
 backend/*.db
+backend_test.db
 
 # ---- 系统 ----
 .DS_Store
