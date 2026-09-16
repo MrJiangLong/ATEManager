@@ -19,8 +19,9 @@ from .models import FW_RULE_EXACT, FW_RULE_MIN
 
 _FW_RULE_PATTERN = rf"^({FW_RULE_EXACT}|{FW_RULE_MIN})$"
 
-# 编号规范（见 README 7.2）。三者都是自然主键，且被 test_records / test_sessions /
-# product_status 冗余引用，一旦投产就改不动，故在写入口强制约束格式。
+# 编号规范（见 README 7.2）。process/station 是自然主键，且被 test_records /
+# test_sessions / product_status 冗余引用，一旦投产就改不动，故在写入口强制约束格式。
+# client_id 不做格式约束（现场编号风格各异，仅要求非空、长度 ≤ 64）。
 _ID_RULES = {
     "process_id": (
         r"^PROC-[A-Z0-9]+(-[A-Z0-9]+){2}$",
@@ -29,10 +30,6 @@ _ID_RULES = {
     "station_id": (
         r"^[A-Z]{2,4}-[A-Z0-9]+(-[0-9]{2})?$",
         "<STAGE>-<DOMAIN>[-<NN>], e.g. CAL-PARAM or CAL-PARAM-01",
-    ),
-    "client_id": (
-        r"^[A-Z]{2}-L[0-9]+-[A-Z]{2,4}-[0-9]{2}(-[A-Z]+)?$",
-        "<SITE>-<LINE>-<STAGE>-<NN>[-<USE>], e.g. SZ-L1-CAL-01",
     ),
 }
 
@@ -394,6 +391,9 @@ class StationUpdateIn(BaseModel):
 class ClientOut(ORMModel):
     client_id: str
     client_name: Optional[str] = None
+    # 绑定集合（一机多工位）：进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
+    bound_stations: List[str] = []
+    # 当前操作工位（运行态）：进站解析成功后由服务端回写；未进站时为空
     station_id: Optional[str] = None
     ip_address: Optional[str] = None
     app_version: Optional[str] = None
@@ -404,21 +404,19 @@ class ClientOut(ORMModel):
 
 
 class ClientCreateIn(BaseModel):
+    # client_id 不做格式约束（现场编号风格各异），仅要求非空、长度 ≤ 64
     client_id: TrimmedRequired = Field(max_length=64)
-    station_id: TrimmedRequired = Field(max_length=64)
+    # 绑定集合（一机多工位）：进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
+    # （多命中 400 要求修正绑定；可留空 = 未绑定态，由 Web 端后补）
+    bound_stations: List[str] = Field(default_factory=list)
     # 未填时由服务端回退为 client_id，与 stations.station_name 的兜底一致
     client_name: Trimmed = Field(default="", max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
     app_version: Trimmed = Field(default=None, max_length=50)
 
-    @field_validator("client_id")
-    @classmethod
-    def _valid_client_id(cls, v):
-        return _checked_id(v, "client_id")
-
 
 class ClientUpdateIn(BaseModel):
-    station_id: Trimmed = Field(default=None, max_length=64)
+    bound_stations: Optional[List[str]] = None
     client_name: Trimmed = Field(default=None, max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
 

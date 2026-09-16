@@ -33,9 +33,29 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('clients.tableStation')" width="210">
+        <el-table-column :label="$t('clients.tableStation')" width="260">
           <template #default="{ row }">
-            <el-tag v-if="row.station_id" size="small" effect="plain" type="primary">{{ row.station_id }}</el-tag>
+            <div v-if="row.bound_stations && row.bound_stations.length" class="cell-stack">
+              <!-- 超过 3 个折叠为 +N，悬浮查看全部 -->
+              <div class="station-tags">
+                <el-tag
+                  v-for="s in row.bound_stations.slice(0, 3)"
+                  :key="s"
+                  size="small"
+                  effect="plain"
+                  type="primary"
+                >{{ s }}</el-tag>
+                <el-tooltip
+                  v-if="row.bound_stations.length > 3"
+                  :content="row.bound_stations.join(', ')"
+                  placement="top"
+                >
+                  <el-tag size="small" effect="plain" type="info">
+                    +{{ row.bound_stations.length - 3 }}
+                  </el-tag>
+                </el-tooltip>
+              </div>
+            </div>
             <el-tag v-else size="small" effect="plain" type="danger">{{ $t('clients.unbound') }}</el-tag>
           </template>
         </el-table-column>
@@ -117,7 +137,16 @@
           <el-input v-model="form.client_name" :placeholder="$t('clients.clientNamePh')" />
         </el-form-item>
         <el-form-item :label="$t('clients.bindStation')" :required="!isEdit">
-          <el-select v-model="form.station_id" filterable clearable style="width:100%">
+          <el-select
+            v-model="form.bound_stations"
+            multiple
+            filterable
+            collapse-tags
+            :max-collapse-tags="3"
+            collapse-tags-tooltip
+            :placeholder="$t('clients.bindStationPh')"
+            style="width:100%"
+          >
             <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
           </el-select>
         </el-form-item>
@@ -157,7 +186,7 @@ const keyword = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
-const form = reactive({ client_id: '', client_name: '', station_id: '', ip_address: '' })
+const form = reactive({ client_id: '', client_name: '', bound_stations: [], ip_address: '' })
 
 async function load() {
   loading.value = true
@@ -205,7 +234,7 @@ function openCreate() {
   Object.assign(form, {
     client_id: '',
     client_name: '',
-    station_id: stationFilter.value || '',
+    bound_stations: stationFilter.value ? [stationFilter.value] : [],
     ip_address: '',
   })
   dialogVisible.value = true
@@ -215,7 +244,7 @@ function openEdit(row) {
   Object.assign(form, {
     client_id: row.client_id,
     client_name: row.client_name || '',
-    station_id: row.station_id || '',
+    bound_stations: [...(row.bound_stations || [])],
     ip_address: row.ip_address || '',
   })
   dialogVisible.value = true
@@ -224,11 +253,11 @@ function openEdit(row) {
 async function submit() {
   if (!form.client_id.trim()) return ElMessage.warning(t('errors.requiredField'))
   // 上位机首次上报会自动注册为"未绑定"，这类机台要能改 IP/保持解绑，故仅新建时强制绑定工位
-  if (!isEdit.value && !form.station_id) return ElMessage.warning(t('errors.requiredField'))
+  if (!isEdit.value && !form.bound_stations.length) return ElMessage.warning(t('errors.requiredField'))
   saving.value = true
   try {
     const payload = {
-      station_id: form.station_id,
+      bound_stations: form.bound_stations || [],
       client_name: form.client_name || null,
       ip_address: form.ip_address || null,
     }
@@ -306,6 +335,8 @@ usePolling(load, 20000)
 /* 单元格内两行堆叠：主信息一行、次要信息一行，形成主次层次 */
 .cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .cell-sub { font-size: 12.5px; line-height: 1.4; }
+/* 绑定工位标签：换行排布，超 3 个折叠为 +N（tooltip 看全部） */
+.station-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* 状态列：小号文字 + 圆点，靠颜色区分而非字号字重，避免喧宾夺主 */
 .state-line { display: inline-flex; align-items: center; gap: 6px; }

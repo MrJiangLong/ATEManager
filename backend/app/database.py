@@ -67,6 +67,8 @@ _ADDED_COLUMNS = {
         "app_version": "VARCHAR(50)",
         "created_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
         "client_name": "VARCHAR(128)",
+        # 绑定集合（一机多工位）：数组列，存量行由 DEFAULT 填充为空集
+        "bound_stations": "JSON DEFAULT '[]'" if IS_SQLITE else "TEXT[] DEFAULT '{}'",
     },
     "product_models": {
         "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",

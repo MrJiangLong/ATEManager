@@ -238,7 +238,9 @@ def test_masters_seed():
 
     for station, cid in CLIENTS.items():
         resp = admin(
-            "POST", "/api/admin/clients", {"client_id": cid, "station_id": station, "ip_address": "10.1.60.1"}
+            "POST",
+            "/api/admin/clients",
+            {"client_id": cid, "bound_stations": [station], "ip_address": "10.1.60.1"},
         )
         check(resp.status_code == 201, f"create client {cid}: {resp.text}")
 
@@ -426,10 +428,10 @@ def test_client_unbound_state():
     check(resp.json()["ip_address"] == "10.1.60.100", f"ip updated: {resp.text}")
     check(not resp.json()["station_id"], f"must stay unbound: {resp.text}")
 
-    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL-PARAM"})
-    check(resp.status_code == 200 and resp.json()["station_id"] == "CAL-PARAM", f"bind: {resp.text}")
-    resp = admin("PUT", f"/api/admin/clients/{cid}", {"station_id": ""})
-    check(resp.status_code == 200 and not resp.json()["station_id"], f"unbind: {resp.text}")
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-PARAM"]})
+    check(resp.status_code == 200 and resp.json()["bound_stations"] == ["CAL-PARAM"], f"bind: {resp.text}")
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": []})
+    check(resp.status_code == 200 and resp.json()["bound_stations"] == [], f"unbind: {resp.text}")
 
     resp = v1(
         "check-in",
@@ -440,6 +442,105 @@ def test_client_unbound_state():
         f"unbound check-in must be 403: {resp.text}",
     )
     admin("DELETE", f"/api/admin/clients/{cid}")
+
+
+def test_client_multi_station_binding():
+    """一机多工位：绑定集合跨流程，check-in 按件所属流程解析唯一工位。
+
+    覆盖：同流程双绑定为配置错误（保存即 400）/ 跨流程合法绑定唯一命中 /
+    绑定后拓扑漂移由进站运行时校验兜底 / 持锁禁止改绑 / 释放后改绑 /
+    绑定集合与流程无交集时 client_not_bound。
+    """
+    cid = new_client_id("CAL")
+    # ① 同流程双绑定（CAL-AWG 与 CAL-PARAM 同属 P_MSO）→ 配置层直接拒绝
+    resp = admin(
+        "POST",
+        "/api/admin/clients",
+        {"client_id": cid, "bound_stations": ["CAL-AWG", "CAL-PARAM"]},
+    )
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "station_ambiguous",
+        f"same-process binding must 400 on save: {resp.status_code} {resp.text}",
+    )
+    # ② 正常注册：单工位 CAL-AWG（仅 MSO 有）
+    resp = admin(
+        "POST",
+        "/api/admin/clients",
+        {"client_id": cid, "bound_stations": ["CAL-AWG"]},
+    )
+    check(resp.status_code == 201, f"create client: {resp.text}")
+
+    # ③ PUT 改绑同样拦截同流程双绑定
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-AWG", "CAL-PARAM"]})
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "station_ambiguous",
+        f"same-process rebind must 400: {resp.status_code} {resp.text}",
+    )
+
+    # ④ 跨流程合法绑定：新增单工位流程 P_AUX，改绑为 CAL-AWG(MSO) + PACK-01(AUX)
+    p_aux = f"PROC-TEST-AUX-{STAMP}"
+    m_aux = "AUX1000"
+    admin("POST", "/api/admin/processes", {"process_id": p_aux, "process_name": "aux"})
+    admin("POST", "/api/admin/stations", {"station_id": "PACK-01", "station_name": "PACK-01"})
+    resp = admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "PACK-01", "step_order": 10, "depends_on": []}],
+        params={"process_id": p_aux},
+    )
+    check(resp.status_code == 200, f"aux topology: {resp.text}")
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {"product_model": m_aux, "process_id": p_aux, "target_fw_version": FW},
+    )
+    check(resp.status_code == 201, f"aux model: {resp.text}")
+
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-AWG", "PACK-01"]})
+    check(resp.status_code == 200, f"cross-process rebind must 200: {resp.status_code} {resp.text}")
+
+    # ⑤ AUX 件进站：绑定集合 ∩ P_AUX = {PACK-01}，唯一命中并回写当前操作工位
+    sn_aux = new_sn("MULTI-AUX")
+    resp = v1("check-in", {"client_id": cid, "sn": sn_aux, "product_model": m_aux, "firmware": FW})
+    check(resp.status_code == 200, f"AUX check-in: {resp.text}")
+    check(resp.json()["data"]["station_id"] == "PACK-01", f"resolve PACK-01: {resp.text}")
+    lock_token = resp.json()["data"]["lock_token"]
+
+    # ⑥ 持锁期间禁止改绑（绑定集合变化才拦，集合未变时允许改其他字段）
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-AWG"]})
+    check(resp.status_code == 409, f"rebind while holding must 409: {resp.text}")
+
+    # ⑦ 主动释放锁后改绑：绑定集合收敛为 CAL-AWG
+    resp = v1("release", {"client_id": cid, "sn": sn_aux, "lock_token": lock_token, "reason": "test"})
+    check(resp.status_code == 200, f"release: {resp.text}")
+    resp = admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-AWG"]})
+    check(resp.status_code == 200, f"rebind after release: {resp.text}")
+
+    # ⑧ AUX 件进站：绑定集合 ∩ P_AUX = 空 → 403 client_not_bound
+    resp = v1("check-in", {"client_id": cid, "sn": new_sn("MULTI-AUX2"), "product_model": m_aux, "firmware": FW})
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "client_not_bound",
+        f"no intersection must 403: {resp.status_code} {resp.text}",
+    )
+
+    # ⑨ MSO 件进站：工位解析为 CAL-AWG，但 MSO 流程要求首站 CAL-PARAM
+    #    → 403 missing_prereq（工位解析与工艺闸门分层工作，解析成功≠放行）
+    resp = v1("check-in", {"client_id": cid, "sn": new_sn("MULTI-MSO"), "product_model": M_MSO, "firmware": FW})
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "missing_prereq",
+        f"must 403 missing_prereq: {resp.status_code} {resp.text}",
+    )
+
+    # ⑩ 拓扑漂移兜底：绑定后流程又调整（直改库模拟），进站运行时校验拦下歧义
+    with SessionLocal() as db:
+        row = db.get(models.StationClient, cid)
+        row.bound_stations = ["CAL-AWG", "CAL-PARAM"]
+        db.commit()
+    resp = v1("check-in", {"client_id": cid, "sn": new_sn("MULTI-MSO2"), "product_model": M_MSO, "firmware": FW})
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "station_ambiguous",
+        f"runtime ambiguous must 400: {resp.status_code} {resp.text}",
+    )
 
 
 def test_clone_process():
@@ -538,11 +639,11 @@ def test_retest_blocked_409():
 
 
 def test_wrong_process_blocked_400():
-    """DPO 机型进入 AWG 工位（不在其流程中）→ 400。"""
+    """DPO 机型进入 AWG 工位（机台绑定工位与该件流程无交集）→ 403。"""
     sn = new_sn("WRONGP")
     resp = checkin("TST-AWG", sn, model=M_DPO)
-    check(resp.status_code == 400, f"wrong process must be 400, got {resp.status_code} {resp.text}")
-    check(resp.json()["code"] == "station_not_in_process", f"code: {resp.json()}")
+    check(resp.status_code == 403, f"wrong process must be blocked, got {resp.status_code} {resp.text}")
+    check(resp.json()["code"] == "client_not_bound", f"code: {resp.json()}")
 
 
 def test_firmware_mismatch_403():
@@ -688,7 +789,7 @@ def test_lock_conflict_409_and_timeout_takeover():
 
     # 另一台同工位机台抢占 → 409
     other = new_client_id("CAL")
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
+    admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
     resp = v1(
         "check-in",
         {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW},
@@ -888,7 +989,7 @@ def test_lock_lost_takeover():
     check(bool(stale_token), "lock_token must be issued")
 
     other = new_client_id("CAL")
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
+    admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
 
     # 未失联 → 仍然 409
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
@@ -1016,7 +1117,7 @@ def test_sweeper_releases_orphan_lock():
 
     # 解锁后新机台可直接进站
     other = new_client_id("CAL")
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-PARAM"})
+    admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 200, f"re-checkin after sweep: {resp.text}")
 
@@ -1039,7 +1140,7 @@ def test_client_app_version_tracked():
     check(row["station_id"] is None, f"auto registered must be unbound: {row}")
 
     # 进站同样刷新版本（此前 CheckInIn 收了 app_version 却没落库）
-    admin("PUT", f"/api/admin/clients/{cid}", {"station_id": "CAL-PARAM"})
+    admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-PARAM"]})
     resp = v1(
         "check-in",
         {
@@ -1058,7 +1159,7 @@ def test_client_app_version_tracked():
     resp = admin(
         "POST",
         "/api/admin/clients",
-        {"client_id": manual, "station_id": "CAL-PARAM", "app_version": "2.6.0"},
+        {"client_id": manual, "bound_stations": ["CAL-PARAM"], "app_version": "2.6.0"},
     )
     check(resp.status_code == 201 and resp.json()["app_version"] == "2.6.0", f"manual register: {resp.text}")
 
@@ -1067,7 +1168,7 @@ def test_client_app_version_tracked():
     resp = admin(
         "POST",
         "/api/admin/clients",
-        {"client_id": named, "station_id": "CAL-PARAM", "client_name": "Line1 Cal Bench A"},
+        {"client_id": named, "bound_stations": ["CAL-PARAM"], "client_name": "Line1 Cal Bench A"},
     )
     check(
         resp.status_code == 201 and resp.json()["client_name"] == "Line1 Cal Bench A",
@@ -1075,7 +1176,7 @@ def test_client_app_version_tracked():
     )
 
     fallback = new_client_id("CAL")
-    resp = admin("POST", "/api/admin/clients", {"client_id": fallback, "station_id": "CAL-PARAM"})
+    resp = admin("POST", "/api/admin/clients", {"client_id": fallback, "bound_stations": ["CAL-PARAM"]})
     check(
         resp.status_code == 201 and resp.json()["client_name"] == fallback,
         f"name must fall back to client_id: {resp.text}",
@@ -1120,7 +1221,7 @@ def test_firmware_match_rule():
     def try_firmware(firmware, tag):
         # 每次换机台 + 换 SN，避免工位锁互相干扰
         cid = new_client_id("CAL")
-        admin("POST", "/api/admin/clients", {"client_id": cid, "station_id": "CAL-PARAM"})
+        admin("POST", "/api/admin/clients", {"client_id": cid, "bound_stations": ["CAL-PARAM"]})
         return v1(
             "check-in",
             {"client_id": cid, "sn": new_sn(f"FW-{tag}"), "product_model": model, "firmware": firmware},
@@ -1224,7 +1325,7 @@ def test_client_release_lock():
 
     # 同工位另一台机台应能立即进站，证明锁确实释放了
     other = new_client_id("CAL")
-    admin("POST", "/api/admin/clients", {"client_id": other, "station_id": "CAL-IFACE"})
+    admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-IFACE"]})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 200, f"re-check-in after release: {resp.status_code} {resp.text}")
 
@@ -1239,14 +1340,13 @@ def test_client_release_lock():
 
 
 def test_id_format_enforced():
-    """编号规范在写入口强制校验（README 7.2）：不合规一律 422，合规放行。"""
+    """编号规范在写入口强制校验（README 7.2）：不合规一律 422，合规放行。
+    client_id 不做格式约束（现场编号风格各异，仅要求非空）。"""
     rejected = [
         ("/api/admin/processes", {"process_id": "PROC_TEK_MSO"}),  # 用了下划线
         ("/api/admin/processes", {"process_id": "PROC-SCOPE-MSO"}),  # 缺构型段
         ("/api/admin/stations", {"station_id": "CAL_PARAM"}),  # 用了下划线
         ("/api/admin/stations", {"station_id": "CAL"}),  # 缺测试域
-        ("/api/admin/clients", {"client_id": "CAL-DESK-01", "station_id": "CAL-PARAM"}),  # 缺厂区/产线
-        ("/api/admin/clients", {"client_id": "SZ-L1-CAL-1", "station_id": "CAL-PARAM"}),  # 序号须两位
     ]
     for path, body in rejected:
         resp = admin("POST", path, body)
@@ -1382,6 +1482,7 @@ TESTS = [
     test_delete_guards,
     test_station_item_guards,
     test_client_unbound_state,
+    test_client_multi_station_binding,
     test_clone_process,
     test_dpo_full_flow,
     test_mso_full_flow,

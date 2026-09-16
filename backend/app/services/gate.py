@@ -321,14 +321,7 @@ def check_in(
     case_ids: Optional[List[str]] = None,
     resume_session_id: Optional[str] = None,
 ) -> schemas.CheckInData:
-    station_id = client.station_id
-    if not station_id:
-        raise forbidden(
-            "client_not_bound",
-            f"client {client.client_id} is not bound to any station",
-        )
-
-    # 1) 机型 → 专属流程
+    # 0) 机型 → 专属流程（先于工位解析：一台机台可绑定多个流程的不同工位）
     model_row = db.get(models.ProductModel, product_model)
     if model_row is None:
         raise forbidden(
@@ -339,13 +332,25 @@ def check_in(
     if graph is None:
         raise not_found("process_not_found", f"process_not_found: {model_row.process_id}")
 
-    # 2) 工位必须属于该流程（工艺不符硬拦截）
-    if station_id not in graph.step_of:
-        raise bad_request(
-            "station_not_in_process",
-            f"station_not_in_process: {station_id} is not configured in process {graph.process_id}",
-            exit_code=EXIT_GATE_BLOCKED,
+    # 0.5) 工位解析：绑定集合 ∩ 流程工位集
+    #   不同产品的工艺完全不同时，一台物理机台可为多个流程的不同工位提供服务；
+    #   解析出唯一工位后回写 client.station_id（当前操作工位，运行态字段），
+    #   后续心跳 / 断点匹配 / 释放沿用单工位逻辑，无需改动。多命中 = 配置歧义，
+    #   400 要求修正机台绑定。
+    candidates = sorted(set(_as_list(client.bound_stations)) & set(graph.stations))
+    if not candidates:
+        raise forbidden(
+            "client_not_bound",
+            f"client {client.client_id} 的绑定工位均不在流程 {graph.process_id} 内",
         )
+    if len(candidates) > 1:
+        raise bad_request(
+            "station_ambiguous",
+            f"station_ambiguous: {client.client_id} 在流程 {graph.process_id} 内绑定了多个工位"
+            f" ({', '.join(candidates)})，请修正机台绑定",
+        )
+    station_id = candidates[0]
+    client.station_id = station_id
 
     # 3) 取/建在制品（首工位动态建档）
     product = db.get(models.ProductStatus, sn)

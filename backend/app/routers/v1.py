@@ -80,9 +80,10 @@ def resolve(
         "ok.resolve",
         {
             "client_id": client.client_id,
+            "bound_stations": list(client.bound_stations or []),
             "station_id": client.station_id or None,
             "ip_address": client.ip_address,
-            "bound": bool(client.station_id),
+            "bound": bool(client.bound_stations),
             "last_seen_at": as_utc(client.last_seen_at).isoformat() if client.last_seen_at else None,
             "server_time": utcnow().isoformat(),
         },

@@ -491,7 +491,11 @@ def _seed_static_rules(db) -> None:
         if client_id not in existing_clients:
             db.add(
                 StationClient(
-                    client_id=client_id, station_id=station_id, ip_address=ip, app_version=app_version
+                    client_id=client_id,
+                    bound_stations=[station_id],
+                    station_id=station_id,
+                    ip_address=ip,
+                    app_version=app_version,
                 )
             )
     db.commit()
@@ -666,7 +670,11 @@ def _ensure_scenario_clients(db) -> None:
         if client_id not in existing:
             db.add(
                 StationClient(
-                    client_id=client_id, station_id=station_id, ip_address=ip, app_version=app_version
+                    client_id=client_id,
+                    bound_stations=[station_id],
+                    station_id=station_id,
+                    ip_address=ip,
+                    app_version=app_version,
                 )
             )
     db.commit()

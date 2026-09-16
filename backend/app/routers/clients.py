@@ -1,17 +1,44 @@
 """通道二：物理机台档案与工位绑定（/api/admin/clients）。"""
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import conflict_error, get_or_404
+from ..errors import bad_request, conflict_error, get_or_404
 from ..security import current_user
 from ..services.timeutil import is_client_online
 
 router = APIRouter(prefix="/api/admin/clients", tags=["admin-机台"])
+
+
+def _assert_binding_unambiguous(db: Session, station_ids: List[str]) -> None:
+    """同一流程内绑定的工位必须 ≤ 1 个。
+
+    进站按"件所属流程 ∩ bound_stations"解析唯一工位：同流程命中两个会让该
+    流程的所有件进站即 400 station_ambiguous。把校验前移到配置层，保存绑定
+    时就拒绝；进站处的运行时校验保留，兜底"绑定后流程拓扑又改了"的漂移场景
+    （保存时合法、之后同流程新增了已绑定工位）。
+    """
+    if len(set(station_ids)) < 2:
+        return
+    rows = (
+        db.query(models.ProcessStation.process_id, models.ProcessStation.station_id)
+        .filter(models.ProcessStation.station_id.in_(list(set(station_ids))))
+        .all()
+    )
+    by_process: Dict[str, List[str]] = {}
+    for process_id, sid in rows:
+        by_process.setdefault(process_id, []).append(sid)
+    conflicts = {pid: sns for pid, sns in by_process.items() if len(sns) > 1}
+    if conflicts:
+        detail = "; ".join(f"{pid}: {', '.join(sorted(sns))}" for pid, sns in sorted(conflicts.items()))
+        raise bad_request(
+            "station_ambiguous",
+            f"station_ambiguous: one station per process allowed, conflicts - {detail}",
+        )
 
 
 def _holding_sn(db: Session, client_id: str) -> Optional[str]:
@@ -55,17 +82,20 @@ def list_clients(
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ):
-    query = db.query(models.StationClient)
+    clients = db.query(models.StationClient).order_by(models.StationClient.client_id).all()
     if station_id:
-        query = query.filter(models.StationClient.station_id == station_id)
-    return [_client_view(db, c) for c in query.order_by(models.StationClient.client_id).all()]
+        # 按绑定集合过滤：绑定工位包含即算
+        clients = [c for c in clients if station_id in (c.bound_stations or [])]
+    return [_client_view(db, c) for c in clients]
 
 
 @router.post("", response_model=schemas.ClientOut, status_code=201, summary="注册机台")
 def create_client(payload: schemas.ClientCreateIn, db: Session = Depends(get_db), user=Depends(current_user)):
     if db.get(models.StationClient, payload.client_id):
         raise conflict_error("client_already_registered", f"client_already_registered: {payload.client_id}")
-    get_or_404(db, models.Station, payload.station_id, "station")
+    for sid in payload.bound_stations:
+        get_or_404(db, models.Station, sid, "station")
+    _assert_binding_unambiguous(db, payload.bound_stations)
     data = payload.model_dump()
     # 未填名称时回退为 client_id，保证列表永远有可读内容（同 stations.station_name）
     data["client_name"] = payload.client_name or payload.client_id
@@ -80,17 +110,15 @@ def update_client(
     client_id: str, payload: schemas.ClientUpdateIn, db: Session = Depends(get_db), user=Depends(current_user)
 ):
     client = get_or_404(db, models.StationClient, client_id, "client")
-    if payload.station_id is not None:
-        if payload.station_id:
-            get_or_404(db, models.Station, payload.station_id, "station")
-            if client.station_id != payload.station_id:
-                _assert_not_holding(db, client_id)
-            client.station_id = payload.station_id
-        else:
-            # 显式传空 = 解除工位绑定。自动注册的机台本就处于未绑定态，
-            # 若不允许解绑，这类机台连改 IP 都提交不了。
-            if client.station_id:
-                _assert_not_holding(db, client_id)
+    if payload.bound_stations is not None:
+        for sid in payload.bound_stations:
+            get_or_404(db, models.Station, sid, "station")
+        _assert_binding_unambiguous(db, payload.bound_stations)
+        if set(payload.bound_stations) != set(client.bound_stations or []):
+            _assert_not_holding(db, client_id)
+        client.bound_stations = payload.bound_stations
+        # 绑定集合变化后，当前操作工位若已不在集合内则清空（运行态字段）
+        if client.station_id and client.station_id not in client.bound_stations:
             client.station_id = None
     if payload.client_name is not None:
         client.client_name = payload.client_name or None

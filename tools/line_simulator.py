@@ -99,8 +99,9 @@ class Admin:
 
     def ensure_client(self, client_id: str, station_id: str, ip: str) -> None:
         try:
+            # 绑定集合（一机多工位）：注册即绑定该工位；重复注册返回 409 视为已存在
             self._req("POST", "/api/admin/clients",
-                      {"client_id": client_id, "station_id": station_id, "ip_address": ip})
+                      {"client_id": client_id, "bound_stations": [station_id], "ip_address": ip})
         except urllib.error.HTTPError as exc:
             if exc.code != 409:  # 已存在
                 raise

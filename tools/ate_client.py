@@ -94,6 +94,7 @@ GATE_CODES = (
     "missing_prereq",
     "station_already_passed",
     "station_not_in_process",
+    "station_ambiguous",
     "case_id_mismatch",
     "missing_mandatory",
     # 被测件身份与状态

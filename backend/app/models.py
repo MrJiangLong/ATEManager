@@ -226,8 +226,12 @@ class StationClient(Base):
     client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     # 展示名：client_id 是 SZ-L1-CAL-01 这类工位编码，补一个可读名称便于现场辨认
     client_name: Mapped[Optional[str]] = mapped_column(String(128))
-    # 可为空：/client/resolve 会自动注册未绑定工位的机台，工位由 Web 端后补。
-    # 用 NULL 而非空串 —— 空串会撞 stations 外键（PG 生效、SQLite 未开 pragma 而放行）。
+    # 绑定集合（数组）：不同产品的工艺完全不同时，一台物理机台可为多个流程的
+    # 不同工位提供服务。进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
+    # （多命中 400 要求修正机台绑定；空交集 403）。
+    bound_stations: Mapped[list] = _array_column()
+    # 当前操作工位（运行态）：进站解析成功后回写，供心跳超时查询 /
+    # 断点会话匹配 / 释放锁等单工位逻辑使用。可空 = 从未进站。
     station_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("stations.station_id"), nullable=True, index=True
     )

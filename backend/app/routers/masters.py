@@ -169,8 +169,14 @@ def delete_station(station_id: str, db: Session = Depends(get_db), user=Depends(
     get_or_404(db, models.Station, station_id, "station")
     if db.query(models.ProcessStation).filter(models.ProcessStation.station_id == station_id).count():
         raise conflict_error("station_in_topology", "station_in_topology: remove it from processes first")
-    if db.query(models.StationClient).filter(models.StationClient.station_id == station_id).count():
-        raise conflict_error("station_has_clients", "station_has_clients: unbind its clients first")
+    # 绑定集合（bound_stations 数组）算被引用：机台多工位绑定，需先解绑
+    for c in db.query(models.StationClient).all():
+        if station_id in (c.bound_stations or []):
+            raise conflict_error("station_has_clients", "station_has_clients: unbind its clients first")
+    # 运行态"当前操作工位"指针直接置空（历史事实以台账为准），FK 才不会阻塞删除
+    db.query(models.StationClient).filter(models.StationClient.station_id == station_id).update(
+        {models.StationClient.station_id: None}, synchronize_session=False
+    )
     # 工位是跨流程共享字典，删一个会波及所有引用它的流程，故只拒绝不连带清理；
     # 与 station_in_topology 一样，要求先从各流程移除。
     if db.query(models.StationItem).filter(models.StationItem.station_id == station_id).count():
