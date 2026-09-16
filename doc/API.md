@@ -1007,6 +1007,9 @@ def ate_session(ate, request):
             if exc.is_gate_blocked:
                 # 防呆拦截：件已盖章（重测需先走 RETEST 处置）/ 已锁定 / 已报废 / 机型固件不符
                 pytest.exit(f"进站被防呆拦截: {exc}", returncode=1)
+            if exc.is_network:
+                # 网络重试已在 HttpClient 内耗尽：干净退出而不是裸异常栈
+                pytest.exit(f"进站失败：服务端不可达（{exc}），请检查网络", returncode=4)
             raise
     if state is None:
         pytest.exit("进站失败：锁一直未释放，请先做重测处置或强制解锁", returncode=4)
@@ -1062,7 +1065,15 @@ def ate_session(ate, request):
 def ate_case_gate(ate):
     yield
     if _report_rows:
-        ate.checkpoint(to_ate_items(_report_rows))   # 断网时自动进待补传队列，勿自行包重试
+        try:
+            # 断网时自动进待补传队列，勿自行包重试；但 lock_invalid 必须抛出
+            # （锁已被接管/中止，结果作废）——接住后干净停机，否则后续每个用例
+            # 都会带着原始异常栈报 ERROR
+            ate.checkpoint(to_ate_items(_report_rows))
+        except ApiError as exc:
+            if exc.is_lock_invalid:
+                pytest.exit("锁已失效：会话被运维中止", returncode=3)
+            raise
         _report_rows.clear()
     if ate.lost_lock:
         pytest.exit("锁已失效：会话被运维中止", returncode=3)

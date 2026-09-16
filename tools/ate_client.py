@@ -69,6 +69,11 @@ __all__ = [
 LOGGER = logging.getLogger("ate.client")
 LOGGER.addHandler(logging.NullHandler())
 
+# 绕过系统代理（http_proxy/HTTP_PROXY 环境变量）：SDK 直连产线内网服务端，
+# 走代理会被劫持/拦截——代理返回的 5xx 会被误判为"服务端故障可重试"，
+# 返回的 4xx 更会掩盖真实网络拓扑。产线直连语义下代理只有坏处。
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 # ---------------------------------------------------------------------
 # 常量：与服务端 errors.py / models.py 保持一致
 # ---------------------------------------------------------------------
@@ -226,7 +231,7 @@ class HttpClient:
                 req.add_header("Authorization", f"Bearer {bearer}")
 
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                with _OPENER.open(req, timeout=self.timeout) as resp:
                     return _decode_json(resp.read())
             except urllib.error.HTTPError as exc:
                 payload = _safe_decode(exc.read())
@@ -494,6 +499,8 @@ class AteClient:
         崩溃后再次调用会自动携带 `resume_session_id`，attempt+1 并跳过已完成用例。
         """
         state_path = self._state_path_for(sn)
+        # 重复进站前先回收旧心跳线程，否则两个线程会同时给同一 state 打心跳
+        self.stop_heartbeat()
         previous = SessionState.load(state_path) if (resume and state_path is not None) else None
         payload: Dict[str, Any] = {
             "client_id": self.client_id,
@@ -630,6 +637,8 @@ class AteClient:
                 },
             )
         except ApiError:
+            # 出站失败必须保留断点文件：checkout_id / pending_items 都在里面，
+            # 凭同一 checkout_id 重试可被服务端幂等回放，换新 ID 重发会产生双账
             raise
         self._clear_persisted()
         LOGGER.debug("出库 record_id=%s result=%s", data.get("record_id"), data.get("overall_result"))
@@ -702,7 +711,7 @@ def admin_login(base_url: str, username: str, password: str) -> str:
     data = json.dumps({"username": username, "password": password}).encode("utf-8")
     req = urllib.request.Request(f"{base_url.rstrip('/')}/api/auth/login", data=data, method="POST")
     req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with _OPENER.open(req, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8"))["access_token"]
 
 
