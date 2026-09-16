@@ -705,7 +705,7 @@ LOGGER = logging.getLogger(__name__)
 def run_all(cli, cases):
     for case in cases:
         if cli.lost_lock:                    # 心跳线程已发现锁失效
-            pytest.exit("lock lost: session aborted by operator", returncode=3)
+            pytest.exit("锁已失效：会话被运维中止", returncode=3)
         cli.checkpoint([run(case)])          # 也可能直接抛 409 session_aborted
 
 # 或回调式（无需轮询，但注意线程边界）
@@ -889,6 +889,7 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 
 ```python
 # conftest.py
+import json
 import threading
 import time
 from pathlib import Path
@@ -910,6 +911,7 @@ def pytest_addoption(parser):
 # setup/teardown 失败也必须收集为 FAIL：若只收 call，异常用例会"凭空消失"，
 # 出站时触发 missing_mandatory 把整个工位卡死。
 _report_rows = []
+_round_results = {}   # 本轮已执行用例的结果表（nodeid → outcome），重跑判定用
 _t0 = 0.0
 
 @pytest.hookimpl(hookwrapper=True)
@@ -923,6 +925,18 @@ def pytest_runtest_makereport(item, call):
             "result": rep.outcome,   # setup 异常 outcome 为 error，SDK 映射为 FAIL
             "exception": str(rep.longrepr) if rep.failed else "",
         })
+        _round_results[item.nodeid] = rep.outcome
+
+
+def _retry_failed(sn: str) -> list:
+    """上一轮失败清单（不出站留下的）。无文件 = 无需重跑。"""
+    rp = _retry_path(sn)
+    if not rp.exists():
+        return []
+    try:
+        return json.loads(rp.read_text(encoding="utf-8"))
+    except Exception:
+        return []
 
 # ---------- 2. 仪器身份与计时（按你的仪器层实现） ----------
 def read_idn():
@@ -955,7 +969,14 @@ def ate(request):
     yield cli
     cli.stop_heartbeat()
 
-# ---------- 4. 会话级：进站 → 续测跳过 → 测试 → 出站 ----------
+# ---------- 4. 会话级：进站 → 续测跳过 → 测试 → 出站/重跑 ----------
+def _retry_path(sn: str) -> Path:
+    """本轮失败清单（conftest 自管，与 SDK 断点文件同目录）。"""
+    if STATE_FILE.suffix == "":
+        return STATE_FILE / f".retry_{sn}.json"
+    return STATE_FILE.with_name(STATE_FILE.stem + ".retry.json")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ate_session(ate, request):
     global _t0
@@ -966,46 +987,75 @@ def ate_session(ate, request):
     # 或由运维临时关闭 ENFORCE_CASE_IDS。
     case_ids = [item.nodeid for item in request.session.items]
 
-    # lock_conflict（他机持锁 / 僵尸锁未到宽限）按退避等待重试；其余进站错误直接失败
+    # lock_conflict 按持有状态自适应处理，不做盲目长等待：
+    #   心跳新鲜（idle < 30s）= 该件正被其他机台正常测试 → 等到它测完遥遥无期，立即退出；
+    #   僵尸锁（idle 逼近 120s 宽限）= 只等"Sweeper 回收"所需的精确时间，再重试。
+    # 其余进站错误（防呆拦截等）直接失败。
     state = None
-    for attempt in range(8):
+    for attempt in range(3):
         try:
             state = ate.check_in(sn, model, fw, case_ids=case_ids)
             break
         except ApiError as exc:
-            if not exc.is_lock_conflict:
-                raise
-            time.sleep(min(5 * (attempt + 1), 30))
+            if exc.is_lock_conflict:
+                idle = exc.lock_idle_sec()
+                if idle is not None and idle < 30:
+                    pytest.exit("进站失败：该件正在其他机台测试中，请等待其完成或走维修处置", returncode=4)
+                wait = 15 if idle is None else min(max(120 - idle + 10, 10), 130)
+                time.sleep(wait)
+                continue
+            if exc.is_gate_blocked:
+                # 防呆拦截：件已盖章（重测需先走 RETEST 处置）/ 已锁定 / 已报废 / 机型固件不符
+                pytest.exit(f"进站被防呆拦截: {exc}", returncode=1)
+            raise
     if state is None:
-        pytest.exit("check-in: lock never released; run RETEST or force-release first", returncode=4)
+        pytest.exit("进站失败：锁一直未释放，请先做重测处置或强制解锁", returncode=4)
     _t0 = time.monotonic()
+    _round_results.clear()   # 新一轮：清空结果表（重跑清单由 _retry_failed 提供）
 
-    # 断点续测：服务端确认已完成的用例打 skip 标记，不重跑；
-    # 其上次结果由服务端 checkpoint 在出站时自动并入，不会误判漏测。
-    # 注意：必测用例上次 FAIL 的，FAIL 会原样并入出站、工位仍判 FAIL（要求重测时先做
-    # RETEST 处置）；选做用例的 FAIL 不影响放行，无需重跑。
-    if state.attempt > 1:
-        done = set(state.completed_case_ids)
-        for item in request.session.items:
-            if item.nodeid in done:
-                item.add_marker(pytest.mark.skip(reason=f"ATE resume: done in attempt {state.attempt}"))
-        print(f"[ATE] 续测 attempt={state.attempt}，跳过 {len(done)} 条已完成用例")
+    # 续测跳过：只跳过"上次已 PASS"的用例；上次 FAIL 的（在重跑清单里）本轮重跑，
+    # 通过后 checkpoint 按 case_id 覆盖，FAIL 被新结果顶掉。
+    # 策略：必测没过 → 不出站，保留会话与断点，重跑时只执行未通过项（见收尾判定）。
+    mandatory = set(state.mandatory_case_ids)
+    done_pass = set(state.completed_case_ids) - set(_retry_failed(sn))
+    for item in request.session.items:
+        if item.nodeid in done_pass:
+            item.add_marker(pytest.mark.skip(reason=f"ATE 续测：第 {state.attempt} 轮已通过，跳过"))
 
     yield
 
-    # 出站：指数退避重试，复用同一 checkout_id（服务端按 (sn, checkout_id) 幂等回放）
+    # 收尾判定：本轮必测是否有 FAIL。有 → 不出站（会话与断点原样保留），
+    # 记录失败清单退出；处置/修复后重跑将只执行未通过项。全绿 → 正常出站。
+    failed_now = {nid for nid, res in _round_results.items() if res != "passed"}
+    if failed_now & mandatory:
+        rp = _retry_path(sn)
+        rp.parent.mkdir(parents=True, exist_ok=True)
+        rp.write_text(json.dumps(sorted(failed_now)), encoding="utf-8")
+        pytest.exit(
+            f"必测未全过: {sorted(failed_now & mandatory)}；已保留断点不出站，"
+            f"重跑将只执行未通过项",
+            returncode=2,
+        )
+    _retry_path(sn).unlink(missing_ok=True)
     items = to_ate_items(_report_rows)
     for attempt in range(6):
         try:
-            ack = ate.check_out(items, duration_ms=elapsed_ms())   # elapsed_ms 为工程内计时
+            ack = ate.check_out(items, duration_ms=elapsed_ms())
             if not ack.get("acknowledged"):
                 pytest.exit("未拿到落库回执，禁止流转", returncode=1)
             return
+        except ApiError as exc:
+            # 防呆拦截（漏测/跳站/清单不匹配等）：重试无意义，立即退出人工介入
+            if exc.is_gate_blocked:
+                pytest.exit(f"出站被防呆拦截: {exc}", returncode=1)
+            if ate.lost_lock or exc.is_lock_invalid:
+                pytest.exit("会话已被运维中止，停止测试", returncode=3)
+            time.sleep(min(2 ** attempt, 30))
         except Exception:
             if ate.lost_lock:
-                pytest.exit("session aborted by operator", returncode=3)
+                pytest.exit("会话已被运维中止，停止测试", returncode=3)
             time.sleep(min(2 ** attempt, 30))
-    pytest.exit("checkout failed after retries", returncode=4)
+    pytest.exit("出站重试后仍未成功，请检查网络或联系运维", returncode=4)
 
 # ---------- 5. 每个用例之间：上报断点 + 失锁自检 ----------
 @pytest.fixture(autouse=True)
@@ -1015,7 +1065,7 @@ def ate_case_gate(ate):
         ate.checkpoint(to_ate_items(_report_rows))   # 断网时自动进待补传队列，勿自行包重试
         _report_rows.clear()
     if ate.lost_lock:
-        pytest.exit("lock lost: aborted by operator", returncode=3)
+        pytest.exit("锁已失效：会话被运维中止", returncode=3)
 ```
 
 既有产线工程接入时只需对齐三点：

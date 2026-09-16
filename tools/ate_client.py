@@ -322,6 +322,7 @@ class SessionState:
     station_id: str = ""
     checkout_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     completed_case_ids: List[str] = field(default_factory=list)
+    mandatory_case_ids: List[str] = field(default_factory=list)
     cursor: Dict[str, Any] = field(default_factory=dict)
     pending_items: List[dict] = field(default_factory=list)
 
@@ -516,6 +517,7 @@ class AteClient:
             station_id=data.get("station_id") or "",
             checkout_id=(previous.checkout_id if previous and previous.sn == sn else uuid.uuid4().hex),
             completed_case_ids=list(resume_info.get("completed_case_ids") or []),
+            mandatory_case_ids=[r.get("case_id") for r in (data.get("rules") or []) if r.get("is_mandatory", True)],
             cursor=dict(resume_info.get("cursor") or {}),
             pending_items=list(previous.pending_items) if previous and previous.sn == sn else [],
         )
