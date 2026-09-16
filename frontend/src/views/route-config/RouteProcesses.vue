@@ -14,8 +14,14 @@
       <el-table-column prop="process_name" :label="t('configs.processName')" min-width="220" />
       <el-table-column :label="t('configs.tableModelCount')" width="180">
         <template #default="{ row }">
-          <el-tag v-for="m in row.models" :key="m" size="small" effect="plain" style="margin:2px">{{ m }}</el-tag>
-          <span v-if="!row.models?.length" class="muted">—</span>
+          <!-- 机型多时折叠为 +N，悬浮查看全部（与机台管理页绑定工位同款交互） -->
+          <div v-if="row.models?.length" class="model-tags">
+            <el-tag v-for="m in row.models.slice(0, 2)" :key="m" size="small" effect="plain">{{ m }}</el-tag>
+            <el-tooltip v-if="row.models.length > 2" :content="row.models.join(', ')" placement="top">
+              <el-tag size="small" effect="plain" type="info">+{{ row.models.length - 2 }}</el-tag>
+            </el-tooltip>
+          </div>
+          <span v-else class="muted">—</span>
         </template>
       </el-table-column>
       <el-table-column prop="station_count" :label="t('configs.tableStationCount')" width="90" align="right" />
@@ -191,4 +197,6 @@ onMounted(() => loadProcesses())
 
 <style scoped>
 .switch-row { display: flex; gap: 20px; }
+/* 机型标签：换行排布，超 2 个折叠为 +N（tooltip 看全部） */
+.model-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 </style>

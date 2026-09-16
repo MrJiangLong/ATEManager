@@ -22,7 +22,9 @@
            列多导致横向滚动时主键与操作始终可见 -->
       <el-table v-loading="loading" :data="items" stripe size="small" style="width:100%; table-layout:fixed">
         <el-table-column prop="sn" :label="$t('products.tableSn')" width="152" fixed show-overflow-tooltip>
-          <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
+          <template #default="{ row }">
+            <el-button link type="primary" @click="goTrace(row.sn)"><span class="code">{{ row.sn }}</span></el-button>
+          </template>
         </el-table-column>
         <el-table-column :label="$t('products.tableModel')" width="210" show-overflow-tooltip>
           <template #default="{ row }">

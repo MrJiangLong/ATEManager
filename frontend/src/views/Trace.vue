@@ -112,7 +112,9 @@
           <el-table-column :label="$t('records.tableItems')" min-width="90" align="right">
             <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
           </el-table-column>
-          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="130" />
+          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="150" show-overflow-tooltip>
+          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+        </el-table-column>
           <el-table-column :label="$t('records.tableValid')" width="90">
             <template #default="{ row }">
               <el-tag size="small" :type="row.is_valid ? 'success' : 'info'" effect="plain">
