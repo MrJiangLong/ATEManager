@@ -90,10 +90,12 @@
                   </el-table-column>
                   <el-table-column :label="$t('trace.executedItems')" min-width="240">
                     <template #default="{ row: it }">
-                      <span class="code">{{ JSON.stringify(it.values || {}) }}</span>
+                      <el-tooltip :content="JSON.stringify(it.values || {})" placement="top" :show-after="400">
+                        <span class="code values-cell">{{ JSON.stringify(it.values || {}) }}</span>
+                      </el-tooltip>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="message" :label="$t('repairs.tableReason')" min-width="160" />
+                  <el-table-column prop="message" :label="$t('repairs.tableReason')" min-width="160" show-overflow-tooltip />
                 </el-table>
               </div>
             </template>
@@ -331,4 +333,14 @@ onMounted(() => load())
 }
 .attempt-node.current { background: var(--app-warning, #f59e0b); }
 .more { font-size: 11px; }
+</style>
+<style scoped>
+/* 执行明细（values JSON）：单行省略，悬浮看完整内容 */
+.values-cell {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>
