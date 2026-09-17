@@ -62,22 +62,25 @@
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
 
-    <el-drawer v-model="validateVisible" :title="t('configs.validateTitle')" size="480px" destroy-on-close>
+    <el-drawer v-model="validateVisible" size="560px" destroy-on-close>
       <div v-if="validateResult">
+        <!-- 三态：error 未通过 / warning 带警告通过 / 干净通过。ok 只代表无 error -->
         <el-alert
-          :title="validateResult.ok ? t('configs.validateOk') : t('configs.validateFail')"
-          :type="validateResult.ok ? 'success' : 'error'"
+          :title="validateMeta.title"
+          :type="validateMeta.type"
           :closable="false"
           show-icon
         />
         <el-table v-if="validateResult.issues.length" :data="validateResult.issues" size="small" style="margin-top:12px">
-          <el-table-column :label="t('configs.issueLevel')" width="90">
+          <el-table-column :label="t('configs.issueLevel')" width="100" align="center">
             <template #default="{ row }">
               <el-tag :type="row.level === 'error' ? 'danger' : 'warning'" size="small">{{ row.level }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="code" :label="t('configs.issueCode')" width="170" />
-          <el-table-column prop="detail" :label="t('configs.issueDetail')" min-width="160" />
+          <el-table-column prop="code" :label="t('configs.issueCode')" width="170" show-overflow-tooltip>
+            <template #default="{ row }"><span class="code">{{ row.code }}</span></template>
+          </el-table-column>
+          <el-table-column prop="detail" :label="t('configs.issueDetail')" min-width="180" show-overflow-tooltip />
         </el-table>
         <EmptyState v-else :text="t('configs.validateOk')" />
       </div>
@@ -106,6 +109,16 @@ const savedStations = ref([])
 
 const validateVisible = ref(false)
 const validateResult = ref(null)
+
+// 三态：error=未通过；warning=通过但需关注；干净=通过
+const validateMeta = computed(() => {
+  const r = validateResult.value
+  if (!r) return { title: t('configs.validateTitle'), type: 'info' }
+  const warns = (r.issues || []).filter((i) => i.level === 'warning').length
+  if (!r.ok) return { title: t('configs.validateFail'), type: 'error' }
+  if (warns > 0) return { title: `${t('configs.validateWarn')}（${warns}）`, type: 'warning' }
+  return { title: t('configs.validateOk'), type: 'success' }
+})
 const allItems = ref([])
 
 const itemCountMap = computed(() => {

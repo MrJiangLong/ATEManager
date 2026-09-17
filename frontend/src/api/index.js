@@ -107,6 +107,7 @@ export const routingApi = {
   createItem: (data) => api.post('/admin/routing/items', data),
   updateItem: (itemId, data) => api.put(`/admin/routing/items/${itemId}`, data),
   removeItem: (itemId) => api.delete(`/admin/routing/items/${itemId}`),
+  topology: (processId) => api.get('/admin/routing/topology', { params: { process_id: processId } }),
   validate: (processId) => api.get('/admin/routing/validate', { params: { process_id: processId } }),
   clone: (data) => api.post('/admin/routing/clone', data),
 }

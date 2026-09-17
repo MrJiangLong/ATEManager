@@ -33,8 +33,11 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
+      <el-table-column :label="t('common.action')" width="210" align="center" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" size="small" :icon="View" @click="openDetail(row)">
+            {{ t('configs.detail') }}
+          </el-button>
           <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
           <el-button link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
@@ -94,6 +97,7 @@
         <el-button type="primary" :loading="cloneSaving" @click="submitClone">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
+    <ProcessDetailDrawer v-model="detailVisible" :process="detailRow" @edit="openEdit" />
   </div>
 </template>
 
@@ -101,9 +105,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Plus } from '@element-plus/icons-vue'
+import { CopyDocument, Plus, View } from '@element-plus/icons-vue'
 import { processApi, routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import ProcessDetailDrawer from '../../components/ProcessDetailDrawer.vue'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
@@ -119,6 +124,14 @@ const form = reactive({ process_id: '', process_name: '', is_active: true })
 const cloneVisible = ref(false)
 const cloneSaving = ref(false)
 const cloneForm = reactive({ from_process: '', to_process: '' })
+
+// 流程详情抽屉
+const detailVisible = ref(false)
+const detailRow = ref(null)
+function openDetail(row) {
+  detailRow.value = row
+  detailVisible.value = true
+}
 
 function openCreate() {
   isEdit.value = false
