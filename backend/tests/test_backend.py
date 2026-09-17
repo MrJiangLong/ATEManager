@@ -15,6 +15,7 @@
 """
 
 import itertools
+import json
 import os
 import sys
 import time
@@ -1474,6 +1475,47 @@ def test_import_blocks_running_session():
     )
 
 
+def test_process_export_import():
+    """流程导出→改号导入副本：工位补建不覆盖 / 机型冲突跳过 / 重复导入 409 / 坏依赖 400。"""
+    doc = admin("GET", f"/api/admin/routing/processes/{P_DPO}/export").json()
+    check(doc["process"]["process_id"] == P_DPO, "export process")
+    check(len(doc["steps"]) == 4, f"export steps: {len(doc['steps'])}")
+    check(len(doc["items"]) >= 8, f"export items: {len(doc['items'])}")
+
+    imp = f"PROC-TEST-IMP-{STAMP}"
+    doc["process"]["process_id"] = imp
+    doc["process"]["process_name"] = "导入副本"
+    resp = admin("POST", "/api/admin/routing/processes/import", doc)
+    check(resp.status_code == 201, f"import: {resp.status_code} {resp.text}")
+    body = resp.json()
+    check(body["steps_created"] == 4 and body["items_created"] == len(doc["items"]), f"counts: {body}")
+    check(body["stations_created"] == 0, f"工位已存在不重复建: {body}")
+    check(body["models_skipped"] == 1, f"机型冲突跳过: {body}")
+
+    res = admin("GET", "/api/admin/routing/validate", params={"process_id": imp})
+    check(res.json()["ok"] is True, "副本拓扑校验通过")
+
+    resp = admin("POST", "/api/admin/routing/processes/import", doc)
+    check(resp.status_code == 409 and resp.json()["code"] == "process_already_exists", f"dup: {resp.text}")
+
+    bad = json.loads(json.dumps(doc))
+    bad["process"]["process_id"] = f"PROC-TEST-IMP2-{STAMP}"
+    bad["steps"][0]["depends_on"] = ["CAL-AWG"]
+    resp = admin("POST", "/api/admin/routing/processes/import", bad)
+    check(resp.status_code == 400 and resp.json()["code"] == "topology_invalid", f"bad deps: {resp.text}")
+
+    # 全量导出：包含全部流程，每项可单独导入
+    resp = admin("GET", "/api/admin/routing/processes/export-all")
+    check(resp.status_code == 200, f"export all: {resp.status_code} {resp.text}")
+    all_ids = [p["process"]["process_id"] for p in resp.json()["processes"]]
+    check(P_DPO in all_ids and P_MSO in all_ids, f"export all ids: {all_ids}")
+
+    # 清理：清空工步（连带清用例）→ 删流程（机型全部 skipped，副本上无绑定）
+    admin("PUT", "/api/admin/routing/stations", [], params={"process_id": imp})
+    resp = admin("DELETE", f"/api/admin/processes/{imp}")
+    check(resp.status_code in (200, 204), f"cleanup: {resp.status_code} {resp.text}")
+
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1517,6 +1559,7 @@ TESTS = [
     test_id_format_enforced,
     test_force_release_and_sessions_api,
     test_import_blocks_running_session,
+    test_process_export_import,
 ]
 
 if __name__ == "__main__":

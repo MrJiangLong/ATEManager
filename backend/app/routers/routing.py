@@ -14,6 +14,7 @@ from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404, not_found
 from ..security import current_user
 from ..services.routing import process_topology, station_item_summary, validate_process
+from ..services.timeutil import utcnow
 
 router = APIRouter(prefix="/api/admin/routing", tags=["admin-工艺拓扑"])
 
@@ -419,3 +420,203 @@ def item_summary(
     process_id: str = Query(..., min_length=1), db: Session = Depends(get_db), user=Depends(current_user)
 ):
     return station_item_summary(db, process_id)
+
+
+# ==================== 流程导入 / 导出 ====================
+def _build_process_export(db: Session, process: models.Process) -> schemas.ProcessExportOut:
+    """组装单个流程的完整定义（流程 + 引用工位 + 机型 + 工步 + 用例）。"""
+    topo = process_topology(db, process.process_id)
+    stations = (
+        db.query(models.Station)
+        .filter(models.Station.station_id.in_([s.station_id for s in topo.steps] or [""]))
+        .all()
+    )
+    models_rows = (
+        db.query(models.ProductModel)
+        .filter(models.ProductModel.process_id == process.process_id)
+        .all()
+    )
+    return schemas.ProcessExportOut(
+        exported_at=utcnow(),
+        process=schemas.ExportProcess(
+            process_id=process.process_id,
+            process_name=process.process_name or "",
+            is_active=process.is_active,
+        ),
+        stations=[
+            schemas.ExportStation(
+                station_id=s.station_id,
+                station_name=s.station_name or "",
+                timeout_sec=s.timeout_sec,
+            )
+            for s in stations
+        ],
+        models=[
+            schemas.ExportModel(
+                product_model=m.product_model,
+                target_fw_version=m.target_fw_version,
+                fw_match_rule=m.fw_match_rule,
+            )
+            for m in models_rows
+        ],
+        steps=[
+            schemas.ExportStep(
+                station_id=s.station_id,
+                step_order=s.step_order,
+                depends_on=list(s.depends_on or []),
+            )
+            for s in topo.steps
+        ],
+        items=[
+            schemas.ExportItem(
+                station_id=i.station_id,
+                case_id=i.case_id,
+                item_name=i.item_name or "",
+                is_mandatory=i.is_mandatory,
+            )
+            for i in topo.items
+        ],
+    )
+
+
+@router.get(
+    "/processes/{process_id}/export",
+    response_model=schemas.ProcessExportOut,
+    summary="导出流程完整定义（流程+引用工位+机型+工步+用例，JSON）",
+)
+def export_process(
+    process_id: str, db: Session = Depends(get_db), user=Depends(current_user)
+):
+    process = get_or_404(db, models.Process, process_id, "process")
+    return _build_process_export(db, process)
+
+
+@router.get(
+    "/processes/export-all",
+    response_model=schemas.ProcessExportAllOut,
+    summary="导出全部流程定义（每项可单独导入）",
+)
+def export_all_processes(db: Session = Depends(get_db), user=Depends(current_user)):
+    processes = db.query(models.Process).order_by(models.Process.process_id).all()
+    return schemas.ProcessExportAllOut(
+        exported_at=utcnow(),
+        processes=[_build_process_export(db, p) for p in processes],
+    )
+
+
+@router.post(
+    "/processes/import",
+    response_model=schemas.ProcessImportResult,
+    status_code=201,
+    summary="导入流程完整定义（JSON）",
+)
+def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(current_user)):
+    """事务式导入：流程不存在（409 可改编号重试）；缺失工位自动补建（已有配置
+    不覆盖——工位是跨流程共享字典）；机型已存在时跳过（绑定关系不迁移）；
+    全部写入后复用拓扑校验，error 级问题整体回滚。"""
+    proc_in = payload.process
+    if db.get(models.Process, proc_in.process_id):
+        raise conflict_error(
+            "process_already_exists",
+            f"process_already_exists: {proc_in.process_id}（可修改编号后作为副本导入）",
+        )
+    if not payload.steps:
+        raise bad_request("process_empty", "导入文件未包含任何工步")
+
+    step_ids = {s.station_id for s in payload.steps}
+    bad_deps = sorted({d for s in payload.steps for d in s.depends_on if d not in step_ids})
+    if bad_deps:
+        raise bad_request(
+            "topology_invalid",
+            f"depends_on 引用了流程外的工位: {', '.join(bad_deps)}",
+        )
+
+    # 1) 流程
+    db.add(
+        models.Process(
+            process_id=proc_in.process_id,
+            process_name=proc_in.process_name or proc_in.process_id,
+            is_active=proc_in.is_active,
+        )
+    )
+
+    # 2) 工位：缺失才建（共享字典，已有配置一律不覆盖）；工步引用但清单缺失的按占位补建
+    stations_created = 0
+    station_ids = {s.station_id for s in payload.stations} | step_ids
+    for sid in sorted(station_ids):
+        if db.get(models.Station, sid) is not None:
+            continue
+        src = next((s for s in payload.stations if s.station_id == sid), None)
+        db.add(
+            models.Station(
+                station_id=sid,
+                station_name=(src.station_name if src else "") or sid,
+                timeout_sec=src.timeout_sec if src else 1800,
+            )
+        )
+        stations_created += 1
+
+    # 3) 机型：不存在才注册；已存在（绑定其他流程）→ 跳过，绑定关系不迁移
+    models_created = models_skipped = 0
+    for m in payload.models:
+        if db.get(models.ProductModel, m.product_model):
+            models_skipped += 1
+            continue
+        db.add(
+            models.ProductModel(
+                product_model=m.product_model,
+                process_id=proc_in.process_id,
+                target_fw_version=m.target_fw_version,
+                fw_match_rule=m.fw_match_rule,
+            )
+        )
+        models_created += 1
+
+    # 4) 工步 + 5) 用例
+    for s in payload.steps:
+        db.add(
+            models.ProcessStation(
+                process_id=proc_in.process_id,
+                station_id=s.station_id,
+                step_order=s.step_order,
+                depends_on=list(s.depends_on or []),
+            )
+        )
+    items_created = 0
+    for it in payload.items:
+        db.add(
+            models.StationItem(
+                process_id=proc_in.process_id,
+                station_id=it.station_id,
+                case_id=it.case_id,
+                item_name=it.item_name or it.case_id,
+                is_mandatory=it.is_mandatory,
+                is_active=True,
+            )
+        )
+        items_created += 1
+
+    # 6) 复用拓扑校验兜底：先 flush 让新行在本事务内可见，error 级问题整体回滚
+    db.flush()
+    check = validate_process(db, proc_in.process_id)
+    if not check.ok:
+        db.rollback()
+        raise bad_request(
+            "topology_invalid",
+            f"导入的拓扑未通过校验: {[(i.level, i.detail) for i in check.issues]}",
+        )
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise bad_request("import_failed", "导入写入失败：数据与现有配置冲突（检查用例ID是否重复）")
+
+    return schemas.ProcessImportResult(
+        process_id=proc_in.process_id,
+        stations_created=stations_created,
+        models_created=models_created,
+        models_skipped=models_skipped,
+        steps_created=len(payload.steps),
+        items_created=items_created,
+    )

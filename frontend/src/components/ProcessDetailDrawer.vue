@@ -92,6 +92,7 @@
 
     <template #footer>
       <el-button @click="visible = false">{{ t('common.close') }}</el-button>
+      <el-button @click="exportJson" :loading="exporting">{{ t('configs.exportJson') }}</el-button>
       <el-button type="primary" @click="$emit('edit', process)">{{ t('common.edit') }}</el-button>
     </template>
   </el-drawer>
@@ -140,6 +141,23 @@ const warnCount = computed(() =>
 const issueText = computed(() =>
   (validate.value?.issues || []).map((i) => i.detail || i.code).join('；'),
 )
+
+const exporting = ref(false)
+async function exportJson() {
+  if (!props.process?.process_id) return
+  exporting.value = true
+  try {
+    const res = await routingApi.exportProcess(props.process.process_id)
+    const blob = new Blob([res.data], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${props.process.process_id}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } finally {
+    exporting.value = false
+  }
+}
 
 function timeoutMin(s) {
   const sec = s.timeout_sec || 0

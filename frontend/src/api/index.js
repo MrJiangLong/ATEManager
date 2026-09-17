@@ -109,6 +109,11 @@ export const routingApi = {
   removeItem: (itemId) => api.delete(`/admin/routing/items/${itemId}`),
   topology: (processId) => api.get('/admin/routing/topology', { params: { process_id: processId } }),
   validate: (processId) => api.get('/admin/routing/validate', { params: { process_id: processId } }),
+  exportProcess: (processId) =>
+    api.get(`/admin/routing/processes/${enc(processId)}/export`, { responseType: 'blob' }),
+  exportAllProcesses: () =>
+    api.get('/admin/routing/processes/export-all', { responseType: 'blob' }),
+  importProcess: (data) => api.post('/admin/routing/processes/import', data),
   clone: (data) => api.post('/admin/routing/clone', data),
 }
 

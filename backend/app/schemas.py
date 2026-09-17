@@ -523,6 +523,121 @@ class ValidateOut(BaseModel):
     issues: List[ValidateIssue] = []
 
 
+# =====================================================================
+# 流程导入 / 导出（完整定义：流程 + 引用工位 + 机型 + 工步 + 用例）
+# =====================================================================
+class ExportProcess(BaseModel):
+    process_id: str
+    process_name: str = ""
+    is_active: bool = True
+
+
+class ExportStation(BaseModel):
+    station_id: str
+    station_name: str = ""
+    timeout_sec: int = 1800
+
+
+class ExportModel(BaseModel):
+    product_model: str
+    target_fw_version: str
+    fw_match_rule: str = FW_RULE_EXACT
+
+
+class ExportStep(BaseModel):
+    station_id: str
+    step_order: int
+    depends_on: List[str] = []
+
+
+class ExportItem(BaseModel):
+    station_id: str
+    case_id: str
+    item_name: str = ""
+    is_mandatory: bool = True
+
+
+class ProcessExportOut(BaseModel):
+    export_version: int = 1
+    exported_at: datetime
+    process: ExportProcess
+    stations: List[ExportStation] = []
+    models: List[ExportModel] = []
+    steps: List[ExportStep] = []
+    items: List[ExportItem] = []
+
+
+class ProcessExportAllOut(BaseModel):
+    """全量导出：processes 数组的每一项都是可单独导入的完整流程定义。"""
+
+    export_version: int = 1
+    exported_at: datetime
+    processes: List[ProcessExportOut] = []
+
+
+class ImportProcess(BaseModel):
+    """导入时可改 process_id（导入为副本），其余字段原样落地。格式校验与创建入口同款。"""
+
+    process_id: TrimmedRequired = Field(max_length=64)
+    process_name: Trimmed = Field(default="", max_length=128)
+    is_active: bool = True
+
+    @field_validator("process_id")
+    @classmethod
+    def _valid_process_id(cls, v):
+        return _checked_id(v, "process_id")
+
+
+class ImportStation(BaseModel):
+    station_id: TrimmedRequired = Field(max_length=64)
+    station_name: Trimmed = Field(default="", max_length=128)
+    timeout_sec: int = Field(default=1800, ge=30, le=86400)
+
+    @field_validator("station_id")
+    @classmethod
+    def _valid_station_id(cls, v):
+        return _checked_id(v, "station_id")
+
+
+class ImportModel(BaseModel):
+    product_model: TrimmedRequired = Field(max_length=64)
+    target_fw_version: TrimmedRequired = Field(max_length=32)
+    fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
+
+
+class ImportStep(BaseModel):
+    station_id: TrimmedRequired = Field(max_length=64)
+    step_order: int = Field(ge=1)
+    depends_on: List[str] = []
+
+
+class ImportItem(BaseModel):
+    station_id: TrimmedRequired = Field(max_length=64)
+    case_id: TrimmedRequired = Field(max_length=256)
+    item_name: Trimmed = Field(default="", max_length=128)
+    is_mandatory: bool = True
+
+
+class ProcessImportIn(BaseModel):
+    """导入载荷：结构与导出文件一致（exported_at/export_version 可缺省）。"""
+
+    export_version: int = 1
+    process: ImportProcess
+    stations: List[ImportStation] = []
+    models: List[ImportModel] = []
+    steps: List[ImportStep] = []
+    items: List[ImportItem] = []
+
+
+class ProcessImportResult(UTCSchema):
+    process_id: str
+    stations_created: int = 0
+    models_created: int = 0
+    models_skipped: int = 0
+    steps_created: int = 0
+    items_created: int = 0
+
+
 class CloneIn(BaseModel):
     from_process: TrimmedRequired = Field(max_length=64)
     to_process: TrimmedRequired = Field(max_length=64)
