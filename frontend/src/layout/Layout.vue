@@ -7,7 +7,10 @@
       <el-main class="content">
         <router-view v-slot="{ Component }">
           <transition name="fade-slide" mode="out-in">
-            <component :is="Component" />
+            <!-- 缓存运营总览，切回瞬时呈现 -->
+            <keep-alive include="Dashboard">
+              <component :is="Component" />
+            </keep-alive>
           </transition>
         </router-view>
       </el-main>

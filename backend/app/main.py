@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -88,6 +89,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 前端 chunk 较大，>1KB 响应自动 gzip
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.exception_handler(AppError)

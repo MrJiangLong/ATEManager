@@ -70,7 +70,7 @@
       />
     </div>
 
-    <DataCard :title="$t('dashboard.trendTitle')" :loading="loading">
+    <DataCard :title="$t('dashboard.trendTitle')" :loading="loading || !overview">
       <template #extra>
         <span class="muted">{{ windowDays }} {{ $t('common.unitDays') }}</span>
       </template>
@@ -111,11 +111,32 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
+// echarts 按需引入，减小路由 chunk
+import * as echarts from 'echarts/core'
+import { BarChart, LineChart } from 'echarts/charts'
+import {
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  TooltipComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+echarts.use([
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  CanvasRenderer,
+])
 import {
   CircleCheck,
   Lock,
@@ -133,6 +154,8 @@ import TopFailedList from '../components/TopFailedList.vue'
 import YieldTable from '../components/YieldTable.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
+
+defineOptions({ name: 'Dashboard' })
 
 const WINDOWS = [7, 14, 30]
 
@@ -223,7 +246,9 @@ async function loadAll(silent = false) {
   } catch (e) {
     if (seq === requestSeq) ElMessage.error(e.message)
   } finally {
-    if (!silent && seq === requestSeq) loading.value = false
+    // 非 silent 的调用必然持有 loading=true，结束即清除（与 seq 无关，
+    // 否则会被并发的 silent 调用卡住导致转圈不止）
+    if (!silent) loading.value = false
   }
 }
 
@@ -377,13 +402,14 @@ function onResize() {
 let containerObserver = null
 
 onMounted(() => {
-  loadAll()
   window.addEventListener('resize', onResize)
   if (trendEl.value && typeof ResizeObserver !== 'undefined') {
     containerObserver = new ResizeObserver(() => trendChart?.resize())
     containerObserver.observe(trendEl.value)
   }
 })
+// keep-alive 下首挂与每次切回都触发 activated，数据加载统一走这里（静默）
+onActivated(() => loadAll(true))
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   containerObserver?.disconnect()
