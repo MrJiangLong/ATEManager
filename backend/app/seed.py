@@ -1,8 +1,16 @@
 """数据初始化：静态工艺规则 + 随机在制品测试数据。
 
-    python -m app.seed            幂等：工艺规则已存在则跳过（--reset 强制重建）
-    python -m app.seed --reset    清空业务表后重建（保留 users）
-    python -m app.seed --reset --products 60   指定随机在制品数量
+四种模式互斥（--reset / --wipe / --clear-business / --backfill-completed），
+除 --backfill-completed 外均保留 users 表（账号与角色是部署配置，不属于业务数据）。
+
+    python -m app.seed                          幂等初始化：工艺规则已存在则跳过
+    python -m app.seed --products 60            指定随机在制品数量
+    python -m app.seed --no-repairs             不生成维修处置履历
+    python -m app.seed --scenarios              仅重建租约锁/会话场景数据
+    python -m app.seed --reset                  清空全部数据后重建（需输入 YES 确认）
+    python -m app.seed --wipe                   只清空、不重建，得到仅剩 users 的空库
+    python -m app.seed --clear-business         只清运行数据，工艺配置原样保留
+    python -m app.seed --backfill-completed     回填 is_completed 冗余列
 
 静态规则严格按方案预置：
     PROC-SCOPE-MSO-AWG  带 AWG 选件，6 站完整流程
@@ -318,7 +326,7 @@ def _ensure_admin(db) -> None:
         print(f"[seed] 默认管理员 {settings.DEFAULT_ADMIN_USERNAME} / {settings.DEFAULT_ADMIN_PASSWORD}")
 
 def _reset_all_tables(db) -> None:
-    """清空全部业务表与工艺配置表（users 保留），随后由 _seed_static_rules 重建。
+    """清空全部业务表与工艺配置表（users 保留）。
 
     注意：这会覆盖现场手工维护的工艺配置。若只想清业务数据、保留工艺配置，
     请使用 --clear-business。
@@ -337,7 +345,6 @@ def _reset_all_tables(db) -> None:
     ):
         db.execute(Base.metadata.tables[table].delete())
     db.commit()
-    print("[seed] --reset: 已清空业务表与工艺配置（users 保留，随后重建工艺配置）")
 
 def _clear_business_only(db) -> None:
     """只清空运行时业务数据，保留工艺配置与 users。
@@ -849,6 +856,7 @@ def seed(
     scenarios_only: bool = False,
     clear_business: bool = False,
     backfill_completed: bool = False,
+    wipe: bool = False,
 ) -> None:
     ensure_schema()
     _reset_caches()
@@ -862,8 +870,13 @@ def seed(
         if backfill_completed:
             _backfill_is_completed(db)
             return
+        if wipe:
+            _reset_all_tables(db)
+            print("[seed] --wipe: 已清空业务与工艺配置（users 保留），未重建任何数据")
+            return
         if reset:
             _reset_all_tables(db)
+            print("[seed] --reset: 已清空业务表与工艺配置（users 保留，随后重建工艺配置）")
         elif db.query(ProcessStation).count():
             if scenarios_only:
                 # 只重建场景数据：依赖相对时间，重复 seed 才会刷新"多久之前心跳"
@@ -892,13 +905,15 @@ def seed(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ATE Manager 数据初始化")
-    parser.add_argument("--reset", action="store_true", help="清空业务表与工艺配置后重建")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--reset", action="store_true", help="清空业务表与工艺配置后重建")
+    mode.add_argument("--wipe", action="store_true", help="清空业务表与工艺配置（users 保留），不重建任何数据")
+    mode.add_argument(
         "--clear-business",
         action="store_true",
         help="只清空业务数据（在制品/记录/会话/维修/机台），保留工艺配置与 users",
     )
-    parser.add_argument(
+    mode.add_argument(
         "--backfill-completed",
         action="store_true",
         help="回填 product_status.is_completed 冗余列（新增列后对存量数据执行一次）",
@@ -911,6 +926,16 @@ def main() -> None:
         help="仅重建租约锁/会话场景数据（C0990xx，不改动其余数据）",
     )
     args = parser.parse_args()
+    if args.reset or args.wipe:
+        # 不可逆且会抹掉全部工艺配置，交互确认防误触（无人值守脚本可管道喂 YES）
+        verb = "--reset" if args.reset else "--wipe"
+        try:
+            reply = input(f"{verb} 将清空业务表与工艺配置（users 保留）且不可恢复，输入 YES 继续：").strip()
+        except EOFError:
+            reply = ""
+        if reply != "YES":
+            print("[seed] 已取消（未做任何修改）")
+            return 1
     seed(
         reset=args.reset,
         products=args.products,
@@ -918,6 +943,7 @@ def main() -> None:
         scenarios_only=args.scenarios,
         clear_business=args.clear_business,
         backfill_completed=args.backfill_completed,
+        wipe=args.wipe,
     )
 
 if __name__ == "__main__":
