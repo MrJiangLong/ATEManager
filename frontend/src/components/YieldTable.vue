@@ -1,6 +1,6 @@
 <template>
   <div class="yield-wrap">
-    <!-- 检索条：项可能成百上千，概览页只做"定位"，不做"承载" -->
+    
     <div v-if="hasData" class="yield-tools">
       <el-input
         v-model="keyword"
@@ -25,7 +25,6 @@
       <span v-if="showFirstPass" class="th-fpy" :title="$t('dashboard.colFinalPassTip')">{{ $t('dashboard.colFinalPass') }}</span>
     </div>
 
-    <!-- 限高滚动区：无论多少项，卡片高度恒定，不撑长页面 -->
     <div class="yield-scroll">
       <div
         v-for="row in shownRows"
@@ -54,7 +53,6 @@
       <EmptyState v-if="!shownRows.length" :text="emptyText" />
     </div>
 
-    <!-- 计数 + 展开：默认只看前 N 项，让"最差的"浮到眼前 -->
     <div v-if="hasData" class="yield-foot">
       <span class="foot-count muted">
         {{ $t('dashboard.showingCount', { n: shownRows.length, total: rows.length }) }}
@@ -251,3 +249,4 @@ function rowClass(rate) {
 }
 .foot-count { font-size: 11.5px; font-variant-numeric: tabular-nums; }
 </style>
+

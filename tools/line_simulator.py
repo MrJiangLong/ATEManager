@@ -66,7 +66,7 @@ from typing import Dict, List, Optional
 from ate_client import (AteClient,ApiError,admin_login)
 
 DEFAULT_MODEL = "DPO4054B"
-NON_BASELINE_FW = "V3.10"  # 与基线固件不同，用于触发 firmware_mismatch
+NON_BASELINE_FW = "V3.10"
 
 # 注入型防呆拦截：属"预期命中"，不计入失败
 EXPECTED_GATE_CODES = (
@@ -76,7 +76,6 @@ EXPECTED_GATE_CODES = (
     "case_id_mismatch",
     "model_mismatch",
 )
-
 
 # ---------------------------------------------------------------------
 # 管理端（注册机台 / 强制解锁 / 拉取工艺 / 校验结果）
@@ -99,11 +98,10 @@ class Admin:
 
     def ensure_client(self, client_id: str, station_id: str, ip: str) -> None:
         try:
-            # 绑定集合（一机多工位）：注册即绑定该工位；重复注册返回 409 视为已存在
             self._req("POST", "/api/admin/clients",
                       {"client_id": client_id, "bound_stations": [station_id], "ip_address": ip})
         except urllib.error.HTTPError as exc:
-            if exc.code != 409:  # 已存在
+            if exc.code != 409:
                 raise
 
     def force_release(self, sn: str, reason: str) -> None:
@@ -124,9 +122,7 @@ class Admin:
     def zombie_locks(self) -> int:
         return self._req("GET", "/api/admin/sessions/zombie-locks", params={"page_size": 1})["total"]
 
-
 # ---------------------------------------------------------------------
-# 工艺拓扑（服务端拉取，不硬编码）
 # ---------------------------------------------------------------------
 class ProcessPlan:
     """流程拓扑 + 各工位必测用例：来自 GET /api/admin/routing/topology。"""
@@ -152,25 +148,21 @@ class ProcessPlan:
         idx = self.stations.index(station_id) + (2 if jump else 1)
         return self.stations[idx] if idx < len(self.stations) else None
 
-
 # ---------------------------------------------------------------------
-# 任务
 # ---------------------------------------------------------------------
 @dataclass
 class Job:
     sn: str
     station_id: str
-    defective: bool = False      # 不良件：该工位判 FAIL
-    stubborn: bool = False       # 顽固不良：每次都 FAIL → 连续失败锁定
-    bad_firmware: bool = False   # 固件非基线 → firmware_mismatch
-    missing_item: bool = False   # 漏报一个必测项 → missing_mandatory
-    abandon: bool = False        # 中途停机 → 停在半途
-    attempts: int = 0            # 本工位重测/续测次数
-    retried: bool = False        # 是否已本机台续测过一次
-
+    defective: bool = False
+    stubborn: bool = False
+    bad_firmware: bool = False
+    missing_item: bool = False
+    abandon: bool = False
+    attempts: int = 0
+    retried: bool = False
 
 # ---------------------------------------------------------------------
-# 共享状态
 # ---------------------------------------------------------------------
 class Sim:
     """队列 / 计数 / 进度 / 同步。pending=0 即全产线空闲，线程退出。"""
@@ -215,13 +207,10 @@ class Sim:
         with self._lock:
             return self.pending > 0
 
-
 class SimulatedCrash(Exception):
     """模拟上位机崩溃：不发 release、不 check-out，锁留在服务端。"""
 
-
 # ---------------------------------------------------------------------
-# 机台 worker
 # ---------------------------------------------------------------------
 class Station:
     def __init__(self, *, client_id: str, station_id: str, base_url: str, api_key: str,
@@ -272,12 +261,11 @@ class Station:
 
         bad_case = cases[-1] if job.defective else None
         # 漏测注入必须"压根没跑这一项"：服务端 MERGE_CHECKPOINT_ON_CHECKOUT
-        # 会用 checkpoint 快照补齐出站项，因此"跑了却少传"不会被判 missing_mandatory。
         skip_case = cases[-1] if job.missing_item else None
         executed: List[str] = []
         for case_id in cases:
             if case_id in state.completed_case_ids:
-                continue  # 续测：跳过崩溃前已跑完的
+                continue
             if case_id == skip_case:
                 self.log(f"{job.sn} 漏测注入：跳过 {case_id.split('::')[-1]}")
                 continue
@@ -329,7 +317,7 @@ class Station:
         """
         job.attempts += 1
         if not job.stubborn:
-            job.defective = False  # 偶发不良：下次判 PASS（产生"重测通过"记录）
+            job.defective = False
         if job.attempts >= self.max_retry:
             self.sim.bump("unexpected")
             self.log(f"{job.sn} 重测次数超限，放弃")
@@ -382,7 +370,6 @@ class Station:
         self.log(f"{job.sn} 崩溃（{exc}），锁已遗留在服务端")
         job.attempts += 1
         if not self.resume or job.attempts >= self.max_retry:
-            # --no-chaos-resume 是用户显式选择"崩溃即换件"，属预期放弃，不计非预期失败
             self.sim.bump("gave_up")
             self.log(f"{job.sn} 崩溃后放弃（不续测 / 超重试上限）")
             self.sim.finish()
@@ -390,7 +377,7 @@ class Station:
             self.sim.requeue(job, job.station_id)  # 交同工位其他机台 → 触发接管
         else:
             job.retried = True
-            local.put(job)                          # 本机台续测
+            local.put(job)
 
     # ---------------- 主循环 ----------------
     def handle(self, job: Job, local: "queue.Queue[Job]") -> None:
@@ -411,14 +398,14 @@ class Station:
         if outcome == "pass":
             self.sim.mark_passed(job.sn, job.station_id)
             self.sim.bump("pass_out")
-            self.advance(job)          # 推进成功会 submit(+1)，与此处的 -1 持平
+            self.advance(job)
             self.sim.finish()
         elif outcome == "fail":
             self.sim.bump("fail_out")
             # 重投表示任务仍在产线，不能再 finish
             if not self.retry_after_fail(job):
                 self.sim.finish()
-        else:  # abandoned / skip
+        else:
             self.sim.finish()
 
     def run(self) -> None:
@@ -438,9 +425,7 @@ class Station:
             finally:
                 self.cli.stop_heartbeat()
 
-
 # ---------------------------------------------------------------------
-# 注入：互斥轮盘赌（一件至多命中一种异常）
 # ---------------------------------------------------------------------
 def roll_injection(rng: random.Random, rates: dict) -> dict:
     roll = rng.random()
@@ -456,9 +441,7 @@ def roll_injection(rng: random.Random, rates: dict) -> dict:
             }[key]
     return {}
 
-
 # ---------------------------------------------------------------------
-# 主流程
 # ---------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description="ATE 产线模拟器（多机台并发 + 产线状态仿真）")
@@ -485,7 +468,6 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    # 控制台编码自适应（Windows 默认 GBK）
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure:
@@ -506,7 +488,6 @@ def main() -> int:
         return 1
     admin = Admin(args.base_url, token)
 
-    # 1) 机型 → 流程 + 基线固件；拉取真实拓扑（不硬编码工位与用例）
     model_row = next((m for m in admin.models() if m.get("product_model") == args.model), None)
     if model_row is None:
         print(f"[ERROR] 服务端未找到机型 {args.model}")
@@ -526,7 +507,6 @@ def main() -> int:
     print(f"  机台 {args.clients}/工位 × {len(stations)} 工位 · 投产 {args.units} 件 · mode={args.mode}")
     print("=" * 70)
 
-    # 2) 注册机台（每工位一组，绑定该工位）
     workers: List[Station] = []
     state_dir = Path(".sim_state")
     state_dir.mkdir(exist_ok=True)
@@ -546,7 +526,6 @@ def main() -> int:
             ))
     print(f"[setup] 已就绪 {len(workers)} 台机台\n")
 
-    # 3) 投产：首站投放 units 件
     stamp = int(time.time()) % 100000
     for i in range(args.units):
         job = Job(sn=f"SIM{stamp}{i:03d}", station_id=stations[0],
@@ -562,7 +541,6 @@ def main() -> int:
         t.join()
     elapsed = time.time() - started
 
-    # 5) 汇总
     c = sim.counters
     print("\n" + "-" * 70)
     print("结果分布：")
@@ -585,7 +563,6 @@ def main() -> int:
     print(f"  一件未过: {unfinished}")
     print(f"\n耗时 {elapsed:.1f}s")
 
-    # 6) 服务端侧校验
     try:
         ov = admin.overview()
         print(f"\n服务端校验：活跃锁 {ov['locks']['active']} · 僵尸锁 {ov['locks']['zombie']} · "
@@ -594,7 +571,6 @@ def main() -> int:
     except Exception as exc:
         print(f"\n[warn] 服务端校验失败：{exc}")
 
-    # 7) 清理
     for f in state_dir.glob("*.json"):
         try:
             f.unlink()
@@ -609,6 +585,6 @@ def main() -> int:
     print(f"\n结论：{'通过' if ok else '未通过'}（非预期失败 {c['unexpected']}）")
     return 0 if ok else 1
 
-
 if __name__ == "__main__":
     sys.exit(main())
+

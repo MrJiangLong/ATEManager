@@ -58,9 +58,7 @@ from pathlib import Path
 from typing import Dict, List
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
-# 服务端 LOCK_HEARTBEAT_INTERVAL_SEC 默认值：上位机靠心跳感知停机，等待窗口须大于它
 HEARTBEAT_SEC = 30
-
 
 def http_json(method: str, url: str, token: str, payload: Dict | None = None) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
@@ -75,7 +73,6 @@ def http_json(method: str, url: str, token: str, payload: Dict | None = None) ->
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"[ERROR] {method} {url} -> {exc.code}: {exc.read().decode(errors='replace')}")
 
-
 def login(base: str, user: str, password: str) -> str:
     """通道二登录取 JWT（写规则必须走管理员通道，v1 的 X-API-Key 无此权限）。"""
     data = json.dumps({"username": user, "password": password}).encode()
@@ -86,7 +83,6 @@ def login(base: str, user: str, password: str) -> str:
             return json.loads(resp.read().decode())["access_token"]
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"[ERROR] login failed: {exc.code} {exc.read().decode(errors='replace')}")
-
 
 def fetch_all_running(base: str, token: str) -> List[dict]:
     """拉取全部 RUNNING 会话：page_size 上限 200，必须循环翻页直到取完，
@@ -105,7 +101,6 @@ def fetch_all_running(base: str, token: str) -> List[dict]:
         if not batch or len(items) >= total:
             return items
         page += 1
-
 
 def parse_items(raw) -> List[dict]:
     """支持 `["nodeid", ...]` 与 `[{case_id, item_name, is_mandatory}, ...]` 两种写法。"""
@@ -127,7 +122,6 @@ def parse_items(raw) -> List[dict]:
                 }
             )
     return items
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="用 JSON 全量同步用例ID")
@@ -176,7 +170,6 @@ def main() -> int:
         if missing:
             print(f"[warn] {process_id}: stations not in JSON (left untouched): {', '.join(missing)}")
 
-    # 2) 中止范围按流程圈定：abort 接口会用 SN 的机型反查所属流程，不会误伤别的流程
     running_items = fetch_all_running(args.base_url, token)
     running_stations = {s.get("station_id") for s in running_items}
     busy_processes = sorted(
@@ -249,6 +242,6 @@ def main() -> int:
 
     return 0
 
-
 if __name__ == "__main__":
     sys.exit(main())
+

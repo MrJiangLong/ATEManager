@@ -8,11 +8,10 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404
-from ..security import current_user
+from ..security import current_user, require_operator
 from ..services.timeutil import is_client_online
 
 router = APIRouter(prefix="/api/admin/clients", tags=["admin-机台"])
-
 
 def _assert_binding_unambiguous(db: Session, station_ids: List[str]) -> None:
     """同一流程内绑定的工位必须 ≤ 1 个。
@@ -40,7 +39,6 @@ def _assert_binding_unambiguous(db: Session, station_ids: List[str]) -> None:
             f"station_ambiguous: one station per process allowed, conflicts - {detail}",
         )
 
-
 def _holding_sn(db: Session, client_id: str) -> Optional[str]:
     """该机台当前持有的在制品 SN（TESTING 且持锁方是它自己）。
 
@@ -60,13 +58,11 @@ def _holding_sn(db: Session, client_id: str) -> Optional[str]:
     )
     return row[0] if row else None
 
-
 def _client_view(db: Session, client: models.StationClient) -> schemas.ClientOut:
     view = schemas.ClientOut.model_validate(client)
     view.online = is_client_online(client.last_seen_at)
     view.holding_sn = _holding_sn(db, client.client_id)
     return view
-
 
 def _assert_not_holding(db: Session, client_id: str) -> None:
     holding = _holding_sn(db, client_id)
@@ -74,7 +70,6 @@ def _assert_not_holding(db: Session, client_id: str) -> None:
         raise conflict_error(
             "client_holding_lock", f"client_holding_lock: {client_id} still holds {holding}"
         )
-
 
 @router.get("", response_model=List[schemas.ClientOut], summary="机台清单(在线状态 + 持锁 SN)")
 def list_clients(
@@ -84,13 +79,11 @@ def list_clients(
 ):
     clients = db.query(models.StationClient).order_by(models.StationClient.client_id).all()
     if station_id:
-        # 按绑定集合过滤：绑定工位包含即算
         clients = [c for c in clients if station_id in (c.bound_stations or [])]
     return [_client_view(db, c) for c in clients]
 
-
 @router.post("", response_model=schemas.ClientOut, status_code=201, summary="注册机台")
-def create_client(payload: schemas.ClientCreateIn, db: Session = Depends(get_db), user=Depends(current_user)):
+def create_client(payload: schemas.ClientCreateIn, db: Session = Depends(get_db), user=Depends(require_operator)):
     if db.get(models.StationClient, payload.client_id):
         raise conflict_error("client_already_registered", f"client_already_registered: {payload.client_id}")
     for sid in payload.bound_stations:
@@ -104,10 +97,9 @@ def create_client(payload: schemas.ClientCreateIn, db: Session = Depends(get_db)
     db.commit()
     return _client_view(db, client)
 
-
 @router.put("/{client_id}", response_model=schemas.ClientOut, summary="更新机台(改绑工位/IP)")
 def update_client(
-    client_id: str, payload: schemas.ClientUpdateIn, db: Session = Depends(get_db), user=Depends(current_user)
+    client_id: str, payload: schemas.ClientUpdateIn, db: Session = Depends(get_db), user=Depends(require_operator)
 ):
     client = get_or_404(db, models.StationClient, client_id, "client")
     if payload.bound_stations is not None:
@@ -117,7 +109,6 @@ def update_client(
         if set(payload.bound_stations) != set(client.bound_stations or []):
             _assert_not_holding(db, client_id)
         client.bound_stations = payload.bound_stations
-        # 绑定集合变化后，当前操作工位若已不在集合内则清空（运行态字段）
         if client.station_id and client.station_id not in client.bound_stations:
             client.station_id = None
     if payload.client_name is not None:
@@ -127,10 +118,10 @@ def update_client(
     db.commit()
     return _client_view(db, client)
 
-
 @router.delete("/{client_id}", status_code=204, summary="注销机台(持锁时拒绝)")
-def delete_client(client_id: str, db: Session = Depends(get_db), user=Depends(current_user)):
+def delete_client(client_id: str, db: Session = Depends(get_db), user=Depends(require_operator)):
     client = get_or_404(db, models.StationClient, client_id, "client")
     _assert_not_holding(db, client_id)
     db.delete(client)
     db.commit()
+

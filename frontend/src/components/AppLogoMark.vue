@@ -1,6 +1,6 @@
 <template>
   <div class="app-logo-mark" :style="boxStyle">
-    <!-- 品牌标记：程序主图标（由 7 个闭合路径共同构成的组合图形） -->
+    
     <svg
       :width="size"
       :height="size"
@@ -47,3 +47,4 @@ const boxStyle = computed(() => ({
   flex-shrink: 0;
 }
 </style>
+

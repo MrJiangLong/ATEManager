@@ -1,4 +1,3 @@
-// 页面标题统一处理：路由切换与语言切换共用同一份逻辑
 import i18n from '../i18n'
 
 export function applyRouteTitle(route) {

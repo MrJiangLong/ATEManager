@@ -1,6 +1,6 @@
 <template>
   <el-drawer v-model="visible" size="640px" destroy-on-close @opened="load">
-    <!-- 头部：只放身份（编号 + 状态） -->
+    
     <template #header>
       <div class="d-head">
         <span class="code d-id">{{ process?.process_id }}</span>
@@ -120,7 +120,6 @@ const steps = ref([])
 const items = ref([])
 const validate = ref(null)
 
-// items 按 station_id 分组，供各工步卡片取用
 const stationItems = computed(() => {
   const map = {}
   for (const it of items.value) {
@@ -230,3 +229,4 @@ async function load() {
   text-overflow: ellipsis; white-space: nowrap;
 }
 </style>
+

@@ -234,7 +234,6 @@ function renderTrend() {
   // 字体族跟随界面语言，保证英文界面不出现中文回退字
   const fontFamily = locale.value === 'en' ? 'var(--app-font-sans)' : 'var(--app-font-sans-zh)'
 
-  // 窗口平均良率：与"今日良率"图例共用同一口径（按量加权）
   const avgPass = windowYield.value
   const lastIdx = trend.length - 1
 
@@ -328,11 +327,9 @@ function renderTrend() {
         symbolSize: 6,
         showSymbol: true,
         lineStyle: { color: '#2f6bff', width: 2.5, cap: 'round' },
-        // 空心圆点：白底 + 品牌色描边，比实心点轻，与淡蓝柱子在视觉上互不压制
         itemStyle: { color: '#fff', borderColor: '#2f6bff', borderWidth: 1.5 },
         emphasis: { focus: 'series', scale: 1.6 },
         areaStyle: {
-          // 折线下的极淡渐变面积，让"趋势"有重量
           color: {
             type: 'linear',
             x: 0, y: 0, x2: 0, y2: 1,
@@ -377,7 +374,6 @@ function onResize() {
   trendChart?.resize()
 }
 
-// 折叠侧边栏会改变 el-main 宽度但不触发 window resize，故额外用 ResizeObserver 重绘
 let containerObserver = null
 
 onMounted(() => {
@@ -396,7 +392,6 @@ onBeforeUnmount(() => {
   trendChart = null
 })
 watch([windowDays, processFilter], () => loadAll())
-// 语言切换后重绘图表（图例 / 轴标签 / 字体需即时更新）
 watch(locale, () => {
   if (overview.value) renderTrend()
 })
@@ -410,3 +405,4 @@ usePolling(() => loadAll(true), 60000)
 .chart { width: 100%; height: 300px; }
 .window-switch { margin-left: 4px; }
 </style>
+

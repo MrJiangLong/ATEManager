@@ -1,4 +1,3 @@
-// 展示格式化公共工具（列表 / 追溯 / 仪表盘共用）
 
 const pad = (n) => String(n).padStart(2, '0')
 
@@ -128,3 +127,4 @@ export function repairTagType(action) {
       return 'info'
   }
 }
+

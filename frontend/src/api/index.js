@@ -27,7 +27,6 @@ function normalizeError(error) {
   if (!message) {
     let detail = body?.detail
     if (Array.isArray(detail)) {
-      // 422 参数校验错误
       detail = detail
         .map((i) => (Array.isArray(i.loc) ? `${i.loc.slice(1).join('.')}: ${i.msg}` : i.msg))
         .join('; ')
@@ -151,4 +150,13 @@ export const metricsApi = {
   overview: (params) => api.get('/admin/metrics/overview', { params }),
 }
 
+/** 用户管理（仅 admin） */
+export const usersApi = {
+  list: () => api.get('/admin/users'),
+  create: (data) => api.post('/admin/users', data),
+  update: (userId, data) => api.put(`/admin/users/${userId}`, data),
+  remove: (userId) => api.delete(`/admin/users/${userId}`),
+}
+
 export default api
+

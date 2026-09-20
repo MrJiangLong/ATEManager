@@ -39,10 +39,8 @@ if IS_SQLITE:
         """
         dbapi_conn.isolation_level = "IMMEDIATE"
 
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
 
 def get_db():
     """FastAPI 依赖：每请求一个会话。"""
@@ -52,22 +50,18 @@ def get_db():
     finally:
         db.close()
 
-
-# 存量库补齐列：create_all 不会 ALTER，故按方言探测后补列
 _ADDED_COLUMNS = {
     "product_status": {
         "lock_token": "VARCHAR(64)",
         "lock_acquired_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
         "lock_last_seen_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
         "lock_heartbeat_count": "INTEGER DEFAULT 0",
-        # 冗余列：支持列表页按"已完成/未完成"在 SQL 层精确过滤与分页
         "is_completed": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
     },
     "station_clients": {
         "app_version": "VARCHAR(50)",
         "created_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
         "client_name": "VARCHAR(128)",
-        # 绑定集合（一机多工位）：数组列，存量行由 DEFAULT 填充为空集
         "bound_stations": "JSON DEFAULT '[]'" if IS_SQLITE else "TEXT[] DEFAULT '{}'",
     },
     "product_models": {
@@ -76,14 +70,17 @@ _ADDED_COLUMNS = {
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
+    "users": {
+        # 存量唯一账号回填为 admin（升级不失权）；新账号由接口显式指定角色
+        "role": "VARCHAR(16) DEFAULT 'admin'",
+        "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
+    },
 }
-
 
 # 补列后需从既有列回填的（新列没有历史值，取最接近的口径兜底），仅在真正补列时执行一次
 _BACKFILL_ON_ADD = {
     ("station_clients", "created_at"): "last_seen_at",
 }
-
 
 def _existing_columns(conn, table: str) -> set:
     if IS_SQLITE:
@@ -93,7 +90,6 @@ def _existing_columns(conn, table: str) -> set:
         {"t": table},
     ).fetchall()
     return {row[0] for row in rows}
-
 
 def _migrate_columns() -> None:
     """幂等补列：SQLite 与 PG 通用，失败仅告警不影响启动。"""
@@ -108,7 +104,6 @@ def _migrate_columns() -> None:
                 if source:
                     conn.execute(text(f"UPDATE {table} SET {name} = {source} WHERE {name} IS NULL"))
 
-
 def ensure_schema() -> None:
     """幂等建表 + 补列。"""
     from . import models  # noqa: F401  导入即注册表元数据
@@ -120,3 +115,4 @@ def ensure_schema() -> None:
         from .logging import get_logger
 
         get_logger("startup").warning("列迁移跳过：%s", exc)
+

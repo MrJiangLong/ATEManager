@@ -7,12 +7,15 @@ const state = reactive({
   checked: false,
 })
 
-// 会话恢复共享 Promise：整个页面生命周期只做一次 /auth/me 水合，
 // 路由守卫（首次导航早于组件挂载）与 App.vue 挂载共用同一请求，避免竞态与重复请求
 let refreshPromise = null
 
 export function useAuth() {
   const isLoggedIn = computed(() => Boolean(state.token) && Boolean(state.user))
+  const role = computed(() => state.user?.role || 'viewer')
+  const isAdmin = computed(() => role.value === 'admin')
+  // 产线操作（机台绑定/维修处置/强制解锁/中止会话）：operator 及以上
+  const canOperate = computed(() => role.value === 'operator' || role.value === 'admin')
 
   function refresh() {
     if (!state.token) {
@@ -27,7 +30,6 @@ export function useAuth() {
     refreshPromise = authApi
       .me()
       .then((res) => {
-        // 若期间 token 已变更（如用户重新登录），忽略旧请求的成功结果
         if (state.token !== tokenAtStart) return Boolean(state.token && state.user)
         state.user = res.data
         return true
@@ -46,8 +48,6 @@ export function useAuth() {
       })
       .finally(() => {
         state.checked = true
-        // 释放共享槽位：成功 / 失败后都允许后续调用重新水合（典型场景：401 清除凭证，
-        // 用户再次登录成功后再次调用 refresh；或临时网络错误恢复后想重新探测）
         refreshPromise = null
       })
     return refreshPromise
@@ -69,5 +69,5 @@ export function useAuth() {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return { state, isLoggedIn, refresh, login, logout }
+  return { state, isLoggedIn, role, isAdmin, canOperate, refresh, login, logout }
 }

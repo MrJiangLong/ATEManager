@@ -16,12 +16,10 @@ _FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-18s | %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S%z"
 _LEVEL = settings.LOG_LEVEL.upper()
 
-
 def _console_handler() -> logging.Handler:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
     return handler
-
 
 def _file_handler():
     log_path = Path(settings.LOG_FILE)
@@ -36,7 +34,6 @@ def _file_handler():
         print(f"[warn] 日志文件初始化失败({exc})，仅输出到控制台")
         return None
 
-
 def configure_logging() -> None:
     console = _console_handler()
     file = _file_handler()
@@ -50,12 +47,11 @@ def configure_logging() -> None:
             logger.addHandler(file)
         logger.propagate = False
 
-    # 压制第三方噪音
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
-
 
 def get_logger(name: str) -> logging.Logger:
     """获取应用命名空间下的 logger，如 get_logger('main')"""
     tag = name.replace("app.", "", 1)
     return logging.getLogger(f"app.{tag}")
+

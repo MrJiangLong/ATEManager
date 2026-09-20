@@ -61,15 +61,12 @@ RESULT_SKIP = "SKIP"
 
 DEFAULT_TIMEOUT_SEC = 1800
 
-
 def _timeout_of(db: Session, station_id: str) -> int:
     station = db.get(models.Station, station_id)
     return station.timeout_sec if station and station.timeout_sec else DEFAULT_TIMEOUT_SEC
 
-
 def _passed(product: models.ProductStatus) -> Set[str]:
     return set(_as_list(product.passed_stations))
-
 
 def _write_passed(product: models.ProductStatus, passed: Set[str], graph=None) -> None:
     """写入已盖章工位集合，并同步维护冗余列 is_completed（冗余理由见 models.ProductStatus）。
@@ -80,9 +77,7 @@ def _write_passed(product: models.ProductStatus, passed: Set[str], graph=None) -
     if graph is not None:
         product.is_completed = is_completed(graph, passed)
 
-
 # =====================================================================
-# 机台
 # =====================================================================
 def get_client(
     db: Session,
@@ -115,7 +110,6 @@ def get_client(
             client.app_version = app_version
     return client
 
-
 def touch_client(db: Session, client_id: str) -> Optional[models.StationClient]:
     """刷新机台在线时间。"""
     client = db.get(models.StationClient, client_id)
@@ -124,9 +118,7 @@ def touch_client(db: Session, client_id: str) -> Optional[models.StationClient]:
         db.commit()
     return client
 
-
 # =====================================================================
-# 在制品行锁
 # =====================================================================
 def _locked_product(db: Session, sn: str) -> Optional[models.ProductStatus]:
     """按 sn 取在制品并加行锁（PG: FOR UPDATE；SQLite 无行锁）。
@@ -140,7 +132,6 @@ def _locked_product(db: Session, sn: str) -> Optional[models.ProductStatus]:
         query = query.with_for_update()
     return query.first()
 
-
 def _release_lock(product: models.ProductStatus) -> None:
     """释放租约：清 token 与时间戳（testing_started_at 保留兼容既有查询）。"""
     product.testing_started_at = None
@@ -149,7 +140,6 @@ def _release_lock(product: models.ProductStatus) -> None:
     product.lock_last_seen_at = None
     product.lock_heartbeat_count = 0
 
-
 def _apply_fail(product: models.ProductStatus, reason: str) -> None:
     product.fail_count = (product.fail_count or 0) + 1
     if product.fail_count >= settings.FAIL_LIMIT:
@@ -157,19 +147,16 @@ def _apply_fail(product: models.ProductStatus, reason: str) -> None:
         product.locked_at = utcnow()
         product.locked_reason = reason
 
-
 # =====================================================================
 # 租约锁：失联 / 硬超时 / fencing
 # =====================================================================
 def new_lock_token() -> str:
     return uuid.uuid4().hex
 
-
 def lock_held_sec(product: models.ProductStatus) -> int:
     """锁已持有时长（自 lock_acquired_at 起）。"""
     base = product.lock_acquired_at or product.testing_started_at
     return max(0, round(elapsed_sec(base)))
-
 
 def lock_idle_sec(product: models.ProductStatus) -> int:
     """距上次心跳时长；无基线时返回 -1。"""
@@ -178,17 +165,14 @@ def lock_idle_sec(product: models.ProductStatus) -> int:
         return -1
     return max(0, round(elapsed_sec(base)))
 
-
 def is_lock_lost(product: models.ProductStatus) -> bool:
     """失联判定：心跳断流超过宽限窗口 → 锁可被接管（不计产品失败）。"""
     idle = lock_idle_sec(product)
     return idle >= 0 and idle > settings.LOCK_HEARTBEAT_GRACE_SEC
 
-
 def is_lock_expired(product: models.ProductStatus, timeout_sec: int) -> bool:
     """硬超时判定：自持锁开始计时，心跳不续期。"""
     return lock_held_sec(product) > timeout_sec
-
 
 def _claimed_rowcount(db: Session, statement) -> int:
     """执行抢占式 UPDATE，返回命中行数（0 = 抢锁失败）。
@@ -198,7 +182,6 @@ def _claimed_rowcount(db: Session, statement) -> int:
     """
     result = cast("CursorResult[Any]", db.execute(statement))
     return int(result.rowcount or 0)
-
 
 def _token_mismatch(product: models.ProductStatus, token: Optional[str]) -> bool:
     """fencing 校验：token 不匹配一律拒绝（不受 STRICT_LOCK_TOKEN 开关影响）。
@@ -215,15 +198,12 @@ def _token_mismatch(product: models.ProductStatus, token: Optional[str]) -> bool
         return settings.STRICT_LOCK_TOKEN
     return token != stored
 
-
 # =====================================================================
-# 测试会话（续测载体）
 # =====================================================================
 def _checkpoint_items(session: models.TestSession) -> List[dict]:
     payload = session.checkpoint if isinstance(session.checkpoint, dict) else {}
     items = payload.get("items") or []
     return [it for it in items if isinstance(it, dict)]
-
 
 def _completed_case_ids(session: models.TestSession) -> List[str]:
     """断点中已完成的用例ID清单（保序去重），下发给上位机用于跳过已跑用例。"""
@@ -233,7 +213,6 @@ def _completed_case_ids(session: models.TestSession) -> List[str]:
         if case_id and case_id not in case_ids:
             case_ids.append(str(case_id))
     return case_ids
-
 
 def _merge_into_checkpoint(session: models.TestSession, items: List[dict]) -> int:
     """按 case_id 去重覆盖合并，返回合并后总数。"""
@@ -255,7 +234,6 @@ def _merge_into_checkpoint(session: models.TestSession, items: List[dict]) -> in
     flag_modified(session, "checkpoint")
     return len(merged)
 
-
 def _close_session(
     session: models.TestSession,
     status: str,
@@ -266,7 +244,6 @@ def _close_session(
     session.end_reason = reason or None
     session.ended_by = ended_by
     session.ended_at = utcnow()
-
 
 def _running_session(
     db: Session, sn: str, station_id: str
@@ -281,7 +258,6 @@ def _running_session(
         .order_by(models.TestSession.started_at.desc())
         .first()
     )
-
 
 def _count_consecutive_lost(db: Session, sn: str, station_id: str) -> int:
     """统计最近连续的「失联终止」会话数（用于宽限 N 次后才计失败）。"""
@@ -304,12 +280,9 @@ def _count_consecutive_lost(db: Session, sn: str, station_id: str) -> int:
             break
     return count
 
-
 LOST_REASON_PREFIX = "client_lost"
 
-
 # =====================================================================
-# 进站：需求 2 跳站卡控
 # =====================================================================
 def check_in(
     db: Session,
@@ -321,7 +294,6 @@ def check_in(
     case_ids: Optional[List[str]] = None,
     resume_session_id: Optional[str] = None,
 ) -> schemas.CheckInData:
-    # 0) 机型 → 专属流程（先于工位解析：一台机台可绑定多个流程的不同工位）
     model_row = db.get(models.ProductModel, product_model)
     if model_row is None:
         raise forbidden(
@@ -332,11 +304,6 @@ def check_in(
     if graph is None:
         raise not_found("process_not_found", f"process_not_found: {model_row.process_id}")
 
-    # 0.5) 工位解析：绑定集合 ∩ 流程工位集
-    #   不同产品的工艺完全不同时，一台物理机台可为多个流程的不同工位提供服务；
-    #   解析出唯一工位后回写 client.station_id（当前操作工位，运行态字段），
-    #   后续心跳 / 断点匹配 / 释放沿用单工位逻辑，无需改动。多命中 = 配置歧义，
-    #   400 要求修正机台绑定。
     candidates = sorted(set(_as_list(client.bound_stations)) & set(graph.stations))
     if not candidates:
         raise forbidden(
@@ -352,7 +319,6 @@ def check_in(
     station_id = candidates[0]
     client.station_id = station_id
 
-    # 3) 取/建在制品（首工位动态建档）
     product = db.get(models.ProductStatus, sn)
     created = False
     if product is None:
@@ -383,7 +349,6 @@ def check_in(
             f"model_mismatch: {sn} is registered as {product.product_model}, got {product_model}",
         )
 
-    # 5) 固件基线校验（口径由机型的 fw_match_rule 决定：完全一致 / 不低于基线）
     rule = model_row.fw_match_rule or models.FW_RULE_EXACT
     fw_match = fw_matches(firmware, model_row.target_fw_version, rule)
     if not fw_match and settings.ENFORCE_FW:
@@ -398,7 +363,6 @@ def check_in(
         )
     product.current_fw_version = firmware
 
-    # 6) 状态闸门
     if product.current_status == models.STATUS_SCRAPPED:
         raise forbidden("product_scrapped", f"product_scrapped: {sn} has been scrapped")
     if product.current_status == models.STATUS_LOCKED:
@@ -411,7 +375,6 @@ def check_in(
 
     passed = _passed(product)
 
-    # 7) 复测拦截（已盖章工位严禁重测）
     if station_id in passed:
         raise conflict_error(
             "station_already_passed",
@@ -461,7 +424,6 @@ def check_in(
                     "grace_sec": settings.LOCK_HEARTBEAT_GRACE_SEC,
                 },
             )
-        # 原会话归档，供运维追溯"跑到哪崩的"
         previous = _running_session(db, sn, station_id)
         if previous is not None:
             _close_session(
@@ -473,7 +435,6 @@ def check_in(
         takeover = True
         takeover_from = product.current_client
 
-    # 11) 会话解析：显式 resume_session_id > 同机台自动续 > 新建
     session = None
     resume = schemas.ResumeInfo()
     if resume_session_id:
@@ -491,7 +452,6 @@ def check_in(
                 f"session_completed: {resume_session_id} already checked out",
             )
     elif not takeover:
-        # 同机台重进站（崩溃重启）自动续测，无需客户端显式携带
         session = _running_session(db, sn, station_id)
         if session is not None and session.client_id != client.client_id:
             session = None
@@ -528,7 +488,6 @@ def check_in(
     token = new_lock_token()
     now = utcnow()
 
-    # 原子抢占（CAS）：仅当锁状态仍是"判定时观察到的"才更新成功。
     # 行锁可能因方言/隔离级别失效（SQLite 无行锁），此 UPDATE 是并发安全的最后防线：
     # 并发的第二个事务会被第一个事务的写锁阻塞，待其提交后 WHERE 不再匹配 →
     # rowcount=0，返回 409，避免同一 SN 被两台机台同时持锁。
@@ -583,7 +542,6 @@ def check_in(
         takeover_from=takeover_from,
     )
 
-
 # =====================================================================
 # 保活（只刷新 last_seen，不续期硬超时）
 # =====================================================================
@@ -633,9 +591,7 @@ def heartbeat(
         session_id=session.session_id if session else None,
     )
 
-
 # =====================================================================
-# 断点上报（续测核心）
 # =====================================================================
 def save_checkpoint(
     db: Session,
@@ -659,7 +615,6 @@ def save_checkpoint(
         )
     if session.status == models.SESSION_COMPLETED:
         raise conflict_error("session_completed", f"session_completed: {session_id}")
-    # 运维中止会话（换测试用例清单前的"先停再换"）：在断点上报这一步就明确告知，
     # 上位机不必跑完全部用例才发现出站被拒，避免白跑一轮。
     if session.status == models.SESSION_ABORTED:
         raise conflict_error(
@@ -704,7 +659,6 @@ def save_checkpoint(
         server_time=now.isoformat(),
     )
 
-
 # =====================================================================
 # 释放锁：主动释放 / 强制解锁
 # =====================================================================
@@ -748,7 +702,6 @@ def release_lock(
         sn=sn, released=holding, session_id=session_id, server_time=utcnow().isoformat()
     )
 
-
 def force_release_lock(
     db: Session, *, sn: str, reason: str, operator: str
 ) -> schemas.ForceReleaseOut:
@@ -785,9 +738,7 @@ def force_release_lock(
         reason=reason,
     )
 
-
 # =====================================================================
-# 孤儿锁回收（后台任务）
 # =====================================================================
 def _running_session_of(db: Session, sn: str):
     """该 SN 当前处于 RUNNING 的最新会话（回收与接管都以此为准）。"""
@@ -800,7 +751,6 @@ def _running_session_of(db: Session, sn: str):
         .order_by(models.TestSession.started_at.desc())
         .first()
     )
-
 
 def sweep_orphan_locks(db: Session) -> dict:
     """回收失联/超时锁，无需等待他人抢锁。
@@ -816,9 +766,7 @@ def sweep_orphan_locks(db: Session) -> dict:
         .all()
     )
     for product in rows:
-        # rows 是本轮开始时的一次性快照。判定用的是快照里的 lock_acquired_at，
         # 若"判定"与"回收"之间该 SN 被其他机台接管，锁已被换发——此时继续回收
-        # 就会关掉别人刚建立的新会话并误计一次失败。故记录快照值用于下方 CAS 校验。
         observed_acquired = product.lock_acquired_at
 
         probe = _running_session_of(db, product.sn)
@@ -830,7 +778,6 @@ def sweep_orphan_locks(db: Session) -> dict:
         if not (expired or lost):
             continue
 
-        # 原子抢占回收权：仅当锁仍是"判定时的那把"（lock_acquired_at 未变）才生效。
         # 抢不到说明锁已被接管/重新进站，本轮直接跳过，交由下一轮或业务方处理。
         reclaim_stmt = (
             update(models.ProductStatus)
@@ -880,7 +827,6 @@ def sweep_orphan_locks(db: Session) -> dict:
     db.commit()
     return stats
 
-
 def _station_of_client(db: Session, product: models.ProductStatus) -> str:
     """current_client 绑定的工位；机台不存在或尚未绑定工位时返回空串。
 
@@ -894,9 +840,7 @@ def _station_of_client(db: Session, product: models.ProductStatus) -> str:
         return ""
     return client.station_id
 
-
 # =====================================================================
-# 出站：需求 1 落库闭环 ACK + 漏测拦截
 # =====================================================================
 def _find_by_checkout_id(db: Session, sn: str, station_id: str, checkout_id: str):
     """按 executed_items.checkout_id 回放既有记录（限近 200 条，重试场景足够）。"""
@@ -912,7 +856,6 @@ def _find_by_checkout_id(db: Session, sn: str, station_id: str, checkout_id: str
         if payload.get("checkout_id") == checkout_id:
             return record
     return None
-
 
 def check_out(
     db: Session,
@@ -938,7 +881,6 @@ def check_out(
     if replay is not None:
         return _ack(db, product, replay, checkout_id, replay=True)
 
-    # 2) 持锁校验
     if (
         product.current_status != models.STATUS_TESTING
         or product.current_client != client.client_id
@@ -984,7 +926,6 @@ def check_out(
             f"station_not_in_process: {station_id} is not configured for {product.product_model}",
         )
 
-    # 4) 续测合并：用 checkpoint 补齐本次未提交的用例（崩溃前已跑完的不算漏测）
     session = _running_session(db, sn, station_id)
     merged_items = list(items)
     checkpoint_merged_count = 0
@@ -999,7 +940,6 @@ def check_out(
             checkpoint_merged_count += 1
 
     # 5) 漏测拦截：必测用例ID必须被实际执行
-    #    未提交 / 被 SKIP  → 漏测，400 拦截
     #    已执行但判定 FAIL → 真实失败；必测 FAIL 计入 overall_result（见步骤 6）
     submitted = {it.get("case_id"): it for it in merged_items}
     required = mandatory_case_ids(graph, station_id)
@@ -1018,9 +958,6 @@ def check_out(
             data={"case_ids": absent},
         )
 
-    # 6) overall 判定：仅必测用例的 FAIL 判 FAIL，非必测（选做）用例只记录不判停。
-    #    选做用例常为探索/加测项，其失败不应阻塞流转、更不应触发连续失败锁定；
-    #    结果仍完整保留在 executed_items 里（台账/TopFailed 可见），只是不影响放行。
     mandatory_set = set(required)
     overall = (
         RESULT_FAIL
@@ -1031,7 +968,6 @@ def check_out(
         else RESULT_PASS
     )
 
-    # 6) 落库（executed_items 内携带 checkout_id，作为 ACK 凭据）
     record = models.TestRecord(
         sn=product.sn,
         station_id=station_id,
@@ -1052,7 +988,6 @@ def check_out(
     db.add(record)
     db.flush()
 
-    # 7) 盖章与状态推进
     if session is not None:
         _close_session(session, models.SESSION_COMPLETED, reason or "checked out")
     passed = _passed(product)
@@ -1069,7 +1004,6 @@ def check_out(
     db.commit()
 
     return _ack(db, product, record, checkout_id, replay=False)
-
 
 def _ack(
     db: Session,
@@ -1105,9 +1039,7 @@ def _ack(
         server_time=utcnow().isoformat(),
     )
 
-
 # =====================================================================
-# 维修处置：RETEST / ROLLBACK / RESET / SCRAP
 # =====================================================================
 def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> int:
     if not station_ids:
@@ -1124,7 +1056,6 @@ def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> int:
     for row in rows:
         row.is_valid = False
     return len(rows)
-
 
 def apply_repair(
     db: Session,
@@ -1177,7 +1108,7 @@ def apply_repair(
                     "station_not_passed",
                     f"station_not_passed: {sn} has not passed {target_station}",
                 )
-        else:  # ROLLBACK：回退目标工位及其之后的所有工步
+        else:
             base_order = graph.step_of.get(target_station, 0) if graph else 0
             revoked = {
                 s for s in passed
@@ -1195,7 +1126,7 @@ def apply_repair(
         product.locked_reason = None
         if product.fail_count:
             product.fail_count = 0
-    else:  # pragma: no cover - schema 层已校验
+    else:
         raise bad_request("invalid_repair_action", f"invalid_repair_action: {repair_action}")
 
     product.updated_at = utcnow()
@@ -1209,3 +1140,4 @@ def apply_repair(
     db.add(repair)
     db.commit()
     return product, repair
+

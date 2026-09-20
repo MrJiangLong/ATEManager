@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import Layout from '../layout/Layout.vue'
-// useAuth() 只能在导航守卫内部调用：在模块顶层调用会早于 app.use(router)，
 // 从而冻结一个过期的 store 引用
 import { useAuth } from '../stores/auth'
 import { applyRouteTitle } from '../utils/title'
@@ -67,7 +66,13 @@ const router = createRouter({
           path: 'configs',
           name: 'RouteConfig',
           component: () => import('../views/RouteConfig.vue'),
-          meta: { titleKey: 'menu.configs' },
+          meta: { titleKey: 'menu.configs', roles: ['admin'] },
+        },
+        {
+          path: 'users',
+          name: 'Users',
+          component: () => import('../views/Users.vue'),
+          meta: { titleKey: 'menu.users', roles: ['admin'] },
         },
       ],
     },
@@ -75,7 +80,6 @@ const router = createRouter({
   ],
 })
 
-// 管理端所有页面均需登录；未登录跳转登录页并携带回跳地址
 router.beforeEach(async (to) => {
   if (to.meta.public) return
   const { state, isLoggedIn, refresh } = useAuth()
@@ -85,6 +89,10 @@ router.beforeEach(async (to) => {
   if (!isLoggedIn.value) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
+  // 页面级角色守卫（按钮显隐只是体验层，真正的边界在后端 require_role）
+  if (to.meta.roles && !to.meta.roles.includes(state.user?.role)) {
+    return { path: '/dashboard' }
+  }
 })
 
 router.afterEach((to) => {
@@ -92,3 +100,4 @@ router.afterEach((to) => {
 })
 
 export default router
+

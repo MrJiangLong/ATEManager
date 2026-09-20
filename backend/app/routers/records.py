@@ -16,7 +16,6 @@ from ..services.views import build_product_out
 
 router = APIRouter(prefix="/api/admin/records", tags=["admin-台账追溯"])
 
-
 def _parse_date(value: str, field: str):
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
@@ -24,7 +23,6 @@ def _parse_date(value: str, field: str):
         raise bad_request(
             "invalid_date_format", f"invalid_date_format: {field} should be YYYY-MM-DD, got {value}"
         ) from None
-
 
 @router.get("", response_model=schemas.RecordPageOut, summary="测试记录清单(多条件分页)")
 def list_records(
@@ -60,7 +58,6 @@ def list_records(
             .all()
         ]
         query = query.filter(models.TestRecord.sn.in_(sns or [""]))
-    # 日期筛选用本地自然日（与看板日界一致），而非 UTC 日界
     if date_from:
         query = query.filter(
             models.TestRecord.created_at
@@ -82,11 +79,9 @@ def list_records(
     items = [schemas.RecordOut.model_validate(r) for r in rows]
     return schemas.RecordPageOut(total=total, page=page, page_size=page_size, items=items)
 
-
 @router.get("/{record_id}", response_model=schemas.RecordOut, summary="记录详情(含用例ID执行快照)")
 def get_record(record_id: int, db: Session = Depends(get_db), user=Depends(current_user)):
     return get_or_404(db, models.TestRecord, record_id, "record")
-
 
 @router.get("/trace/{sn}", response_model=schemas.TraceOut, summary="SN 全生命周期追溯")
 def trace_sn(sn: str, db: Session = Depends(get_db), user=Depends(current_user)):
@@ -137,3 +132,4 @@ def trace_sn(sn: str, db: Session = Depends(get_db), user=Depends(current_user))
         records=[schemas.RecordOut.model_validate(r) for r in records],
         repairs=[schemas.RepairOut.model_validate(r) for r in repairs],
     )
+

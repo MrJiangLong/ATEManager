@@ -14,7 +14,7 @@
       <el-select v-model="filters.status" clearable :placeholder="$t('sessions.filterStatus')" style="width: 140px">
         <el-option v-for="s in SESSION_STATUS_LIST" :key="s" :value="s" :label="$t(`sessionStatus.${s}`)" />
       </el-select>
-      <!-- 异常终止 / 失联是跨状态的视图，独立成一个筛选项；清空即「全部」 -->
+      
       <el-select v-model="filters.view" clearable :placeholder="$t('sessions.filterView')" style="width: 150px">
         <el-option value="abnormal" :label="$t('sessions.abnormalOnly')" />
         <el-option value="zombie" :label="$t('sessions.zombieOnly')" />
@@ -93,7 +93,7 @@
               {{ row.end_reason ? $t('sessions.viewReason') : $t('sessions.viewDetail') }}
             </el-button>
             <el-button
-              v-if="row.status === 'RUNNING'"
+              v-if="canOperate && row.status === 'RUNNING'"
               link
               type="danger"
               size="small"
@@ -131,6 +131,7 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, SwitchButton, View } from '@element-plus/icons-vue'
@@ -145,6 +146,7 @@ import { LOCK_GRACE_SEC, SESSION_STATUS_LIST } from '../utils/constants'
 import { attemptTipText, fmtDateTime, fmtRelative, sessionTagType } from '../utils/format'
 
 const { t } = useI18n()
+const { canOperate } = useAuth()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
 
@@ -169,7 +171,6 @@ async function load() {
   loading.value = true
   try {
     if (filters.view === 'zombie') {
-      // 失联锁走专用端点
       const res = await sessionApi.zombieLocks({ page: page.value, page_size: pageSize.value })
       items.value = res.data.items
       total.value = res.data.total
@@ -338,3 +339,4 @@ usePolling(async () => {
   50% { opacity: 0.35; }
 }
 </style>
+

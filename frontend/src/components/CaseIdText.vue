@@ -1,5 +1,5 @@
 <template>
-  <!-- 列宽不足时只压缩前半段；方法名与参数化后缀（区分度最高的部分）始终完整可见 -->
+  
   <span class="code case-id">
     <span class="case-id-head">{{ head }}</span><span class="case-id-tail">{{ tail }}</span>
   </span>
@@ -13,7 +13,6 @@ const props = defineProps({
 })
 
 // 以最后一个 :: 为界：之前是路径与类名（可压缩），之后是方法名（必须保留）。
-// 若按固定字符数截断，同类用例会被截成一模一样、参数化后缀也丢失。
 const splitAt = computed(() => String(props.value ?? '').lastIndexOf('::'))
 const head = computed(() => (splitAt.value < 0 ? '' : props.value.slice(0, splitAt.value + 2)))
 const tail = computed(() => (splitAt.value < 0 ? props.value : props.value.slice(splitAt.value + 2)))
@@ -38,3 +37,4 @@ const tail = computed(() => (splitAt.value < 0 ? props.value : props.value.slice
   white-space: nowrap;
 }
 </style>
+

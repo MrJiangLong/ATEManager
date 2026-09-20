@@ -44,9 +44,6 @@ const formRef = ref()
 const saving = ref(false)
 const form = reactive({ current_password: '', new_password: '', confirm_password: '' })
 
-// Reset form when the dialog closes. destroy-on-close only unmounts the DOM;
-// the reactive `form` lives in setup scope and would otherwise leak previous
-// values into the next open.
 function resetForm() {
   form.current_password = ''
   form.new_password = ''
@@ -102,3 +99,4 @@ async function submit() {
   }
 }
 </script>
+

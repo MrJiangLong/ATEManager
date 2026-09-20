@@ -69,13 +69,10 @@ __all__ = [
 LOGGER = logging.getLogger("ate.client")
 LOGGER.addHandler(logging.NullHandler())
 
-# 绕过系统代理（http_proxy/HTTP_PROXY 环境变量）：SDK 直连产线内网服务端，
-# 走代理会被劫持/拦截——代理返回的 5xx 会被误判为"服务端故障可重试"，
 # 返回的 4xx 更会掩盖真实网络拓扑。产线直连语义下代理只有坏处。
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # ---------------------------------------------------------------------
-# 常量：与服务端 errors.py / models.py 保持一致
 # ---------------------------------------------------------------------
 APP_VERSION = "ate-client/1.0"
 DEFAULT_TIMEOUT = 15.0
@@ -85,7 +82,6 @@ RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
 RESULT_SKIP = "SKIP"
 
-# rep.outcome（pytest） → 服务端 result 枚举
 OUTCOME_MAP = {"passed": RESULT_PASS, "failed": RESULT_FAIL, "skipped": RESULT_SKIP, "error": RESULT_FAIL}
 
 # 网络抖动时本地最多缓存多少条未上报断点（防止长时间断网把内存/磁盘写满）
@@ -95,20 +91,17 @@ MAX_PENDING_ITEMS = 500
 FATAL_LOCK_CODES = ("lock_invalid", "lock_expired")
 # 防呆拦截：重试无意义，必须人工介入
 GATE_CODES = (
-    # 工艺/流程不匹配
     "missing_prereq",
     "station_already_passed",
     "station_not_in_process",
     "station_ambiguous",
     "case_id_mismatch",
     "missing_mandatory",
-    # 被测件身份与状态
     "model_mismatch",
     "model_not_registered",
     "firmware_mismatch",
     "product_locked",
     "product_scrapped",
-    # 机台侧配置缺失：同样只能由运维处理，重试没有意义
     "client_not_bound",
     "client_not_registered",
 )
@@ -121,9 +114,7 @@ CAL_PARAM_CASES = [
     "tests/test_cal_param.py::TestFastEdge::test_fast_edge_1m",
 ]
 
-
 # ---------------------------------------------------------------------
-# 异常
 # ---------------------------------------------------------------------
 class ApiError(Exception):
     """服务端统一响应包异常（EnvelopeOut）以及网络故障的统一封装。
@@ -180,9 +171,7 @@ class ApiError(Exception):
         value = (self.data or {}).get("lock_idle_sec")
         return int(value) if isinstance(value, (int, float)) else None
 
-
 # ---------------------------------------------------------------------
-# HTTP
 # ---------------------------------------------------------------------
 class HttpClient:
     """最小 HTTP 客户端（urllib，零第三方依赖）。
@@ -205,7 +194,6 @@ class HttpClient:
         self.retries = max(0, retries)
         self.token = token
 
-    # 统一出口：返回完整 EnvelopeOut 字典
     def request(
         self,
         method: str,
@@ -261,13 +249,11 @@ class HttpClient:
         """取响应包的 data 段；服务层保证 ok=true 时 data 必然存在。"""
         return self.request(method, path, **kw).get("data") or {}
 
-
 def _decode_json(raw: bytes) -> dict:
     try:
         return json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
         raise ApiError(0, "invalid_response", f"响应不是合法 JSON：{exc}") from exc
-
 
 def _safe_decode(raw: bytes) -> dict:
     try:
@@ -275,14 +261,11 @@ def _safe_decode(raw: bytes) -> dict:
     except Exception:
         return {}
 
-
 # ---------------------------------------------------------------------
-# 与 pytest / 真实工程的衔接
 # ---------------------------------------------------------------------
 def map_outcome(outcome: str) -> str:
     """pytest `rep.outcome` → 服务端 result 枚举（未知一律按 SKIP，避免漏测误判为通过）。"""
     return OUTCOME_MAP.get((outcome or "").strip().lower(), RESULT_SKIP)
-
 
 def identity_from_report(report: dict) -> Tuple[str, str, str]:
     """从 `*IDN?` 解析出的 report 字典里取 (sn, model, firmware)。"""
@@ -291,7 +274,6 @@ def identity_from_report(report: dict) -> Tuple[str, str, str]:
         (report.get("model") or "").strip(),
         (report.get("version") or "").strip(),
     )
-
 
 def to_ate_items(report_data: Sequence[dict]) -> List[dict]:
     """把 conftest 中 `pytest_runtest_makereport` 收集到的列表转成出站 items。
@@ -313,9 +295,7 @@ def to_ate_items(report_data: Sequence[dict]) -> List[dict]:
         )
     return items
 
-
 # ---------------------------------------------------------------------
-# 会话状态（崩溃后靠它续测）
 # ---------------------------------------------------------------------
 @dataclass
 class SessionState:
@@ -353,7 +333,6 @@ class SessionState:
             return cls(**{k: v for k, v in raw.items() if k in known})
         except TypeError:
             return None
-
 
 class HeartbeatThread(threading.Thread):
     """后台保活：按服务端下发的间隔刷新 `lock_last_seen_at`。
@@ -402,9 +381,7 @@ class HeartbeatThread(threading.Thread):
         if self.is_alive():
             self.join(timeout=timeout)
 
-
 # ---------------------------------------------------------------------
-# SDK
 # ---------------------------------------------------------------------
 class AteClient:
     """通道一客户端：`/api/v1/*`，X-API-Key 鉴权。
@@ -587,7 +564,6 @@ class AteClient:
         except ApiError as exc:
             if exc.is_lock_invalid:
                 raise
-            # 断网/5xx：本地缓存，不阻断测试
             self.state.pending_items = buffered
             self._persist()
             LOGGER.warning("断点上报失败（%s），已缓存 %d 条待补传", exc.code, len(buffered))
@@ -705,7 +681,6 @@ class AteClient:
             except OSError:
                 pass
 
-
 def admin_login(base_url: str, username: str, password: str) -> str:
     """通道二登录，返回 JWT（供 force-release 等运维接口使用）。"""
     data = json.dumps({"username": username, "password": password}).encode("utf-8")
@@ -714,13 +689,11 @@ def admin_login(base_url: str, username: str, password: str) -> str:
     with _OPENER.open(req, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8"))["access_token"]
 
-
 # ---------------------------------------------------------------------
 # 演示（假用例，仅用于验证服务端契约）
 # ---------------------------------------------------------------------
 class SimulatedCrash(Exception):
     """模拟上位机进程崩溃：不发 release、不 check-out，锁遗留在服务端。"""
-
 
 def fake_run_case(case_id: str, fail: bool = False) -> dict:
     return {
@@ -730,7 +703,6 @@ def fake_run_case(case_id: str, fail: bool = False) -> dict:
         "duration_ms": 1500,
         "message": "测量值超差" if fail else None,
     }
-
 
 def run_station(
     cli: AteClient,
@@ -748,7 +720,7 @@ def run_station(
     try:
         for case_id in case_ids:
             if case_id in done:
-                continue  # 崩溃续测：跳过崩溃前已跑完的
+                continue
             cli.checkpoint([fake_run_case(case_id)], cursor={"step": len(done) + 1})
             done.append(case_id)
             executed.append(case_id)
@@ -764,14 +736,12 @@ def run_station(
         raise
     return cli.check_out([fake_run_case(c) for c in executed], duration_ms=len(executed) * 1500)
 
-
 def demo_normal(cli: AteClient, sn: str, model: str, firmware: str) -> None:
     print(f"\n=== 场景 1：正常全流程（SN={sn}）===", flush=True)
     station = cli.resolve().get("station_id")
     print(f"  机台 {cli.client_id} 绑定工位：{station}", flush=True)
     run_station(cli, sn=sn, model=model, firmware=firmware, case_ids=CAL_PARAM_CASES)
     print("  OK 出站成功，锁已释放", flush=True)
-
 
 def demo_gate(base_url: str, api_key: str, sn: str, model: str, firmware: str) -> None:
     """需求 2：跳站卡控——未做前工序，直接进第二站应被 403 拦截。"""
@@ -809,7 +779,6 @@ def demo_gate(base_url: str, api_key: str, sn: str, model: str, firmware: str) -
         first.stop_heartbeat()
         second.stop_heartbeat()
 
-
 def demo_resume(base_url: str, api_key: str, sn: str, model: str, firmware: str, state_file: Path) -> None:
     """崩溃 → 重启 → 断点续测（attempt+1，跳过已完成用例）。"""
     print(f"\n=== 场景 3：崩溃 → 断点续测（SN={sn}）===", flush=True)
@@ -832,7 +801,6 @@ def demo_resume(base_url: str, api_key: str, sn: str, model: str, firmware: str,
         )
     finally:
         restarted.stop_heartbeat()
-
 
 def demo_takeover(
     cli: AteClient, sn: str, model: str, firmware: str, backup_client_id: str
@@ -867,7 +835,6 @@ def demo_takeover(
     except ApiError as exc:
         print(f"  OK 已拒绝：{exc.code} —— 数据未被污染", flush=True)
 
-
 def demo_sweep(cli: AteClient, sn: str, model: str, firmware: str) -> None:
     """孤儿锁回收：持锁后不发心跳，等待服务端 Sweeper 自动释放。"""
     print(f"\n=== 场景 5：孤儿锁回收（SN={sn}）===", flush=True)
@@ -876,9 +843,7 @@ def demo_sweep(cli: AteClient, sn: str, model: str, firmware: str) -> None:
     print("  可在 Web 端「测试会话 → 僵尸锁」观察，或查询 GET /api/admin/sessions/zombie-locks", flush=True)
     cli.stop_heartbeat()
 
-
 # ---------------------------------------------------------------------
-# CLI
 # ---------------------------------------------------------------------
 def _force_utf8_console() -> None:
     """Windows 控制台默认 GBK，打印中文/符号会抛 UnicodeEncodeError，需自适应。"""
@@ -889,7 +854,6 @@ def _force_utf8_console() -> None:
                 reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -916,7 +880,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="演示场景（默认 demo）",
     )
     return parser
-
 
 def main() -> int:
     _force_utf8_console()
@@ -968,6 +931,6 @@ def main() -> int:
         cli.stop_heartbeat()
     return 0
 
-
 if __name__ == "__main__":
     sys.exit(main())
+

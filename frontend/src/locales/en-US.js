@@ -8,20 +8,45 @@ export default {
     systemVersion: 'System Version',
     langZh: '简体中文',
     langEn: 'English',
-    roleAdmin: 'Administrator',
-    roleUser: 'Operator',
   },
 
   menu: {
     dashboard: 'Dashboard',
     products: 'Products',
-    // Trace is a deep-link page (no sidebar entry); used for header title and document.title
     trace: 'SN Trace',
     records: 'Events',
     repairs: 'Repair',
     clients: 'Stations',
     sessions: 'Sessions',
     configs: 'Process',
+    users: 'Users',
+  },
+
+  users: {
+    username: 'Username',
+    usernamePh: 'e.g. jsmith',
+    roleRequired: 'Select a role first',
+    fullName: 'Full name',
+    fullNamePh: 'Optional',
+    role: 'Role',
+    roles: { viewer: 'Viewer', operator: 'Operator', admin: 'Admin' },
+    roleTag: {
+      viewer: 'Read-only',
+      operator: 'Shopfloor ops',
+      admin: 'Full access',
+    },
+    status: 'Status',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    createdAt: 'Created at',
+    password: 'Initial password',
+    passwordPh: 'At least 6 chars',
+    resetPwd: 'Reset password',
+    resetPwdPh: 'Leave empty to keep current',
+    createTitle: 'Create user',
+    editTitle: 'Edit user',
+    invalidInput: 'Username required, password at least 6 chars',
+    deleteConfirm: 'Delete user {name}?',
   },
 
   sessionStatus: {
@@ -51,6 +76,8 @@ export default {
     action: 'Action',
     status: 'Status',
     enabled: 'Enabled',
+    saved: 'Saved',
+    deleted: 'Deleted',
     result: 'Result',
     noData: 'No data',
     yesDeleteItem: 'Delete this test item? This cannot be undone.',
@@ -67,7 +94,6 @@ export default {
     usernamePlaceholder: 'Enter username',
     passwordPlaceholder: 'Enter password',
     loggingIn: 'Signing in…',
-    // Left brand panel of the login page (form on the right)
     brandSub: 'WIP, Routing & Yield Analytics',
     brandFooter: 'UNI-TREND TECHNOLOGY CO. ATE MANAGER',
     feature1: 'Case Guard · Strict Check',
@@ -390,7 +416,6 @@ export default {
     editStation: 'Edit Station',
     yesDeleteStation: 'Delete station "{name}"?',
 
-
     stepOrder: 'Step Order',
     dependsOn: 'Depends On',
     itemCount: 'Items',
@@ -467,3 +492,4 @@ export default {
     loadFailed: 'Failed to load',
   },
 }
+

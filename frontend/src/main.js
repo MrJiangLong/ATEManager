@@ -14,7 +14,6 @@ import './styles/index.css'
 const app = createApp(App)
 
 setUnauthorizedHandler(() => {
-  // Don't show session expired if already on login page (e.g., old token validation on App mount)
   if (router.currentRoute.value.path.startsWith('/login')) {
     return
   }
@@ -27,9 +26,9 @@ setUnauthorizedHandler(() => {
 app.use(router)
 app.use(i18n)
 app.use(ElementPlus)
-// 全局注册只让模板里的 <el-icon><Xxx /></el-icon> 生效；:icon="Xxx" 绑定仍需显式导入
 for (const [name, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(name, component)
 }
 
 app.mount('#app')
+

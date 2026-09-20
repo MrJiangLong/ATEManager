@@ -10,7 +10,7 @@
         </el-select>
         <el-button :icon="RefreshRight" size="small" @click="loadItems">{{ t('common.refresh') }}</el-button>
       </div>
-      <el-button type="primary" size="small" :icon="Plus" :disabled="!processId" @click="openCreate">
+      <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" :disabled="!processId" @click="openCreate">
         {{ t('configs.newItem') }}
       </el-button>
     </div>
@@ -43,8 +43,8 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button v-if="isAdmin" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -103,6 +103,7 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
@@ -112,6 +113,7 @@ import { useProcesses } from '../../composables/useProcesses'
 import CaseIdText from '../../components/CaseIdText.vue'
 
 const { t } = useI18n()
+const { isAdmin } = useAuth()
 const { processes, stations, loadProcesses } = useProcesses()
 
 const processId = ref('')

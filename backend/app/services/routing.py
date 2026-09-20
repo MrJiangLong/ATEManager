@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..errors import not_found
 
-
 def _as_list(value) -> List[str]:
     """数组列归一化（SQLite 存 JSON，PG 存 TEXT[]）。"""
     if value is None:
@@ -20,18 +19,16 @@ def _as_list(value) -> List[str]:
         return [value] if value else []
     return list(value)
 
-
 class ProcessGraph(NamedTuple):
     """一次流程装载的内存视图：进站/出站全程复用，避免重复查库。"""
 
     process_id: str
-    stations: List[str]  # 按 step_order 升序
+    stations: List[str]
     step_of: Dict[str, int]
-    deps_of: Dict[str, List[str]]  # 已过滤为流程内存在的工位
+    deps_of: Dict[str, List[str]]
     timeout_of: Dict[str, int]
     name_of: Dict[str, str]
-    items_of: Dict[str, List[models.StationItem]]  # is_active 的测试项
-
+    items_of: Dict[str, List[models.StationItem]]
 
 def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
     """装载流程拓扑。流程不存在或无任何工步时返回 None。"""
@@ -85,11 +82,9 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
         items_of=items_of,
     )
 
-
 def missing_prereq(graph: ProcessGraph, station_id: str, passed: Set[str]) -> List[str]:
     """未满足的前置工步（防跳站闸门）。"""
     return [d for d in graph.deps_of.get(station_id, []) if d not in passed]
-
 
 def next_stations(graph: ProcessGraph, passed: Set[str]) -> List[schemas.NextStation]:
     """前置已满足且尚未盖章的可进站工位。"""
@@ -108,11 +103,9 @@ def next_stations(graph: ProcessGraph, passed: Set[str]) -> List[schemas.NextSta
         )
     return result
 
-
 def mandatory_case_ids(graph: ProcessGraph, station_id: str) -> List[str]:
     """该工位必测的用例ID清单（is_active AND is_mandatory）。"""
     return [i.case_id for i in graph.items_of.get(station_id, []) if i.is_mandatory]
-
 
 def station_rules(graph: ProcessGraph, station_id: str) -> List[schemas.StationRule]:
     return [
@@ -124,13 +117,10 @@ def station_rules(graph: ProcessGraph, station_id: str) -> List[schemas.StationR
         for i in graph.items_of.get(station_id, [])
     ]
 
-
 def is_completed(graph: ProcessGraph, passed: Set[str]) -> bool:
     return bool(graph.stations) and set(graph.stations).issubset(passed)
 
-
 # ---------------------------------------------------------------------
-# DAG 校验
 # ---------------------------------------------------------------------
 def _find_cycle(deps_of: Dict[str, List[str]]) -> Optional[List[str]]:
     """DFS 三色标记，返回首个环路径（闭合）或 None。"""
@@ -161,7 +151,6 @@ def _find_cycle(deps_of: Dict[str, List[str]]) -> Optional[List[str]]:
                 return cycle
     return None
 
-
 def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     """校验流程拓扑：悬空依赖、成环、工步无测试项、step_order 重复、不可达工位。"""
     process = db.get(models.Process, process_id)
@@ -187,7 +176,6 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     for s in steps:
         step_values.setdefault(s.step_order, []).append(s.station_id)
 
-    # step_order 重复
     for order, stations in sorted(step_values.items()):
         if len(stations) > 1:
             issues.append(
@@ -223,7 +211,6 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
                     )
                 )
 
-    # 成环
     deps_of = {s.station_id: [d for d in _as_list(s.depends_on) if d in defined] for s in steps}
     cycle = _find_cycle(deps_of)
     if cycle:
@@ -231,7 +218,6 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
             schemas.ValidateIssue(level="error", code="config_cycle", detail=" -> ".join(cycle))
         )
 
-    # 工位是否在字典中登记
     known = {
         st.station_id
         for st in db.query(models.Station).filter(models.Station.station_id.in_(defined)).all()
@@ -241,7 +227,6 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
             schemas.ValidateIssue(level="error", code="station_undefined", detail=station_id)
         )
 
-    # 工步测试项
     items = (
         db.query(models.StationItem)
         .filter(models.StationItem.process_id == process_id)
@@ -269,9 +254,7 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     ok = not any(i.level == "error" for i in issues)
     return schemas.ValidateOut(process_id=process_id, ok=ok, issues=issues)
 
-
 # ---------------------------------------------------------------------
-# 概览与拓扑视图
 # ---------------------------------------------------------------------
 def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
     """流程清单 + 机型数 / 工位数 / 测试项数。"""
@@ -307,7 +290,6 @@ def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
         )
     return result
 
-
 def station_item_summary(db: Session, process_id: str) -> Dict[str, int]:
     """{station_id: 生效测试项数}。"""
     rows = (
@@ -322,7 +304,6 @@ def station_item_summary(db: Session, process_id: str) -> Dict[str, int]:
     for row in rows:
         summary[row.station_id] = summary.get(row.station_id, 0) + 1
     return summary
-
 
 def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
     """拓扑视图：工步 + 测试项，供前端一屏展示。"""
@@ -366,3 +347,4 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
         ],
         items=[schemas.StationItemOut.model_validate(i) for i in items],
     )
+

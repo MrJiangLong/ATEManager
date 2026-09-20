@@ -48,6 +48,7 @@ with SessionLocal() as db:
             username="admin",
             password_hash=hash_password("admin123"),
             full_name="Test Admin",
+            role="admin",
         )
     )
     db.commit()
@@ -78,7 +79,6 @@ CLIENTS = {
     "TST-IFACE": "SZ-L1-TST-02",
     "TST-AWG": "SZ-L1-TST-03",
 }
-# MSO 6 站 / DPO 4 站（物理剔除 AWG）
 MSO_TOPOLOGY = [
     ("CAL-PARAM", 10, []),
     ("CAL-IFACE", 20, ["CAL-PARAM"]),
@@ -102,18 +102,15 @@ ITEMS = {
     "TST-AWG": ["test_aux_chk", "test_afg_sine_osc"],
 }
 
-# MSO 流程生效的用例ID总数（CAL-PARAM 2 + CAL-IFACE 2 + CAL-AWG 1 + TST-PARAM 2 + TST-IFACE 2 + TST-AWG 2）
 MSO_ITEM_COUNT = sum(len(v) for v in ITEMS.values())
 
 API_KEY = "test-api-key-12345"
 _TOKEN = None
 
-
 # ---------------- 工具 ----------------
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
-
 
 def api(method, path, body=None, token=None, api_key=None, headers=None, params=None):
     h = {}
@@ -125,10 +122,8 @@ def api(method, path, body=None, token=None, api_key=None, headers=None, params=
         h.update(headers)
     return client.request(method, path, json=body, headers=h, params=params)
 
-
 def v1(action, payload, method="POST"):
     return api(method, f"/api/v1/client/{action}", body=payload, api_key=API_KEY)
-
 
 def token() -> str:
     global _TOKEN
@@ -138,17 +133,13 @@ def token() -> str:
         _TOKEN = resp.json()["access_token"]
     return _TOKEN
 
-
 def admin(method, path, body=None, params=None):
     return api(method, path, body=body, token=token(), params=params)
-
 
 def new_sn(tag):
     return f"SN-{STAMP}-{tag}"
 
-
 _CLIENT_SEQ = itertools.count(1)
-
 
 def new_client_id(stage: str = "CAL") -> str:
     """合规且唯一的机台编号（README 7.2）。
@@ -156,7 +147,6 @@ def new_client_id(stage: str = "CAL") -> str:
     测试专用 L9 产线，避免与夹具 CLIENTS 占用的 L1 序号冲突。
     """
     return f"SZ-L9-{stage}-{next(_CLIENT_SEQ):02d}"
-
 
 def checkin(station, sn, model=M_DPO, firmware=FW, case_ids=None):
     return v1(
@@ -170,11 +160,9 @@ def checkin(station, sn, model=M_DPO, firmware=FW, case_ids=None):
         },
     )
 
-
 def rules_of(resp) -> list:
     """进站下发的用例ID规则清单。"""
     return [r["case_id"] for r in resp.json()["data"]["rules"]]
-
 
 def items_for(case_ids, fail=(), skip=()):
     return [
@@ -186,7 +174,6 @@ def items_for(case_ids, fail=(), skip=()):
         }
         for c in case_ids
     ]
-
 
 def checkout(station, sn, case_ids, checkout_id=None, fail=(), skip=(), lock_token=None):
     return v1(
@@ -201,7 +188,6 @@ def checkout(station, sn, case_ids, checkout_id=None, fail=(), skip=(), lock_tok
         },
     )
 
-
 def pass_station(station, sn, model=M_DPO):
     """完成一次合法进站 → 出站。"""
     resp = checkin(station, sn, model)
@@ -211,12 +197,10 @@ def pass_station(station, sn, model=M_DPO):
     check(resp.status_code == 201, f"check-out {station}: {resp.status_code} {resp.text}")
     return resp
 
-
 # ================= A. 静态规则 =================
 def test_health():
     resp = api("GET", "/api/health")
     check(resp.status_code == 200 and resp.json()["status"] == "ok", f"health: {resp.text}")
-
 
 def test_masters_seed():
     for pid, name in ((P_MSO, "MSO 带AWG流程"), (P_DPO, "DPO 无AWG流程")):
@@ -245,7 +229,6 @@ def test_masters_seed():
         )
         check(resp.status_code == 201, f"create client {cid}: {resp.text}")
 
-
 def test_topology_and_items():
     for pid, topology in ((P_MSO, MSO_TOPOLOGY), (P_DPO, DPO_TOPOLOGY)):
         payload = [
@@ -272,13 +255,11 @@ def test_topology_and_items():
                 )
                 check(resp.status_code == 201, f"create item {pid}/{sid}/{case_id}: {resp.text}")
 
-
 def test_validate_ok_and_cycle():
     for pid in (P_MSO, P_DPO):
         resp = admin("GET", "/api/admin/routing/validate", params={"process_id": pid})
         check(resp.status_code == 200 and resp.json()["ok"] is True, f"validate {pid}: {resp.text}")
 
-    # 人为制造成环
     bad = f"PROC-TEST-BAD-{STAMP}"
     admin("POST", "/api/admin/processes", {"process_id": bad, "process_name": "cycle demo"})
     admin("POST", "/api/admin/stations", {"station_id": "TST-CYCLE1", "station_name": "TST-CYCLE1"})
@@ -287,7 +268,6 @@ def test_validate_ok_and_cycle():
         {"station_id": "TST-CYCLE1", "step_order": 10, "depends_on": ["TST-CYCLE2"]},
         {"station_id": "TST-CYCLE2", "step_order": 20, "depends_on": ["TST-CYCLE1"]},
     ]
-    # 保存前校验会拦下成环拓扑
     resp = admin("PUT", "/api/admin/routing/stations", cycle, params={"process_id": bad})
     check(
         resp.status_code == 409 and resp.json()["code"] == "topology_invalid",
@@ -305,7 +285,6 @@ def test_validate_ok_and_cycle():
     codes = [i["code"] for i in resp.json()["issues"]]
     check("config_cycle" in codes and "station_no_item" in codes, f"issue codes: {codes}")
 
-
 def test_delete_guards():
     resp = admin("DELETE", f"/api/admin/processes/{P_MSO}")
     check(resp.status_code == 409 and "process_has_models" in resp.json()["code"], f"process guard: {resp.text}")
@@ -322,12 +301,10 @@ def test_delete_guards():
     )
     check(resp.status_code == 201, f"model recreate: {resp.text}")
 
-    # 存在在制品时拒绝删除
     sn = new_sn("GUARD")
     pass_station("CAL-PARAM", sn)
     resp = admin("DELETE", f"/api/admin/product-models/{M_DPO}")
     check(resp.status_code == 409 and resp.json()["code"] == "model_in_use", f"model guard: {resp.text}")
-
 
 def test_station_item_guards():
     """station_items 无外键级联，只能靠应用层守住：
@@ -376,7 +353,6 @@ def test_station_item_guards():
     check("CAL-IFACE" not in stations, f"removed step items must be purged: {stations}")
     check("CAL-PARAM" in stations, f"kept step items must survive: {stations}")
 
-    # 工位是跨流程共享字典，被测试项引用时拒绝删除
     orphan_station = f"TST-GUARD{STAMP}"
     admin("POST", "/api/admin/stations", {"station_id": orphan_station, "station_name": "orphan"})
     with SessionLocal() as db:
@@ -398,7 +374,6 @@ def test_station_item_guards():
     stations = {i["station_id"] for i in resp.json()}
     check("CAL-PARAM" not in stations, f"items must be purged with topology: {stations}")
 
-    # 存量孤儿项不得让流程永远删不掉
     with SessionLocal() as db:
         db.add(
             models.StationItem(
@@ -415,7 +390,6 @@ def test_station_item_guards():
     resp = admin("DELETE", f"/api/admin/stations/{orphan_station}")
     check(resp.status_code == 204, f"station deletable after purge: {resp.text}")
 
-
 def test_client_unbound_state():
     """上位机自动注册的机台处于未绑定态：可保持解绑、可改 IP，进站时 403。"""
     cid = new_client_id("CAL")
@@ -423,7 +397,6 @@ def test_client_unbound_state():
     check(resp.status_code == 200, f"auto register: {resp.text}")
     check(resp.json()["data"]["bound"] is False, f"auto registered must be unbound: {resp.text}")
 
-    # 未绑定机台也要能改 IP：不传 station_id 即保持解绑
     resp = admin("PUT", f"/api/admin/clients/{cid}", {"ip_address": "10.1.60.100"})
     check(resp.status_code == 200, f"update ip: {resp.text}")
     check(resp.json()["ip_address"] == "10.1.60.100", f"ip updated: {resp.text}")
@@ -443,7 +416,6 @@ def test_client_unbound_state():
         f"unbound check-in must be 403: {resp.text}",
     )
     admin("DELETE", f"/api/admin/clients/{cid}")
-
 
 def test_client_multi_station_binding():
     """一机多工位：绑定集合跨流程，check-in 按件所属流程解析唯一工位。
@@ -525,7 +497,6 @@ def test_client_multi_station_binding():
     )
 
     # ⑨ MSO 件进站：工位解析为 CAL-AWG，但 MSO 流程要求首站 CAL-PARAM
-    #    → 403 missing_prereq（工位解析与工艺闸门分层工作，解析成功≠放行）
     resp = v1("check-in", {"client_id": cid, "sn": new_sn("MULTI-MSO"), "product_model": M_MSO, "firmware": FW})
     check(
         resp.status_code == 403 and resp.json()["code"] == "missing_prereq",
@@ -543,7 +514,6 @@ def test_client_multi_station_binding():
         f"runtime ambiguous must 400: {resp.status_code} {resp.text}",
     )
 
-
 def test_clone_process():
     target = f"PROC-TEST-CLONE-{STAMP}"
     resp = admin("POST", "/api/admin/routing/clone", {"from_process": P_MSO, "to_process": target})
@@ -552,7 +522,6 @@ def test_clone_process():
     check(data["cloned_steps"] == 6, f"clone steps: {data}")
     check(data["cloned_items"] == MSO_ITEM_COUNT, f"clone items: {data}")
     admin("DELETE", f"/api/admin/processes/{target}")
-
 
 # ================= B. 正常流转 =================
 def test_dpo_full_flow():
@@ -566,7 +535,6 @@ def test_dpo_full_flow():
         check(resp.status_code == 201, f"DPO check-out {station}: {resp.status_code} {resp.text}")
         check(resp.json()["data"]["overall_result"] == "PASS", f"result {station}: {resp.text}")
 
-    # 首工位动态建档
     resp = admin("GET", f"/api/admin/products/{sn}")
     check(resp.status_code == 200, f"product created: {resp.text}")
     check(resp.json()["process_id"] == P_DPO, "process binding")
@@ -577,7 +545,6 @@ def test_dpo_full_flow():
         sorted(resp.json()["passed_stations"]) == ["CAL-IFACE", "CAL-PARAM", "TST-IFACE", "TST-PARAM"],
         f"stamps: {resp.json()}",
     )
-
 
 def test_mso_full_flow():
     """MSO 带 AWG：6 站完整流程，且校准三站未齐前不得进入测试阶段。"""
@@ -591,7 +558,6 @@ def test_mso_full_flow():
     resp = admin("GET", f"/api/admin/products/{sn}")
     check(resp.json()["total_steps"] == 6, "MSO should have 6 steps")
 
-    # 补齐剩余三站
     for station in ("TST-PARAM", "TST-IFACE", "TST-AWG"):
         resp = checkin(station, sn, model=M_MSO)
         check(resp.status_code == 200, f"MSO check-in {station}: {resp.status_code} {resp.text}")
@@ -600,7 +566,6 @@ def test_mso_full_flow():
 
     resp = admin("GET", f"/api/admin/products/{sn}")
     check(resp.json()["is_completed"] is True, f"MSO completed: {resp.text}")
-
 
 def test_mso_gate_requires_all_cal():
     """MSO：校准三站未齐 → TST-PARAM 拦截（方案中的闸门工位）。"""
@@ -613,7 +578,6 @@ def test_mso_gate_requires_all_cal():
     resp = checkin("TST-PARAM", sn, model=M_MSO)
     check(resp.status_code == 403, f"gate must be 403: {resp.status_code} {resp.text}")
     check(resp.json()["data"]["missing"] == ["CAL-AWG"], f"missing: {resp.json()}")
-
 
 # ================= C. 需求 2：卡控 =================
 def test_jump_station_blocked_403():
@@ -628,7 +592,6 @@ def test_jump_station_blocked_403():
     check(body["exit_code"] == 10, f"exit_code: {body}")
     check("CAL-IFACE" in body["data"]["missing"], f"missing: {body}")
 
-
 def test_retest_blocked_409():
     """已盖章工位严禁复测 → 409。"""
     sn = new_sn("RETEST")
@@ -638,7 +601,6 @@ def test_retest_blocked_409():
     check(resp.status_code == 409, f"retest must be 409, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "station_already_passed", f"code: {resp.json()}")
 
-
 def test_wrong_process_blocked_400():
     """DPO 机型进入 AWG 工位（机台绑定工位与该件流程无交集）→ 403。"""
     sn = new_sn("WRONGP")
@@ -646,13 +608,11 @@ def test_wrong_process_blocked_400():
     check(resp.status_code == 403, f"wrong process must be blocked, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "client_not_bound", f"code: {resp.json()}")
 
-
 def test_firmware_mismatch_403():
     sn = new_sn("FW")
     resp = checkin("CAL-PARAM", sn, firmware="V3.10")
     check(resp.status_code == 403, f"fw mismatch must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "firmware_mismatch", f"code: {resp.json()}")
-
 
 def test_case_id_mismatch_400():
     """上报的用例ID未覆盖必测清单 → 400。"""
@@ -664,10 +624,8 @@ def test_case_id_mismatch_400():
     check(body["exit_code"] == 15, f"exit_code: {body}")
     check(len(body["data"]["missing_case_ids"]) > 0, f"missing: {body}")
 
-    # 完整清单放行
     resp = checkin("CAL-PARAM", sn, case_ids=list(ITEMS["CAL-PARAM"]))
     check(resp.status_code == 200, f"full case IDs should pass: {resp.text}")
-
 
 def test_first_station_required():
     """未建档的机器不得从中间工位开局。"""
@@ -676,13 +634,11 @@ def test_first_station_required():
     check(resp.status_code == 403, f"must start at first station: {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "missing_prereq", f"code: {resp.json()}")
 
-
 def test_model_mismatch():
     sn = new_sn("MODELM")
     pass_station("CAL-PARAM", sn, model=M_DPO)
     resp = checkin("CAL-IFACE", sn, model=M_MSO)
     check(resp.status_code == 403 and resp.json()["code"] == "model_mismatch", f"{resp.status_code} {resp.text}")
-
 
 # ================= D. 需求 1：落库 ACK =================
 def test_ack_and_idempotent_replay():
@@ -699,13 +655,11 @@ def test_ack_and_idempotent_replay():
     check(body["data"]["idempotent_replay"] is False, f"first should not be replay: {body}")
     record_id = body["data"]["record_id"]
 
-    # 网络重传：同一 checkout_id
     second = checkout("CAL-IFACE", sn, case_ids, checkout_id=cid)
     check(second.status_code == 201, f"replay: {second.status_code} {second.text}")
     check(second.json()["data"]["idempotent_replay"] is True, f"replay flag: {second.json()}")
     check(second.json()["data"]["record_id"] == record_id, "record_id must be identical")
 
-    # 独立 ack 校验端点
     resp = v1("ack", None, method="GET")
     check(resp.status_code == 422, "sn/checkout_id required")
     resp = api(
@@ -719,10 +673,8 @@ def test_ack_and_idempotent_replay():
     )
     check(resp.status_code == 404 and resp.json()["code"] == "ack_not_found", f"ack 404: {resp.text}")
 
-    # 账本只应有一条
     resp = admin("GET", "/api/admin/records", params={"sn": sn})
     check(resp.json()["total"] == 2, f"records should be 2: {resp.json()['total']}")
-
 
 # ================= E. 漏测与锁定 =================
 def test_missing_mandatory_400():
@@ -730,7 +682,6 @@ def test_missing_mandatory_400():
     resp = checkin("CAL-PARAM", sn)
     case_ids = rules_of(resp)
     session_id = resp.json()["data"]["session_id"]
-    # 漏掉一个必测项
     resp = checkout("CAL-PARAM", sn, case_ids[:-1])
     check(resp.status_code == 400, f"missing mandatory must be 400, got {resp.status_code} {resp.text}")
     body = resp.json()
@@ -745,20 +696,17 @@ def test_missing_mandatory_400():
         check(product.current_status == models.STATUS_IDLE, f"lock must be released: {product.current_status}")
         check(product.lock_token is None, "lock_token must be cleared")
 
-    # SKIP 视为漏测
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-enter after fail: {resp.text}")
     resp = checkout("CAL-PARAM", sn, case_ids, skip=(case_ids[-1],))
     check(resp.status_code == 400 and resp.json()["code"] == "missing_mandatory", f"skip: {resp.text}")
 
-    # 已执行但判定 FAIL → 真实失败，201 + exit_code 1，不拦截
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-enter: {resp.text}")
     resp = checkout("CAL-PARAM", sn, case_ids, fail=(case_ids[0],))
     check(resp.status_code == 201, f"fail should be recorded: {resp.status_code} {resp.text}")
     body = resp.json()
     check(body["exit_code"] == 1 and body["data"]["overall_result"] == "FAIL", f"exit_code: {body}")
-
 
 def test_fail_streak_lock_403():
     sn = new_sn("LOCK")
@@ -776,19 +724,16 @@ def test_fail_streak_lock_403():
     check(resp.json()["code"] == "product_locked", f"code: {resp.json()}")
     check(resp.json()["exit_code"] == 16, f"exit_code: {resp.json()}")
 
-    # RETEST 处置后解锁
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "工程师确认后重投"})
     check(resp.status_code == 201, f"reset: {resp.text}")
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"unlocked: {resp.text}")
-
 
 def test_lock_conflict_409_and_timeout_takeover():
     sn = new_sn("CONFLICT")
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
 
-    # 另一台同工位机台抢占 → 409
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
     resp = v1(
@@ -798,7 +743,6 @@ def test_lock_conflict_409_and_timeout_takeover():
     check(resp.status_code == 409, f"conflict must be 409, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "lock_conflict", f"code: {resp.json()}")
 
-    # 心跳续期
     resp = v1("heartbeat", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn})
     check(resp.status_code == 200 and resp.json()["data"]["holding_lock"] is True, f"heartbeat: {resp.text}")
     check(resp.json()["data"]["remaining_sec"] > 0, "remaining should be positive")
@@ -821,7 +765,6 @@ def test_lock_conflict_409_and_timeout_takeover():
     check(resp.status_code == 403, f"stale lock must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "lock_invalid", f"code: {resp.json()}")
 
-
 def test_scrap_blocked():
     sn = new_sn("SCRAP")
     pass_station("CAL-PARAM", sn)
@@ -830,14 +773,12 @@ def test_scrap_blocked():
     resp = checkin("CAL-IFACE", sn)
     check(resp.status_code == 403 and resp.json()["code"] == "product_scrapped", f"{resp.status_code} {resp.text}")
 
-
 # ================= F. 维修处置 =================
 def test_repair_actions():
     sn = new_sn("REPAIR")
     for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM"):
         pass_station(station, sn)
 
-    # RETEST：收回 TST-PARAM 印章，作废旧记录
     resp = admin(
         "POST",
         "/api/admin/repairs",
@@ -849,10 +790,8 @@ def test_repair_actions():
     resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "TST-PARAM", "is_valid": False})
     check(resp.json()["total"] == 1, f"invalidated record: {resp.json()['total']}")
 
-    # 重测通过
     pass_station("TST-PARAM", sn)
 
-    # ROLLBACK：回退到 CAL-IFACE（清除其及之后所有印章）
     resp = admin(
         "POST",
         "/api/admin/repairs",
@@ -862,10 +801,8 @@ def test_repair_actions():
     resp = admin("GET", f"/api/admin/products/{sn}")
     check(sorted(resp.json()["passed_stations"]) == ["CAL-PARAM"], f"rollback result: {resp.json()}")
 
-    # SCRAP
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "SCRAP", "reason": "报废"})
     check(resp.status_code == 201, f"scrap: {resp.text}")
-    # SCRAP 后仍可 RESET 复活
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "复判合格"})
     check(resp.status_code == 201, f"reset: {resp.text}")
     resp = admin("GET", f"/api/admin/products/{sn}")
@@ -874,11 +811,9 @@ def test_repair_actions():
     resp = admin("GET", "/api/admin/repairs", params={"sn": sn})
     check(resp.json()["total"] == 4, f"repair history: {resp.json()['total']}")
 
-
 def test_repair_guards():
     sn = new_sn("RGUARD")
     pass_station("CAL-PARAM", sn)
-    # 目标工位未通过
     resp = admin(
         "POST",
         "/api/admin/repairs",
@@ -889,7 +824,6 @@ def test_repair_guards():
     checkin("CAL-IFACE", sn)
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "x"})
     check(resp.status_code == 409 and resp.json()["code"] == "product_holding_lock", f"{resp.text}")
-
 
 # ================= G. 台账与统计 =================
 def test_trace():
@@ -905,10 +839,8 @@ def test_trace():
     passed_steps = [s for s in body["steps"] if s["passed"]]
     check(len(passed_steps) == 2, f"passed steps: {passed_steps}")
     check(len(body["records"]) == 2, f"records: {len(body['records'])}")
-    # 工步按 step_order 排序
     orders = [s["step_order"] for s in body["steps"]]
     check(orders == sorted(orders), f"step order: {orders}")
-
 
 def test_metrics():
     resp = admin("GET", "/api/admin/metrics/overview", params={"days": 14})
@@ -922,7 +854,6 @@ def test_metrics():
 
     resp = admin("GET", "/api/admin/metrics/overview", params={"days": 7, "process_id": P_MSO})
     check(resp.status_code == 200 and len(resp.json()["trend"]) == 7, f"filtered: {resp.text}")
-
 
 def test_no_bilingual():
     """后端只输出英文，语种由前端 i18n 决定。"""
@@ -943,13 +874,11 @@ def test_no_bilingual():
     )
     check(resp.json()["message"] == zh, "message must be language-independent")
 
-
 def test_auth_guard():
     resp = api("GET", "/api/admin/clients", token="invalid")
     check(resp.status_code == 401 and resp.json()["code"] == "authentication_required", f"{resp.text}")
     resp = api("POST", "/api/v1/client/heartbeat", body={}, api_key="wrong-key")
     check(resp.status_code == 401 and resp.json()["code"] == "invalid_credentials", f"{resp.text}")
-
 
 # ================= H. 租约锁：崩溃续测与快速接管 =================
 def _backdate(sn, **deltas):
@@ -959,7 +888,6 @@ def _backdate(sn, **deltas):
         for field, seconds in deltas.items():
             setattr(product, field, datetime.now(timezone.utc) - timedelta(seconds=seconds))
         db.commit()
-
 
 def test_status_filter_separates_completed_from_idle():
     """已完工是派生状态：筛"待测试"不得混入，筛"已完工"应能单独查到。"""
@@ -980,7 +908,6 @@ def test_status_filter_separates_completed_from_idle():
     resp = admin("GET", "/api/admin/products", params={"current_status": "IDLE", "sn": wip_sn})
     check(resp.json()["total"] == 1, f"未完工在制品应在待测试: {resp.json()['total']}")
 
-
 def test_lock_lost_takeover():
     """机台失联（心跳断流 > grace）→ 新机台立即接管，旧持锁方写入被拒。"""
     sn = new_sn("LOST")
@@ -992,7 +919,6 @@ def test_lock_lost_takeover():
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
 
-    # 未失联 → 仍然 409
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 409, f"still locked: {resp.status_code} {resp.text}")
 
@@ -1005,7 +931,6 @@ def test_lock_lost_takeover():
     check(body["takeover_from"] == CLIENTS["CAL-PARAM"], f"takeover_from: {body}")
     check(body["lock_token"] != stale_token, "新持锁方必须换发 token")
 
-    # 旧持锁方持旧 token 出站 → 403，绝不污染数据
     resp = v1(
         "check-out",
         {
@@ -1017,7 +942,6 @@ def test_lock_lost_takeover():
         },
     )
     check(resp.status_code == 403, f"zombie checkout: {resp.status_code} {resp.text}")
-
 
 def test_heartbeat_does_not_extend_hard_timeout():
     """心跳只续失联窗口，不续硬超时。"""
@@ -1036,7 +960,6 @@ def test_heartbeat_does_not_extend_hard_timeout():
     resp = checkout("CAL-PARAM", sn, ["test_amp_cal", "test_phase_cal"])
     check(resp.status_code == 403 and resp.json()["code"] == "lock_expired", f"{resp.status_code} {resp.text}")
 
-
 def test_checkpoint_resume_and_merge():
     """崩溃续测：断点上报 → 重进站拿到已完成清单 → 出站补齐未提交用例。"""
     sn = new_sn("RESUME")
@@ -1046,7 +969,6 @@ def test_checkpoint_resume_and_merge():
     session_id = data["session_id"]
     token = data["lock_token"]
 
-    # 崩溃前只上报了 1 个用例
     resp = v1(
         "checkpoint",
         {
@@ -1074,7 +996,6 @@ def test_checkpoint_resume_and_merge():
     )
     check(resp.json()["data"]["merged_count"] == 1, f"idempotent: {resp.text}")
 
-    # 崩溃重启：同机台重进站自动续测
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"re-checkin: {resp.text}")
     data = resp.json()["data"]
@@ -1084,7 +1005,6 @@ def test_checkpoint_resume_and_merge():
     check(data["resume"]["completed_case_ids"] == ["test_amp_cal"], f"resume: {data}")
     check(data["resume"]["cursor"] == {"step": 1}, f"cursor: {data}")
 
-    # 只跑剩余用例即可出站，未提交的由 checkpoint 补齐
     resp = checkout("CAL-PARAM", sn, ["test_phase_cal"], lock_token=data["lock_token"])
     check(resp.status_code == 201, f"checkout: {resp.status_code} {resp.text}")
     ack = resp.json()["data"]
@@ -1093,7 +1013,6 @@ def test_checkpoint_resume_and_merge():
     record = [r for r in resp.json()["records"] if r["station_id"] == "CAL-PARAM"][0]
     case_ids = sorted(i["case_id"] for i in record["executed_items"]["items"])
     check(case_ids == ["test_amp_cal", "test_phase_cal"], f"merged items: {case_ids}")
-
 
 def test_sweeper_releases_orphan_lock():
     """回收任务：失联锁自动释放，且不计产品失败。"""
@@ -1116,12 +1035,10 @@ def test_sweeper_releases_orphan_lock():
         session = db.get(models.TestSession, session_id)
         check(session.status == models.SESSION_ABORTED, f"session: {session.status}")
 
-    # 解锁后新机台可直接进站
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
     check(resp.status_code == 200, f"re-checkin after sweep: {resp.text}")
-
 
 def test_client_app_version_tracked():
     """机台上报的程序版本要落库：现场"同机型结果不可比"的常见根因是版本漂移。"""
@@ -1140,7 +1057,6 @@ def test_client_app_version_tracked():
     check(bool(row["created_at"]), f"created_at must be set: {row}")
     check(row["station_id"] is None, f"auto registered must be unbound: {row}")
 
-    # 进站同样刷新版本（此前 CheckInIn 收了 app_version 却没落库）
     admin("PUT", f"/api/admin/clients/{cid}", {"bound_stations": ["CAL-PARAM"]})
     resp = v1(
         "check-in",
@@ -1155,7 +1071,6 @@ def test_client_app_version_tracked():
     check(resp.status_code == 200, f"check-in: {resp.text}")
     check(fetch()["app_version"] == "2.5.0", f"app_version must refresh on check-in: {fetch()}")
 
-    # 手工注册也允许登记版本
     manual = new_client_id("CAL")
     resp = admin(
         "POST",
@@ -1190,7 +1105,6 @@ def test_client_app_version_tracked():
     admin("DELETE", f"/api/admin/clients/{manual}")
     admin("DELETE", f"/api/admin/clients/{named}")
     admin("DELETE", f"/api/admin/clients/{fallback}")
-
 
 def test_firmware_match_rule():
     """fw_match_rule：exact 要求完全一致；min 只要求不低于基线。
@@ -1238,7 +1152,6 @@ def test_firmware_match_rule():
         f"V3.9 is below V3.20 and must be blocked: {resp.text}",
     )
 
-    # 切回 exact：高于基线也不再放行
     resp = admin("PUT", f"/api/admin/product-models/{model}", {"fw_match_rule": "exact"})
     check(resp.status_code == 200 and resp.json()["fw_match_rule"] == "exact", f"switch rule: {resp.text}")
     resp = try_firmware("V3.21", "EXACT")
@@ -1249,7 +1162,6 @@ def test_firmware_match_rule():
 
     resp = admin("PUT", f"/api/admin/product-models/{model}", {"fw_match_rule": "bogus"})
     check(resp.status_code == 422, f"invalid rule must be 422: {resp.text}")
-
 
 def test_process_status():
     """流程停用后不再接受新机型绑定，重新启用后恢复。"""
@@ -1281,11 +1193,10 @@ def test_process_status():
     )
     check(resp.status_code == 201, f"reactivated process accepts model: {resp.text}")
 
-
 def test_client_release_lock():
     """上位机主动放弃锁：释放锁与会话，但不计失败、不动画章，同工位可立即接管。"""
     sn = new_sn("RELEASE")
-    pass_station("CAL-PARAM", sn)  # 先正常通过首站，留下印章作为"不应被改动"的基线
+    pass_station("CAL-PARAM", sn)
 
     resp = checkin("CAL-IFACE", sn)
     check(resp.status_code == 200, f"check-in: {resp.text}")
@@ -1324,7 +1235,6 @@ def test_client_release_lock():
     check(resp.json()["status"] == models.SESSION_ABORTED, f"session status: {resp.json()}")
     check("操作员取消测试" in (resp.json()["end_reason"] or ""), f"end reason: {resp.json()}")
 
-    # 同工位另一台机台应能立即进站，证明锁确实释放了
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-IFACE"]})
     resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
@@ -1339,15 +1249,14 @@ def test_client_release_lock():
         check(product.current_status == models.STATUS_TESTING, f"other's lock must survive: {product.current_status}")
         check(product.current_client == other, f"holder unchanged: {product.current_client}")
 
-
 def test_id_format_enforced():
     """编号规范在写入口强制校验（README 7.2）：不合规一律 422，合规放行。
     client_id 不做格式约束（现场编号风格各异，仅要求非空）。"""
     rejected = [
-        ("/api/admin/processes", {"process_id": "PROC_TEK_MSO"}),  # 用了下划线
-        ("/api/admin/processes", {"process_id": "PROC-SCOPE-MSO"}),  # 缺构型段
-        ("/api/admin/stations", {"station_id": "CAL_PARAM"}),  # 用了下划线
-        ("/api/admin/stations", {"station_id": "CAL"}),  # 缺测试域
+        ("/api/admin/processes", {"process_id": "PROC_TEK_MSO"}),
+        ("/api/admin/processes", {"process_id": "PROC-SCOPE-MSO"}),
+        ("/api/admin/stations", {"station_id": "CAL_PARAM"}),
+        ("/api/admin/stations", {"station_id": "CAL"}),
     ]
     for path, body in rejected:
         resp = admin("POST", path, body)
@@ -1364,11 +1273,9 @@ def test_id_format_enforced():
     )
     check(resp.status_code == 201, f"client must be accepted: {resp.text}")
 
-    # 更新接口不校验：三者投产即冻结，换编号走「新建 + 停用」而不是原地改名
     admin("DELETE", "/api/admin/clients/SZ-L1-TST-99")
     admin("DELETE", f"/api/admin/stations/TST-FMT{STAMP}")
     admin("DELETE", f"/api/admin/processes/PROC-TEST-FMT-{STAMP}")
-
 
 def test_force_release_and_sessions_api():
     """运维强制解锁 + 会话管理接口。"""
@@ -1402,7 +1309,6 @@ def test_force_release_and_sessions_api():
     resp = admin("GET", "/api/admin/metrics/overview", params={"days": 14})
     check("locks" in resp.json(), f"metrics locks: {resp.text}")
 
-
 def test_import_blocks_running_session():
     """导入闸门：工位有 RUNNING 会话时，"新增必测"默认 409；收缩清单放行，dry-run 转告警，force 放行。"""
     sn = new_sn("IMPBLK")
@@ -1417,7 +1323,6 @@ def test_import_blocks_running_session():
         "items": [{"case_id": "tests/new_case.py::test_new", "item_name": "新用例", "is_mandatory": True}],
     }
 
-    # 新增必测项 → 409 running_session_block
     resp = admin("POST", "/api/admin/routing/items/import", add_new)
     check(
         resp.status_code == 409 and resp.json()["code"] == "running_session_block",
@@ -1425,7 +1330,6 @@ def test_import_blocks_running_session():
     )
     check(resp.json()["data"]["running_sessions"] >= 1, f"data: {resp.text}")
 
-    # dry-run：不落库，转为 would_block 告警
     resp = admin("POST", "/api/admin/routing/items/import", {**add_new, "dry_run": True})
     check(resp.status_code == 200, f"dry-run must pass: {resp.text}")
     body = resp.json()
@@ -1439,7 +1343,6 @@ def test_import_blocks_running_session():
     ids = {i["case_id"] for i in resp.json()}
     check("tests/new_case.py::test_new" not in ids, f"dry-run must not write: {ids}")
 
-    # 只收缩清单（停用其一）→ 放行（收缩只会放宽出站校验，不会误伤在跑会话）
     keep = ITEMS["CAL-PARAM"][0]
     resp = admin(
         "POST",
@@ -1456,7 +1359,6 @@ def test_import_blocks_running_session():
         f"shrink must pass: {resp.status_code} {resp.text}",
     )
 
-    # force=true 强行新增 → 放行
     resp = admin("POST", "/api/admin/routing/items/import", add_new, params={"force": "true"})
     check(resp.status_code == 200 and resp.json()["created"] == 1, f"force must pass: {resp.text}")
 
@@ -1473,7 +1375,6 @@ def test_import_blocks_running_session():
         resp.status_code == 200 and resp.json()["total_active"] == len(ITEMS["CAL-PARAM"]),
         f"restore: {resp.status_code} {resp.text}",
     )
-
 
 def test_process_export_import():
     """流程导出→改号导入副本：工位补建不覆盖 / 机型冲突跳过 / 重复导入 409 / 坏依赖 400。"""
@@ -1504,17 +1405,88 @@ def test_process_export_import():
     resp = admin("POST", "/api/admin/routing/processes/import", bad)
     check(resp.status_code == 400 and resp.json()["code"] == "topology_invalid", f"bad deps: {resp.text}")
 
-    # 全量导出：包含全部流程，每项可单独导入
     resp = admin("GET", "/api/admin/routing/processes/export-all")
     check(resp.status_code == 200, f"export all: {resp.status_code} {resp.text}")
     all_ids = [p["process"]["process_id"] for p in resp.json()["processes"]]
     check(P_DPO in all_ids and P_MSO in all_ids, f"export all ids: {all_ids}")
 
-    # 清理：清空工步（连带清用例）→ 删流程（机型全部 skipped，副本上无绑定）
     admin("PUT", "/api/admin/routing/stations", [], params={"process_id": imp})
     resp = admin("DELETE", f"/api/admin/processes/{imp}")
     check(resp.status_code in (200, 204), f"cleanup: {resp.status_code} {resp.text}")
 
+def _login(username: str, password: str):
+    return api("POST", "/api/auth/login", body={"username": username, "password": password})
+
+def _user_id(username: str) -> int:
+    rows = admin("GET", "/api/admin/users").json()
+    return next(u["id"] for u in rows if u["username"] == username)
+
+def test_role_permissions():
+    """三角色权限矩阵：viewer 只读 / operator 产线操作 / admin 配置+用户管理。
+
+    覆盖：登录响应带角色 / 越权 403 / 停用账号登录拒绝且旧 token 立即失效 /
+    防自锁（最后一个有效 admin 不可删/停/降）。
+    """
+    # ① 用户管理（admin）：创建 + 重名 409 + 非法角色 400
+    resp = admin("POST", "/api/admin/users",
+                 {"username": "op1", "password": "op123456", "full_name": "产线员", "role": "operator"})
+    check(resp.status_code == 201 and resp.json()["role"] == "operator", f"create operator: {resp.text}")
+    resp = admin("POST", "/api/admin/users", {"username": "view1", "password": "view123456", "role": "viewer"})
+    check(resp.status_code == 201, f"create viewer: {resp.text}")
+    resp = admin("POST", "/api/admin/users", {"username": "view1", "password": "view123456", "role": "viewer"})
+    check(resp.status_code == 409 and resp.json()["code"] == "username_exists", f"dup username: {resp.text}")
+    resp = admin("POST", "/api/admin/users", {"username": "bad1", "password": "bad123456", "role": "hacker"})
+    check(resp.status_code == 400 and resp.json()["code"] == "invalid_role", f"bad role: {resp.text}")
+
+    # ② 登录响应携带角色
+    resp = _login("view1", "view123456")
+    check(resp.status_code == 200 and resp.json()["user"]["role"] == "viewer", f"login role: {resp.text}")
+    view_tok = resp.json()["access_token"]
+    op_tok = _login("op1", "op123456").json()["access_token"]
+
+    # ③ viewer：读放行，一切写 403（用户管理也不可见）
+    resp = api("GET", "/api/admin/processes", token=view_tok)
+    check(resp.status_code == 200, f"viewer read: {resp.status_code}")
+    resp = api("POST", "/api/admin/processes", body={"process_id": "PROC-X", "process_name": "x"}, token=view_tok)
+    check(resp.status_code == 403 and resp.json()["code"] == "permission_denied", f"viewer write: {resp.text}")
+    resp = api("POST", "/api/admin/clients", body={"client_id": "SZ-VIEW-01", "bound_stations": ["CAL-PARAM"]}, token=view_tok)
+    check(resp.status_code == 403, f"viewer bind: {resp.status_code}")
+    resp = api("GET", "/api/admin/users", token=view_tok)
+    check(resp.status_code == 403, f"viewer users: {resp.status_code}")
+    resp = api("GET", "/api/admin/processes")
+    check(resp.status_code == 401, f"anonymous: {resp.status_code}")
+
+    # ④ operator：机台绑定放行，工艺配置 403
+    resp = api("POST", "/api/admin/clients",
+               body={"client_id": new_client_id(), "bound_stations": ["CAL-PARAM"]}, token=op_tok)
+    check(resp.status_code == 201, f"operator bind: {resp.status_code} {resp.text}")
+    resp = api("POST", "/api/admin/processes", body={"process_id": "PROC-Y", "process_name": "y"}, token=op_tok)
+    check(resp.status_code == 403, f"operator config: {resp.status_code}")
+    resp = api("DELETE", "/api/admin/routing/items/1", token=op_tok)
+    check(resp.status_code == 403, f"operator item delete: {resp.status_code}")
+
+    # ⑤ 停用账号：登录拒绝 + 旧 token 立即失效
+    vid = _user_id("view1")
+    resp = admin("PUT", f"/api/admin/users/{vid}", {"is_active": False})
+    check(resp.status_code == 200 and resp.json()["is_active"] is False, f"disable: {resp.text}")
+    resp = _login("view1", "view123456")
+    check(resp.status_code == 403 and resp.json()["code"] == "user_disabled", f"disabled login: {resp.text}")
+    resp = api("GET", "/api/admin/processes", token=view_tok)
+    check(resp.status_code == 401, f"disabled old token: {resp.status_code}")
+
+    # ⑥ 防自锁：最后一个有效 admin 不可删 / 停用 / 降权（含操作自己）
+    aid = _user_id("admin")
+    resp = admin("DELETE", f"/api/admin/users/{aid}")
+    check(resp.status_code == 409 and resp.json()["code"] == "cannot_delete_self", f"delete self: {resp.text}")
+    resp = admin("PUT", f"/api/admin/users/{aid}", {"is_active": False})
+    check(resp.status_code == 409 and resp.json()["code"] == "last_admin", f"disable last admin: {resp.text}")
+    resp = admin("PUT", f"/api/admin/users/{aid}", {"role": "viewer"})
+    check(resp.status_code == 409 and resp.json()["code"] == "last_admin", f"demote last admin: {resp.text}")
+    resp = admin("POST", "/api/admin/users",
+                 {"username": "admin2", "password": "admin23456", "role": "admin"})
+    check(resp.status_code == 201, f"create admin2: {resp.text}")
+    resp = admin("PUT", f"/api/admin/users/{_user_id('admin2')}", {"is_active": False})
+    check(resp.status_code == 200, f"disable second admin: {resp.text}")
 
 TESTS = [
     test_health,
@@ -1560,6 +1532,7 @@ TESTS = [
     test_force_release_and_sessions_api,
     test_import_blocks_running_session,
     test_process_export_import,
+    test_role_permissions,
 ]
 
 if __name__ == "__main__":
@@ -1597,3 +1570,4 @@ if __name__ == "__main__":
     except OSError:
         pass
     sys.exit(1 if failed else 0)
+

@@ -56,7 +56,7 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="90" align="center">
         <template #default="{ $index }">
-          <el-button link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="isAdmin" link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -64,7 +64,7 @@
 
     <el-drawer v-model="validateVisible" size="560px" destroy-on-close>
       <div v-if="validateResult">
-        <!-- 三态：error 未通过 / warning 带警告通过 / 干净通过。ok 只代表无 error -->
+        
         <el-alert
           :title="validateMeta.title"
           :type="validateMeta.type"
@@ -91,6 +91,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Plus } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
@@ -98,19 +99,18 @@ import EmptyState from '../../components/EmptyState.vue'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
+const { isAdmin } = useAuth()
 const { processes, stations, loadProcesses } = useProcesses()
 
 const processId = ref('')
 const steps = ref([])
 const loading = ref(false)
 const saving = ref(false)
-// 服务端已落库的工步快照：与当前编辑中的 steps 做差集，即可得出本次被移除的工位
 const savedStations = ref([])
 
 const validateVisible = ref(false)
 const validateResult = ref(null)
 
-// 三态：error=未通过；warning=通过但需关注；干净=通过
 const validateMeta = computed(() => {
   const r = validateResult.value
   if (!r) return { title: t('configs.validateTitle'), type: 'info' }
@@ -177,7 +177,6 @@ async function save() {
   if (!processId.value) return
   if (steps.value.some((s) => !s.station_id)) return ElMessage.warning(t('errors.requiredField'))
 
-  // 移除工步会连带删除该工位的测试项（后端行为与单条删除工步一致），先让操作者知情
   const dropped = removedStations()
   const droppedItems = allItems.value.filter((i) => dropped.includes(i.station_id)).length
   if (droppedItems) {
@@ -229,3 +228,4 @@ onMounted(async () => {
   await loadSteps()
 })
 </script>
+

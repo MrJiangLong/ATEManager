@@ -98,7 +98,7 @@
         <el-button @click="visible = false">{{ $t('common.close') }}</el-button>
         <el-button :icon="View" @click="emit('trace', session)">{{ $t('products.viewTrace') }}</el-button>
         <el-button
-          v-if="session?.status === 'RUNNING'"
+          v-if="canOperate && session?.status === 'RUNNING'"
           type="danger"
           plain
           :icon="SwitchButton"
@@ -106,7 +106,7 @@
         >
           {{ $t('sessions.abort') }}
         </el-button>
-        <el-button type="warning" :icon="Unlock" @click="emit('force-release', session)">
+        <el-button v-if="canOperate" type="warning" :icon="Unlock" @click="emit('force-release', session)">
           {{ $t('products.forceRelease') }}
         </el-button>
       </div>
@@ -117,6 +117,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../stores/auth'
 import { SwitchButton, Unlock, View } from '@element-plus/icons-vue'
 import EmptyState from './EmptyState.vue'
 import { attemptTipText, caseOwner, fmtDateTime, fmtDurationMs, resultTagType, sessionTagType, shortCaseId } from '../utils/format'
@@ -128,6 +129,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'abort', 'force-release', 'trace'])
 
 const { t } = useI18n()
+const { canOperate } = useAuth()
 
 const visible = computed({
   get: () => props.modelValue,

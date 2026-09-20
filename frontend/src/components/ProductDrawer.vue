@@ -66,7 +66,6 @@
         </el-descriptions>
       </div>
 
-      <!-- 租约锁：仅测试中有意义 -->
       <div v-if="row.current_status === 'TESTING'" class="block">
         <div class="block-title">{{ $t('products.tableLock') }}</div>
         <el-descriptions :column="2" size="small" border>
@@ -107,11 +106,11 @@
       <div class="drawer-actions">
         <el-button @click="visible = false">{{ $t('common.close') }}</el-button>
         <el-button :icon="View" @click="emit('trace', row)">{{ $t('products.viewTrace') }}</el-button>
-        <el-button type="warning" :icon="Tools" @click="emit('repair', row)">
+        <el-button v-if="canOperate" type="warning" :icon="Tools" @click="emit('repair', row)">
           {{ $t('products.repairAction') }}
         </el-button>
         <el-button
-          v-if="row?.current_status === 'TESTING'"
+          v-if="canOperate && row?.current_status === 'TESTING'"
           type="danger"
           plain
           :icon="Unlock"
@@ -127,6 +126,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../stores/auth'
 import { Select, Tools, Unlock, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { recordApi } from '../api'
@@ -140,6 +140,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'repair', 'force-release', 'trace'])
 
 const { t } = useI18n()
+const { canOperate } = useAuth()
 
 // 最近事件区最多展示条数；超出在容器内滚动，避免撑长抽屉挤动底部按钮
 const EVENT_LIMIT = 20
@@ -154,7 +155,6 @@ const detail = ref(null)
 const steps = ref([])
 const events = ref([])
 
-// 已完工是派生状态（库里 current_status 仍是 IDLE），文案与配色共用同一个状态键，
 // 否则会出现「文字已完工、颜色仍是待处理的灰」
 const statusKey = computed(() => {
   const product = detail.value || props.row
@@ -169,7 +169,6 @@ async function onOpen() {
     const res = await recordApi.trace(props.row.sn)
     detail.value = res.data.product
     steps.value = res.data.steps || []
-    // 后端按 record_id 升序返回该 SN 的全部记录：取最新 20 条并倒序，最新在上
     events.value = (res.data.records || []).slice(-EVENT_LIMIT).reverse()
   } catch (e) {
     steps.value = []
@@ -180,7 +179,6 @@ async function onOpen() {
   }
 }
 
-// 行数据被轮询刷新时同步抽屉内的实时字段（锁状态等）
 watch(() => props.row?.sn, () => {
   steps.value = []
   events.value = []
@@ -254,3 +252,4 @@ watch(() => props.row?.sn, () => {
 }
 .drawer-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 </style>
+

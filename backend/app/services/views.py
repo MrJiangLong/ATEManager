@@ -20,7 +20,6 @@ from .gate import (
 )
 from .routing import ProcessGraph, _as_list, is_completed, load_process
 
-
 def build_product_out(
     db: Session,
     row: models.ProductStatus,
@@ -45,7 +44,6 @@ def build_product_out(
     if graph:
         view.process_id = graph.process_id
         view.total_steps = len(graph.stations)
-        # 报废品即使印章齐全也不视为完工
         view.is_completed = (
             row.current_status != models.STATUS_SCRAPPED and is_completed(graph, passed)
         )
@@ -70,3 +68,4 @@ def build_product_out(
         else:
             view.lock_idle_sec = -1
     return view
+

@@ -20,7 +20,6 @@ logger = get_logger("sweeper")
 
 _TASK: Optional[asyncio.Task] = None
 
-
 def run_once() -> dict:
     """同步执行一次回收（测试与手动触发入口）。"""
     db = SessionLocal()
@@ -41,18 +40,16 @@ def run_once() -> dict:
     finally:
         db.close()
 
-
 async def _loop() -> None:
     interval = max(5, settings.SWEEPER_INTERVAL_SEC)
     while True:
         await asyncio.sleep(interval)
         try:
             await asyncio.get_event_loop().run_in_executor(None, run_once)
-        except asyncio.CancelledError:  # pragma: no cover - 关闭信号
+        except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - 单轮失败不退出循环
+        except Exception as exc:
             logger.exception("孤儿锁回收异常：%s", exc)
-
 
 def start() -> None:
     """在 FastAPI lifespan 内启动。"""
@@ -65,9 +62,8 @@ def start() -> None:
     try:
         _TASK = asyncio.get_event_loop().create_task(_loop())
         logger.info("孤儿锁回收任务已启动（%ss/轮）", settings.SWEEPER_INTERVAL_SEC)
-    except RuntimeError:  # pragma: no cover - 无事件循环（如纯同步脚本）
+    except RuntimeError:
         logger.warning("无事件循环，孤儿锁回收任务未启动")
-
 
 async def stop() -> None:
     global _TASK
@@ -77,3 +73,4 @@ async def stop() -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await _TASK
     _TASK = None
+

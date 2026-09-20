@@ -9,7 +9,7 @@ from .. import models, schemas
 from ..config import settings
 from ..database import get_db
 from ..errors import bad_request, get_or_404
-from ..security import current_user
+from ..security import current_user, require_operator
 from ..services import force_release_lock
 from ..services.gate import _close_session
 from ..services.timeutil import as_utc, elapsed_int
@@ -118,7 +118,7 @@ def abort_session(
     session_id: str,
     payload: Optional[schemas.SessionAbortIn] = None,
     db: Session = Depends(get_db),
-    user=Depends(current_user),
+    user=Depends(require_operator),
 ):
     """终止运行中的会话：关闭会话 + 释放其持有的工位锁（不改变印章/失败计数）。"""
     row = get_or_404(db, models.TestSession, session_id, "session")
@@ -145,7 +145,7 @@ def abort_session(
 def abort_running(
     payload: schemas.SessionAbortRunningIn,
     db: Session = Depends(get_db),
-    user=Depends(current_user),
+    user=Depends(require_operator),
 ):
     """换测试用例清单前"先停再换"：批量关闭 RUNNING 会话并释放工位锁。
 

@@ -19,7 +19,6 @@ from .models import FW_RULE_EXACT, FW_RULE_MIN
 
 _FW_RULE_PATTERN = rf"^({FW_RULE_EXACT}|{FW_RULE_MIN})$"
 
-# 编号规范（见 README 7.2）。process/station 是自然主键，且被 test_records /
 # test_sessions / product_status 冗余引用，一旦投产就改不动，故在写入口强制约束格式。
 # client_id 不做格式约束（现场编号风格各异，仅要求非空、长度 ≤ 64）。
 _ID_RULES = {
@@ -33,27 +32,22 @@ _ID_RULES = {
     ),
 }
 
-
 def _checked_id(value: str, kind: str) -> str:
     pattern, hint = _ID_RULES[kind]
     if not re.match(pattern, value or ""):
         raise ValueError(f"invalid {kind}: expected {hint}")
     return value
 
-
 def _strip(value):
     return value.strip() if isinstance(value, str) else value
-
 
 def _require_non_empty(value):
     if not value:
         raise ValueError("field_required: value cannot be empty")
     return value
 
-
 Trimmed = Annotated[Optional[str], BeforeValidator(_strip)]
 TrimmedRequired = Annotated[str, BeforeValidator(_strip), AfterValidator(_require_non_empty)]
-
 
 class UTCSchema(BaseModel):
     """响应模型基类：naive 时间一律按 UTC 补全时区后缀。
@@ -70,44 +64,52 @@ class UTCSchema(BaseModel):
             return value.replace(tzinfo=timezone.utc)
         return value
 
-
 class ORMModel(UTCSchema):
     model_config = ConfigDict(from_attributes=True)
-
 
 class MessageOut(BaseModel):
     code: str
 
-
 # =====================================================================
-# 认证
 # =====================================================================
 class LoginRequest(BaseModel):
     username: TrimmedRequired
     password: str
 
-
 class UserOut(ORMModel):
     id: int
     username: str
     full_name: Optional[str] = None
-    is_admin: bool = True
+    is_active: bool = True
+    role: str = "viewer"
     created_at: Optional[datetime] = None
-
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
 
+class UserCreateIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: str = Field(min_length=2, max_length=64)
+    password: str = Field(min_length=6)
+    full_name: Optional[str] = Field(None, max_length=128)
+    role: str = Field("viewer")
+
+class UserUpdateIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    full_name: Optional[str] = Field(None, max_length=128)
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=6)
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=6)
 
-
 # =====================================================================
-# 通道一：上位机 pytest
 # =====================================================================
 class ClientResolveIn(BaseModel):
     """机台身份上报（首次调用自动注册）。"""
@@ -115,7 +117,6 @@ class ClientResolveIn(BaseModel):
     client_id: TrimmedRequired = Field(max_length=64)
     ip_address: Trimmed = Field(default=None, max_length=45)
     app_version: Trimmed = Field(default=None, max_length=50)
-
 
 class CheckInIn(BaseModel):
     """进站：*IDN? 直读结果 + 本机待执行的用例ID清单。"""
@@ -135,7 +136,6 @@ class CheckInIn(BaseModel):
         description="续测会话ID：崩溃重启后携带，服务端返回已完成用例清单",
     )
 
-
 class ItemResultIn(BaseModel):
     """单个用例的执行结果快照。"""
 
@@ -153,7 +153,6 @@ class ItemResultIn(BaseModel):
             raise ValueError("invalid_result: must be PASS / FAIL / SKIP")
         return v
 
-
 class CheckOutIn(BaseModel):
     """出站：上传执行结果，必须拿到服务端落库回执（ACK）。"""
 
@@ -169,7 +168,6 @@ class CheckOutIn(BaseModel):
         description="fencing 凭证；锁已被接管时旧 token 写入一律拒绝",
     )
 
-
 class CheckpointIn(BaseModel):
     """续测断点：增量上报已完成用例，按 case_id 去重覆盖（幂等）。"""
 
@@ -182,7 +180,6 @@ class CheckpointIn(BaseModel):
         default_factory=dict, description="客户端断点上下文（当前步骤/仪器状态，原样回传）"
     )
 
-
 class CheckpointData(BaseModel):
     sn: str
     session_id: str
@@ -190,7 +187,6 @@ class CheckpointData(BaseModel):
     merged_count: int = 0
     completed_case_ids: List[str] = []
     server_time: str
-
 
 class ReleaseIn(BaseModel):
     """主动放弃锁：优雅退出 / 崩溃前调用，避免占锁等待。"""
@@ -200,19 +196,16 @@ class ReleaseIn(BaseModel):
     lock_token: Trimmed = Field(default=None, max_length=64)
     reason: Trimmed = Field(default=None, max_length=255)
 
-
 class ReleaseData(BaseModel):
     sn: str
     released: bool = True
     session_id: Optional[str] = None
     server_time: str
 
-
 class HeartbeatIn(BaseModel):
     client_id: TrimmedRequired = Field(max_length=64)
     sn: TrimmedRequired = Field(max_length=64)
     lock_token: Trimmed = Field(default=None, max_length=64)
-
 
 class EnvelopeOut(BaseModel):
     """统一响应包：HTTP 状态码为主，exit_code 为辅。"""
@@ -223,7 +216,6 @@ class EnvelopeOut(BaseModel):
     message: str
     data: Optional[Any] = None
 
-
 class StationRule(BaseModel):
     """下发给上位机的静态执行规则。"""
 
@@ -231,12 +223,10 @@ class StationRule(BaseModel):
     item_name: str
     is_mandatory: bool = True
 
-
 class NextStation(BaseModel):
     station_id: str
     station_name: str
     step_order: int
-
 
 class ResumeInfo(BaseModel):
     """续测上下文：崩溃重启后上位机据此跳过已完成用例。"""
@@ -245,7 +235,6 @@ class ResumeInfo(BaseModel):
     attempt: int = 1
     completed_case_ids: List[str] = []
     cursor: Dict[str, Any] = {}
-
 
 class CheckInData(BaseModel):
     sn: str
@@ -270,7 +259,6 @@ class CheckInData(BaseModel):
     takeover: bool = Field(default=False, description="本次进站接管了失联机台持有的锁")
     takeover_from: Optional[str] = Field(default=None, description="被接管的原持锁机台")
 
-
 class AckData(BaseModel):
     """落库回执（需求 1：上位机必须校验此 ACK 才允许拔线流转）。"""
 
@@ -293,7 +281,6 @@ class AckData(BaseModel):
         default=0, description="由 checkpoint 补齐的用例数（续测断点回放）"
     )
 
-
 class HeartbeatData(BaseModel):
     sn: str
     holding_lock: bool
@@ -304,16 +291,13 @@ class HeartbeatData(BaseModel):
     heartbeat_count: int = 0
     session_id: Optional[str] = None
 
-
 # =====================================================================
-# 主数据：工艺流程 / 机型 / 工位 / 机台
 # =====================================================================
 class ProcessOut(ORMModel):
     process_id: str
     process_name: str
     is_active: bool = True
     created_at: Optional[datetime] = None
-
 
 class ProcessStatOut(UTCSchema):
     """流程概览：下拉与统计使用。"""
@@ -327,7 +311,6 @@ class ProcessStatOut(UTCSchema):
     item_count: int = 0
     created_at: Optional[datetime] = None
 
-
 class ProcessCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     process_name: Trimmed = Field(default="", max_length=128)
@@ -338,11 +321,9 @@ class ProcessCreateIn(BaseModel):
     def _valid_process_id(cls, v):
         return _checked_id(v, "process_id")
 
-
 class ProcessUpdateIn(BaseModel):
     process_name: Trimmed = Field(default=None, max_length=128)
     is_active: Optional[bool] = None
-
 
 class ProductModelOut(ORMModel):
     product_model: str
@@ -351,26 +332,22 @@ class ProductModelOut(ORMModel):
     fw_match_rule: str = FW_RULE_EXACT
     created_at: Optional[datetime] = None
 
-
 class ProductModelCreateIn(BaseModel):
     product_model: TrimmedRequired = Field(max_length=64)
     process_id: TrimmedRequired = Field(max_length=64)
     target_fw_version: TrimmedRequired = Field(max_length=32)
     fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
 
-
 class ProductModelUpdateIn(BaseModel):
     process_id: Trimmed = Field(default=None, max_length=64)
     target_fw_version: Trimmed = Field(default=None, max_length=32)
     fw_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
-
 
 class StationOut(ORMModel):
     station_id: str
     station_name: str
     timeout_sec: int = 1800
     created_at: Optional[datetime] = None
-
 
 class StationCreateIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
@@ -382,18 +359,14 @@ class StationCreateIn(BaseModel):
     def _valid_station_id(cls, v):
         return _checked_id(v, "station_id")
 
-
 class StationUpdateIn(BaseModel):
     station_name: Trimmed = Field(default=None, max_length=128)
     timeout_sec: Optional[int] = Field(default=None, ge=30, le=86400)
 
-
 class ClientOut(ORMModel):
     client_id: str
     client_name: Optional[str] = None
-    # 绑定集合（一机多工位）：进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
     bound_stations: List[str] = []
-    # 当前操作工位（运行态）：进站解析成功后由服务端回写；未进站时为空
     station_id: Optional[str] = None
     ip_address: Optional[str] = None
     app_version: Optional[str] = None
@@ -402,27 +375,21 @@ class ClientOut(ORMModel):
     online: bool = False
     holding_sn: Optional[str] = None
 
-
 class ClientCreateIn(BaseModel):
     # client_id 不做格式约束（现场编号风格各异），仅要求非空、长度 ≤ 64
     client_id: TrimmedRequired = Field(max_length=64)
-    # 绑定集合（一机多工位）：进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
-    # （多命中 400 要求修正绑定；可留空 = 未绑定态，由 Web 端后补）
     bound_stations: List[str] = Field(default_factory=list)
     # 未填时由服务端回退为 client_id，与 stations.station_name 的兜底一致
     client_name: Trimmed = Field(default="", max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
     app_version: Trimmed = Field(default=None, max_length=50)
 
-
 class ClientUpdateIn(BaseModel):
     bound_stations: Optional[List[str]] = None
     client_name: Trimmed = Field(default=None, max_length=128)
     ip_address: Trimmed = Field(default=None, max_length=45)
 
-
 # =====================================================================
-# 工艺拓扑与测试项
 # =====================================================================
 class ProcessStationOut(ORMModel):
     process_id: str
@@ -433,12 +400,10 @@ class ProcessStationOut(ORMModel):
     item_count: int = 0
     timeout_sec: int = 1800
 
-
 class ProcessStationIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     step_order: int = Field(ge=1)
     depends_on: List[str] = Field(default_factory=list)
-
 
 class StationItemOut(ORMModel):
     item_id: int
@@ -449,7 +414,6 @@ class StationItemOut(ORMModel):
     is_mandatory: bool = True
     is_active: bool = True
 
-
 class StationItemCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
@@ -458,12 +422,10 @@ class StationItemCreateIn(BaseModel):
     is_mandatory: bool = True
     is_active: bool = True
 
-
 class StationItemUpdateIn(BaseModel):
     item_name: Trimmed = Field(default=None, max_length=128)
     is_mandatory: Optional[bool] = None
     is_active: Optional[bool] = None
-
 
 class StationItemImportRow(BaseModel):
     """批量导入的一行：case_id 即 pytest nodeid。"""
@@ -471,7 +433,6 @@ class StationItemImportRow(BaseModel):
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     is_mandatory: bool = True
-
 
 class StationItemImportIn(BaseModel):
     """按工位整批同步用例ID清单（幂等 upsert）。
@@ -487,7 +448,6 @@ class StationItemImportIn(BaseModel):
     mode: str = "upsert"
     dry_run: bool = False
 
-
 class StationItemImportOut(BaseModel):
     process_id: str
     station_id: str
@@ -498,64 +458,52 @@ class StationItemImportOut(BaseModel):
     unchanged: int = 0
     deactivated: int = 0
     total_active: int = 0
-    # 清单外仍启用的项：上位机改名/删用例后，旧 nodeid 会残留成"没人跑的必测项"，
-    # 导致进站 case_id_mismatch 全线拦截。upsert 模式只报告不动，replace 模式将其停用。
     orphan_count: int = 0
     orphans: List[str] = []
     warnings: List[str] = []
-
 
 class TopologyOut(BaseModel):
     process_id: str
     steps: List[ProcessStationOut] = []
     items: List[StationItemOut] = []
 
-
 class ValidateIssue(BaseModel):
-    level: str  # error / warning
+    level: str
     code: str
     detail: str
-
 
 class ValidateOut(BaseModel):
     process_id: str
     ok: bool
     issues: List[ValidateIssue] = []
 
-
 # =====================================================================
-# 流程导入 / 导出（完整定义：流程 + 引用工位 + 机型 + 工步 + 用例）
 # =====================================================================
 class ExportProcess(BaseModel):
     process_id: str
     process_name: str = ""
     is_active: bool = True
 
-
 class ExportStation(BaseModel):
     station_id: str
     station_name: str = ""
     timeout_sec: int = 1800
-
 
 class ExportModel(BaseModel):
     product_model: str
     target_fw_version: str
     fw_match_rule: str = FW_RULE_EXACT
 
-
 class ExportStep(BaseModel):
     station_id: str
     step_order: int
     depends_on: List[str] = []
-
 
 class ExportItem(BaseModel):
     station_id: str
     case_id: str
     item_name: str = ""
     is_mandatory: bool = True
-
 
 class ProcessExportOut(BaseModel):
     export_version: int = 1
@@ -566,14 +514,12 @@ class ProcessExportOut(BaseModel):
     steps: List[ExportStep] = []
     items: List[ExportItem] = []
 
-
 class ProcessExportAllOut(BaseModel):
     """全量导出：processes 数组的每一项都是可单独导入的完整流程定义。"""
 
     export_version: int = 1
     exported_at: datetime
     processes: List[ProcessExportOut] = []
-
 
 class ImportProcess(BaseModel):
     """导入时可改 process_id（导入为副本），其余字段原样落地。格式校验与创建入口同款。"""
@@ -587,7 +533,6 @@ class ImportProcess(BaseModel):
     def _valid_process_id(cls, v):
         return _checked_id(v, "process_id")
 
-
 class ImportStation(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     station_name: Trimmed = Field(default="", max_length=128)
@@ -598,25 +543,21 @@ class ImportStation(BaseModel):
     def _valid_station_id(cls, v):
         return _checked_id(v, "station_id")
 
-
 class ImportModel(BaseModel):
     product_model: TrimmedRequired = Field(max_length=64)
     target_fw_version: TrimmedRequired = Field(max_length=32)
     fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
-
 
 class ImportStep(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     step_order: int = Field(ge=1)
     depends_on: List[str] = []
 
-
 class ImportItem(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     is_mandatory: bool = True
-
 
 class ProcessImportIn(BaseModel):
     """导入载荷：结构与导出文件一致（exported_at/export_version 可缺省）。"""
@@ -628,7 +569,6 @@ class ProcessImportIn(BaseModel):
     steps: List[ImportStep] = []
     items: List[ImportItem] = []
 
-
 class ProcessImportResult(UTCSchema):
     process_id: str
     stations_created: int = 0
@@ -637,20 +577,16 @@ class ProcessImportResult(UTCSchema):
     steps_created: int = 0
     items_created: int = 0
 
-
 class CloneIn(BaseModel):
     from_process: TrimmedRequired = Field(max_length=64)
     to_process: TrimmedRequired = Field(max_length=64)
-
 
 class CloneOut(BaseModel):
     process_id: str
     cloned_steps: int
     cloned_items: int
 
-
 # =====================================================================
-# 在制品 / 维修处置
 # =====================================================================
 class ProductOut(ORMModel):
     sn: str
@@ -671,7 +607,6 @@ class ProductOut(ORMModel):
     lock_acquired_at: Optional[datetime] = None
     lock_last_seen_at: Optional[datetime] = None
     lock_heartbeat_count: int = 0
-    # 派生字段
     total_steps: int = 0
     passed_count: int = 0
     is_completed: bool = False
@@ -681,13 +616,11 @@ class ProductOut(ORMModel):
     lock_lease_remaining_sec: int = Field(default=0, description="硬超时剩余（秒）")
     lock_zombie: bool = Field(default=False, description="失联僵尸锁：可被接管或强制解锁")
 
-
 class ProductPageOut(BaseModel):
     total: int
     page: int
     page_size: int
     items: List[ProductOut]
-
 
 class RepairIn(BaseModel):
     sn: TrimmedRequired = Field(max_length=64)
@@ -703,7 +636,6 @@ class RepairIn(BaseModel):
             raise ValueError("invalid_repair_action: must be RETEST / ROLLBACK / RESET / SCRAP")
         return v
 
-
 class RepairOut(ORMModel):
     repair_id: int
     sn: str
@@ -713,23 +645,19 @@ class RepairOut(ORMModel):
     technician_id: str
     created_at: Optional[datetime] = None
 
-
 class RepairPageOut(BaseModel):
     total: int
     page: int
     page_size: int
     items: List[RepairOut]
 
-
 class RepairActionStat(BaseModel):
     action: str
     count: int = 0
 
-
 class RepairStatsOut(BaseModel):
     total: int = 0
     items: List[RepairActionStat] = []
-
 
 # =====================================================================
 # 测试会话（续测与锁接管）
@@ -742,7 +670,6 @@ class SessionItemOut(BaseModel):
     message: Optional[str] = None
     duration_ms: int = 0
     seq: int = 0
-
 
 class SessionOut(ORMModel):
     session_id: str
@@ -757,13 +684,11 @@ class SessionOut(ORMModel):
     end_reason: Optional[str] = None
     ended_by: Optional[str] = None
     created_at: Optional[datetime] = None
-    # 派生字段
     item_count: int = 0
     cursor: Dict[str, Any] = {}
     items: List[SessionItemOut] = []
     lock_held_sec: int = 0
     lock_idle_sec: int = -1
-
 
 class SessionPageOut(BaseModel):
     total: int
@@ -771,12 +696,10 @@ class SessionPageOut(BaseModel):
     page_size: int
     items: List[SessionOut]
 
-
 class ForceReleaseIn(BaseModel):
     """强制解锁：运维人工介入，需填写原因。"""
 
     reason: TrimmedRequired = Field(max_length=255, description="解锁原因（留痕）")
-
 
 class ForceReleaseOut(BaseModel):
     sn: str
@@ -785,17 +708,14 @@ class ForceReleaseOut(BaseModel):
     session_id: Optional[str] = None
     reason: Optional[str] = None
 
-
 class SessionAbortIn(BaseModel):
     reason: Trimmed = Field(default=None, max_length=255)
-
 
 class AbortedSessionPoint(BaseModel):
     session_id: str
     sn: str
     station_id: str
     client_id: Optional[str] = None
-
 
 class SessionAbortRunningIn(BaseModel):
     """批量中止运行中的会话（换测试用例清单前的"先停再换"）。
@@ -811,15 +731,12 @@ class SessionAbortRunningIn(BaseModel):
     reason: Trimmed = Field(default=None, max_length=255)
     dry_run: bool = False
 
-
 class SessionAbortRunningOut(BaseModel):
     aborted: int = 0
     dry_run: bool = False
     items: List[AbortedSessionPoint] = []
 
-
 # =====================================================================
-# 事件账本与追溯
 # =====================================================================
 class RecordOut(ORMModel):
     record_id: int
@@ -832,13 +749,11 @@ class RecordOut(ORMModel):
     is_valid: bool = True
     created_at: Optional[datetime] = None
 
-
 class RecordPageOut(BaseModel):
     total: int
     page: int
     page_size: int
     items: List[RecordOut]
-
 
 class TraceStep(UTCSchema):
     station_id: str
@@ -850,16 +765,13 @@ class TraceStep(UTCSchema):
     last_record_id: Optional[int] = None
     last_time: Optional[datetime] = None
 
-
 class TraceOut(BaseModel):
     product: ProductOut
     steps: List[TraceStep] = []
     records: List[RecordOut] = []
     repairs: List[RepairOut] = []
 
-
 # =====================================================================
-# 仪表盘统计
 # =====================================================================
 class WipStat(BaseModel):
     idle: int = 0
@@ -870,18 +782,15 @@ class WipStat(BaseModel):
     in_process: int = 0
     total: int = 0
 
-
 class TodayStat(BaseModel):
     total: int = 0
     passed: int = 0
     failed: int = 0
     pass_rate: float = 0.0
 
-
 class ClientStat(BaseModel):
     total: int = 0
     online: int = 0
-
 
 class LockStat(BaseModel):
     """租约锁概览：活跃 / 僵尸（失联可接管）/ 会话。"""
@@ -891,24 +800,16 @@ class LockStat(BaseModel):
     sessions_running: int = 0
     sessions_abnormal: int = 0
 
-
 class YieldRow(BaseModel):
     key: str
     total: int = 0
     passed: int = 0
     pass_rate: float = 0.0
-    # 一次通过（FPY）：工位卡按 (SN, 工位) 首条记录判定，件级卡按整件无任何 FAIL
-    # 判定。良率看终检结果，直通率看返修成本，两者并列才能看出"良率漂亮但重测多"。
     first_pass: int = 0
     first_pass_rate: float = 0.0
-    # FPY 的分母（件数）：工位卡的 total 是记录数，两者口径不同须分开返回，
-    # 前端悬浮提示用 fpy_total 优先。0 = 未统计（视为与 total 同口径）。
     fpy_total: int = 0
-    # 件级"曾通过"：该键下任意一条记录 PASS 即算通过（不管测了多少次、中途挂过）。
-    # 与记录级良率的差别是分母为件；与 FPY 互补——FPY 低 + 曾通过高 = 返修能救回来。
     final_pass: int = 0
     final_pass_rate: float = 0.0
-
 
 class YieldPoint(BaseModel):
     date: str
@@ -916,12 +817,10 @@ class YieldPoint(BaseModel):
     passed: int = 0
     pass_rate: float = 0.0
 
-
 class FailedItemPoint(BaseModel):
     case_id: str
     item_name: str
     fail_count: int
-
 
 class WindowStat(BaseModel):
     """窗口整体良率：**按量加权**，与 trend 同源。
@@ -936,7 +835,6 @@ class WindowStat(BaseModel):
     passed: int = 0
     pass_rate: float = 0.0
 
-
 class MetricsOverview(BaseModel):
     window_days: int
     wip: WipStat
@@ -944,14 +842,12 @@ class MetricsOverview(BaseModel):
     window: WindowStat = Field(default_factory=WindowStat)
     trend: List[YieldPoint] = []
     station_yield: List[YieldRow] = []
-    # 记录级口径：窗口内 test_records 的一次通过率。在制品未跑的工位不产生记录，
     # 故未完工的件只会抬高该值，不能代表"整件良率"（保留给需要按测试次数下钻的场景）。
     process_yield: List[YieldRow] = []
-    # 件级良率（终检口径）：分母 = 窗口内已完结（走完全流程或报废）的在制品，
-    # 在制不计入；不良只看终态——报废算不良，中途 FAIL 但重测通过算合格。
     process_unit_yield: List[YieldRow] = []
     process_unit_yield_pending: int = 0
     top_failed_items: List[FailedItemPoint] = []
     clients: ClientStat
     product_total: int = 0
     locks: LockStat = Field(default_factory=LockStat)
+

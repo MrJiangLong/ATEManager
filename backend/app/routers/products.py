@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..errors import get_or_404
-from ..security import current_user
+from ..security import current_user, require_operator
 from ..services import force_release_lock
 from ..services.routing import load_process
 from ..services.views import build_product_out
@@ -16,10 +16,8 @@ from .sessions import _session_view
 
 router = APIRouter(prefix="/api/admin/products", tags=["admin-在制品"])
 
-# 僵尸锁是相对"当前时刻"的实时判定，无法 SQL 预筛，只能取候选后在 Python 侧过滤。
 # TESTING 行数 ≤ 在线机台数，故该上限仅是兜底，实际不会触达。
 _DERIVED_SCAN_LIMIT = 5000
-
 
 def _prefetch_models_and_graphs(db: Session):
     """预载全部机型与流程拓扑：派生字段依赖机型与拓扑，逐行装载会产生 N+1 查询。"""
@@ -31,13 +29,11 @@ def _prefetch_models_and_graphs(db: Session):
             graphs[mr.process_id] = load_process(db, mr.process_id)
     return models_by_name, graphs
 
-
 def _build_view(db: Session, row, models_by_name, graphs):
     """用预载的机型/拓扑装配 ProductOut（不触发逐行查询）。"""
     mr = models_by_name.get(row.product_model)
     graph = graphs.get(mr.process_id) if mr is not None else None
     return build_product_out(db, row, graph=graph, model_row=mr, include_lock=True)
-
 
 @router.get("", response_model=schemas.ProductPageOut, summary="在制品清单(多条件分页)")
 def list_products(
@@ -56,7 +52,6 @@ def list_products(
         query = query.filter(models.ProductStatus.sn.ilike(f"%{sn}%"))
     if product_model:
         query = query.filter(models.ProductStatus.product_model == product_model)
-    # IDLE / COMPLETED 不在此按字面过滤：二者库中同为 IDLE，靠 is_completed 区分（见下方分支）
     status_filter = (current_status or "").upper()
     if current_status and status_filter not in ("IDLE", "COMPLETED"):
         query = query.filter(models.ProductStatus.current_status == status_filter)
@@ -72,10 +67,8 @@ def list_products(
     # 预载机型与拓扑：下面各分支的派生字段都依赖它
     models_by_name, graphs = _prefetch_models_and_graphs(db)
 
-    # 「已完工」不体现在 current_status 上（仍是 IDLE），只由拓扑盖章派生，
     # 故"待测试 / 已完工"必须按 is_completed 冗余列区分，否则两种状态混在一起。
     if status_filter in ("IDLE", "COMPLETED"):
-        # is_completed 已冗余落库 → 可在 SQL 层精确过滤与分页
         query = query.filter(
             models.ProductStatus.current_status == models.STATUS_IDLE,
             models.ProductStatus.is_completed == (status_filter == "COMPLETED"),
@@ -94,9 +87,7 @@ def list_products(
             items=[_build_view(db, r, models_by_name, graphs) for r in rows],
         )
 
-    # 僵尸锁 = 心跳断流 > LOCK_HEARTBEAT_GRACE_SEC，是相对"当前时刻"的实时判定，
     # 没有可落库的字段（随时间自行变化，不能像 is_completed 那样冗余），
-    # 因此无法 SQL 预筛，只能取候选后在 Python 侧过滤再分页。
     if zombie_only:
         candidates = (
             query.filter(models.ProductStatus.current_status == models.STATUS_TESTING)
@@ -129,12 +120,10 @@ def list_products(
         items=[_build_view(db, r, models_by_name, graphs) for r in rows],
     )
 
-
 @router.get("/{sn}", response_model=schemas.ProductOut, summary="在制品详情")
 def get_product(sn: str, db: Session = Depends(get_db), user=Depends(current_user)):
     row = get_or_404(db, models.ProductStatus, sn, "product")
     return build_product_out(db, row, include_lock=True)
-
 
 @router.post(
     "/{sn}/force-release",
@@ -142,11 +131,10 @@ def get_product(sn: str, db: Session = Depends(get_db), user=Depends(current_use
     summary="强制解锁(机台失联/卡死时人工介入)",
 )
 def force_release(
-    sn: str, payload: schemas.ForceReleaseIn, db: Session = Depends(get_db), user=Depends(current_user)
+    sn: str, payload: schemas.ForceReleaseIn, db: Session = Depends(get_db), user=Depends(require_operator)
 ):
     """仅释放工位锁与会话，不动印章 / 失败计数；随后可继续维修处置。"""
     return force_release_lock(db, sn=sn, reason=payload.reason, operator=user.username)
-
 
 @router.get("/{sn}/sessions", response_model=List[schemas.SessionOut], summary="该 SN 的测试会话时间线")
 def product_sessions(sn: str, db: Session = Depends(get_db), user=Depends(current_user)):
@@ -159,3 +147,4 @@ def product_sessions(sn: str, db: Session = Depends(get_db), user=Depends(curren
         .all()
     )
     return [_session_view(r) for r in rows]
+

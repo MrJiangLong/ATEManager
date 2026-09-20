@@ -4,7 +4,7 @@
 
     <DataCard :title="$t('repairs.quickTitle')">
       <div class="quick-flex">
-        <el-form :model="form" label-position="top" class="quick-form" @submit.prevent="submit">
+        <el-form v-if="canOperate" :model="form" label-position="top" class="quick-form" @submit.prevent="submit">
         <el-form-item :label="t('common.sn')" required>
           <el-input
             v-model="form.sn"
@@ -57,7 +57,7 @@
           {{ t('common.confirm') }}
         </el-button>
       </el-form>
-      <!-- 右侧：处置动作分布环图（全量统计），提交后随 load 一并刷新 -->
+      
       <div class="chart-pane">
         <div v-show="statsTotal > 0" class="chart-body">
           <div ref="chartEl" class="chart-el" />
@@ -124,6 +124,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { recordApi, repairApi } from '../api'
+import { useAuth } from '../stores/auth'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
@@ -131,6 +132,7 @@ import { REPAIR_ACTIONS, REPAIR_ACTIONS_WITH_TARGET } from '../utils/constants'
 import { fmtDateTime, repairTagType, statusTagType } from '../utils/format'
 
 const { t, locale } = useI18n()
+const { canOperate } = useAuth()
 
 const items = ref([])
 const loading = ref(false)
@@ -175,7 +177,6 @@ function renderChart(items) {
         text: t('repairs.chartTitle'),
         left: 'center',
         top: 0,
-        // 与左侧表单标签（el-form-item__label 14px）字体与大小一致
         textStyle: {
           fontSize: 14,
           fontWeight: 400,
@@ -184,7 +185,6 @@ function renderChart(items) {
         },
       },
       {
-        // 环心填总数：给"分布"一个可读的绝对量锚点
         text: String(statsTotal.value),
         subtext: t('repairs.chartTotal'),
         left: 'center',
@@ -304,7 +304,6 @@ function search() {
 
 async function submit() {
   if (!form.sn.trim()) return ElMessage.warning(t('repairs.snRequired'))
-  // 用户可能没让输入框失焦就直接点提交：先补一次反查
   if (!snInfo.value && !snInfoError.value) await lookupSn(true)
   if (snInfoError.value === 'not_found') return ElMessage.warning(t('repairs.snNotFound'))
   if (!form.reason.trim()) return ElMessage.warning(t('repairs.reasonRequired'))
@@ -374,3 +373,4 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
 }
 </style>
+

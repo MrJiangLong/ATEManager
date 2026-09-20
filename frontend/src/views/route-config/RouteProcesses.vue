@@ -2,12 +2,12 @@
   <div>
     <div class="tab-head tab-head-end">
       <div class="filter-row">
-        <el-button size="small" :icon="CopyDocument" @click="cloneVisible = true">{{ t('configs.clone') }}</el-button>
+        <el-button v-if="isAdmin" size="small" :icon="CopyDocument" @click="cloneVisible = true">{{ t('configs.clone') }}</el-button>
         <el-button size="small" :icon="Download" :loading="exportingAll" @click="exportAllJson">
           {{ t('configs.exportAll') }}
         </el-button>
-        <el-button size="small" :icon="Upload" @click="importVisible = true">{{ t('configs.importJson') }}</el-button>
-        <el-button type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+        <el-button v-if="isAdmin" size="small" :icon="Upload" @click="importVisible = true">{{ t('configs.importJson') }}</el-button>
+        <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
       </div>
     </div>
 
@@ -18,7 +18,7 @@
       <el-table-column prop="process_name" :label="t('configs.processName')" min-width="220" />
       <el-table-column :label="t('configs.tableModelCount')" width="180">
         <template #default="{ row }">
-          <!-- 机型多时折叠为 +N，悬浮查看全部（与机台管理页绑定工位同款交互） -->
+          
           <div v-if="row.models?.length" class="model-tags">
             <el-tag v-for="m in row.models.slice(0, 2)" :key="m" size="small" effect="plain">{{ m }}</el-tag>
             <el-tooltip v-if="row.models.length > 2" :content="row.models.join(', ')" placement="top">
@@ -42,8 +42,8 @@
           <el-button link type="primary" size="small" :icon="View" @click="openDetail(row)">
             {{ t('configs.detail') }}
           </el-button>
-          <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button v-if="isAdmin" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -117,13 +117,12 @@
       </el-button>
       <template v-if="importDoc">
         <div class="import-preview">
-          <!-- 文件信息 -->
+          
           <div class="imp-file">
             <el-icon><Document /></el-icon>
             <span class="imp-file-name">{{ importFileName }}</span>
           </div>
 
-          <!-- 单流程预览：编号名称 + 统计卡 -->
           <template v-if="!importBatch">
             <div class="imp-head">
               <span class="code imp-pid">{{ importDoc.process?.process_id }}</span>
@@ -149,7 +148,6 @@
             </div>
           </template>
 
-          <!-- 批量预览：流程数 + 可滚动编号标签云 -->
           <template v-else>
             <div class="imp-stats">
               <div class="imp-stat">
@@ -167,7 +165,6 @@
             </div>
           </template>
 
-          <!-- 批量导入进度 -->
           <div v-if="importing && importBatch" class="import-progress">
             <el-progress
               :percentage="importProgress.total ? Math.round((importProgress.current / importProgress.total) * 100) : 0"
@@ -187,7 +184,6 @@
       </template>
     </el-dialog>
 
-    <!-- 批量导入结果：结构化展示成功/跳过/失败，代替粗糙的 toast -->
     <el-dialog v-model="resultVisible" :title="t('configs.importResultTitle')" width="520px" class="form-dialog">
       <template v-if="importResult">
         <div class="imp-summary">
@@ -229,6 +225,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Document, Download, FolderOpened, Plus, Upload, View } from '@element-plus/icons-vue'
 import { processApi, routingApi } from '../../api'
@@ -238,6 +235,7 @@ import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
+const { isAdmin } = useAuth()
 const { processes, loading, loadProcesses } = useProcesses()
 const { page, pageSize, paged } = useLocalPagination(processes)
 
@@ -250,7 +248,6 @@ const cloneVisible = ref(false)
 const cloneSaving = ref(false)
 const cloneForm = reactive({ from_process: '', to_process: '' })
 
-// 流程详情抽屉
 const detailVisible = ref(false)
 const detailRow = ref(null)
 function openDetail(row) {
@@ -258,7 +255,6 @@ function openDetail(row) {
   detailVisible.value = true
 }
 
-// 导出全部流程
 const exportingAll = ref(false)
 async function exportAllJson() {
   exportingAll.value = true
@@ -277,7 +273,6 @@ async function exportAllJson() {
   }
 }
 
-// 导入 JSON
 const importVisible = ref(false)
 const importing = ref(false)
 const importDoc = ref(null)
@@ -287,7 +282,6 @@ const importFileEl = ref(null)
 const importMandatory = computed(() =>
   (importDoc.value?.items || []).filter((i) => i.is_mandatory !== false).length,
 )
-// 批量模式：全量导出文件（processes 数组）
 const importBatch = computed(() => importDoc.value?.__batch || null)
 
 function pickImportFile() {
@@ -312,7 +306,6 @@ function onImportFile(e) {
       const doc = JSON.parse(reader.result)
       if (Array.isArray(doc.processes)) {
         if (!doc.processes.length) throw new Error('empty export file')
-        // 全量导出格式：逐个流程导入，各流程保留原编号
         importDoc.value = { __batch: doc.processes }
         importId.value = `${doc.processes.length}`
         return
@@ -329,14 +322,12 @@ function onImportFile(e) {
   reader.readAsText(file, 'utf-8')
 }
 
-// 批量导入结果（结构化对话框数据）与进度
 const resultVisible = ref(false)
 const importResult = ref(null)
 const importProgress = reactive({ current: 0, total: 0, id: '' })
 
 async function submitImport() {
   if (!importDoc.value) return
-  // 批量模式：逐流程导入，进度条 + 结果对话框
   if (importBatch.value) {
     importing.value = true
     importProgress.current = 0
@@ -368,7 +359,6 @@ async function submitImport() {
     loadProcesses({ force: true })
     return
   }
-  // 单流程模式：可改编号作为副本导入
   importing.value = true
   try {
     const doc = {
@@ -512,3 +502,4 @@ onMounted(() => loadProcesses())
 .imp-fail-id { flex: none; font-weight: 600; }
 .imp-fail-msg { color: var(--app-text-muted, #8a94a6); word-break: break-all; }
 </style>
+

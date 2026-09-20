@@ -31,6 +31,7 @@ from .routers import (
     repairs,
     routing,
     sessions,
+    users,
     v1,
 )
 from .schemas import EnvelopeOut
@@ -114,6 +115,7 @@ for _router in (
     clients.router,
     sessions.router,
     metrics.router,
+    users.router,
 ):
     app.include_router(_router)
 

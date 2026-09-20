@@ -49,34 +49,28 @@ else:
     ArrayText = ARRAY(Text)
     JsonbType = JSONB
 
-
 # 状态机取值（与 DDL CHECK 约束一致）
 STATUS_IDLE = "IDLE"
 STATUS_TESTING = "TESTING"
 STATUS_LOCKED = "LOCKED"
 STATUS_SCRAPPED = "SCRAPPED"
 
-
-# 固件基线匹配规则
 FW_RULE_EXACT = "exact"  # 必须与基线完全一致
 FW_RULE_MIN = "min"  # 不低于基线即可（版本按数字段比较，避免 V3.9 > V3.10 的字典序坑）
 
-# 维修处置动作
 REPAIR_RETEST = "RETEST"
 REPAIR_ROLLBACK = "ROLLBACK"
 REPAIR_RESET = "RESET"
 REPAIR_SCRAP = "SCRAP"
 
-# 测试会话状态（续测载体）
 SESSION_RUNNING = "RUNNING"
 SESSION_COMPLETED = "COMPLETED"
-SESSION_ABORTED = "ABORTED"  # 机台失联 / 主动终止：单次不计失败，连续失联达阈值才计一次
+SESSION_ABORTED = "ABORTED"
 SESSION_EXPIRED = "EXPIRED"  # 超过工位硬超时（计一次失败）
 SESSION_TAKEN_OVER = "TAKEN_OVER"  # 被其他机台接管
 
 # 异常终止：非正常出库结束的会话。列表筛选与概览统计共用，避免两处口径漂移
 ABNORMAL_SESSION_STATUSES = (SESSION_ABORTED, SESSION_EXPIRED, SESSION_TAKEN_OVER)
-
 
 def _pk_column():
     """自增主键：PG 用 BIGINT IDENTITY，SQLite 用 INTEGER AUTOINCREMENT。"""
@@ -84,13 +78,11 @@ def _pk_column():
         return mapped_column(Integer, primary_key=True, autoincrement=True)
     return mapped_column(BigInteger, Identity(always=True), primary_key=True)
 
-
 def _array_column():
     """TEXT[]：PG 原生数组（可 GIN 索引），SQLite 退化为 JSON。"""
     if IS_SQLITE:
         return mapped_column(JSON, default=list, server_default=text("'[]'"))
     return mapped_column(ArrayText, default=list, server_default=text("'{}'"))
-
 
 def _json_column():
     """JSONB：PG 原生，SQLite 退化为 JSON。"""
@@ -98,20 +90,16 @@ def _json_column():
         return mapped_column(JSON, default=dict, server_default=text("'{}'"))
     return mapped_column(JsonbType, default=dict, server_default=text("'{}'"))
 
-
 def _gin_index(name: str, column):
     """PG 专用 GIN 索引；SQLite 返回 None（由 _table_args 过滤）。"""
     if IS_SQLITE:
         return None
     return Index(name, column, postgresql_using="gin")
 
-
 def _table_args(*args):
     return tuple(a for a in args if a is not None)
 
-
 # =====================================================================
-# 鉴权（不属于业务 9 表，为 Web 管理端提供登录能力）
 # =====================================================================
 class User(Base):
     __tablename__ = "users"
@@ -120,11 +108,11 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="admin", server_default=text("'admin'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-
 # =====================================================================
-# 第一部分：静态工艺与主数据
 # =====================================================================
 class Process(Base):
     """工艺流程主表：一个硬件构型一条独立流程（带 AWG / 不带 AWG 彻底解耦）。"""
@@ -133,14 +121,12 @@ class Process(Base):
 
     process_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     process_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    # 停用只作用于管理端（新建/改绑机型时不可选），运行期已绑定机型的在制品照常流转 ——
     # 否则一次停用就会打断正在这条流程上跑的产线。
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     models = relationship("ProductModel", back_populates="process", cascade="all, delete-orphan")
     steps = relationship("ProcessStation", back_populates="process", cascade="all, delete-orphan")
-
 
 class ProductModel(Base):
     """机型主数据：绑定专属流程 + 强制固件基线。"""
@@ -161,7 +147,6 @@ class ProductModel(Base):
 
     process = relationship("Process", back_populates="models")
 
-
 class Station(Base):
     """逻辑工位字典（对应产线物理站位）。"""
 
@@ -173,7 +158,6 @@ class Station(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     clients = relationship("StationClient", back_populates="station")
-
 
 class ProcessStation(Base):
     """流程工步拓扑：step_order 决定顺序，depends_on 决定防跳站闸门。"""
@@ -192,7 +176,6 @@ class ProcessStation(Base):
     process = relationship("Process", back_populates="steps")
     station = relationship("Station")
 
-
 class StationItem(Base):
     """工位测试项：用例ID静态清单（防漏测依据）。
 
@@ -208,15 +191,12 @@ class StationItem(Base):
     item_id: Mapped[int] = _pk_column()
     process_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     station_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    # 用例ID：pytest 用例的唯一标识
     case_id: Mapped[str] = mapped_column("nodeid", String(256), nullable=False)
     item_name: Mapped[str] = mapped_column(String(128), nullable=False)
     is_mandatory: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
 
-
 # =====================================================================
-# 第二部分：物理机台映射
 # =====================================================================
 class StationClient(Base):
     """物理测试机台档案：一台工控机绑定一个逻辑工位。"""
@@ -224,14 +204,9 @@ class StationClient(Base):
     __tablename__ = "station_clients"
 
     client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    # 展示名：client_id 是 SZ-L1-CAL-01 这类工位编码，补一个可读名称便于现场辨认
     client_name: Mapped[Optional[str]] = mapped_column(String(128))
-    # 绑定集合（数组）：不同产品的工艺完全不同时，一台物理机台可为多个流程的
-    # 不同工位提供服务。进站按 "件所属流程 ∩ bound_stations" 解析唯一工位
-    # （多命中 400 要求修正机台绑定；空交集 403）。
     bound_stations: Mapped[list] = _array_column()
     # 当前操作工位（运行态）：进站解析成功后回写，供心跳超时查询 /
-    # 断点会话匹配 / 释放锁等单工位逻辑使用。可空 = 从未进站。
     station_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("stations.station_id"), nullable=True, index=True
     )
@@ -245,9 +220,7 @@ class StationClient(Base):
 
     station = relationship("Station", back_populates="clients")
 
-
 # =====================================================================
-# 第三部分：在制品状态、落库账本、维修履历
 # =====================================================================
 class ProductStatus(Base):
     """在制品状态机：sn 主键，首工位 *IDN? 直读后动态建档。
@@ -276,10 +249,6 @@ class ProductStatus(Base):
         String(16), default=STATUS_IDLE, server_default=STATUS_IDLE
     )
     passed_stations: Mapped[List[str]] = _array_column()
-    # 冗余列：流程全部工步均已盖章（= 工步集 ⊆ passed_stations）。
-    # "集合包含"无法用跨方言 SQL 表达（PG 有 @>，SQLite 没有），故冗余落库，
-    # 使列表页能在 SQL 层按"已完成/未完成"精确过滤与分页。
-    # 唯一写入口 gate._write_passed()；新建在制品为空印章集合，默认值 False 已自洽。
     is_completed: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
     fail_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     current_client: Mapped[Optional[str]] = mapped_column(String(64))
@@ -300,7 +269,6 @@ class ProductStatus(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-
 class TestRecord(Base):
     """测试记录底账：一次出站一条，作为上传闭环的落库凭据（ACK 来源）。"""
 
@@ -320,7 +288,6 @@ class TestRecord(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     is_valid: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 
 class RepairRecord(Base):
     """维修处置与回滚履历：RETEST / ROLLBACK / RESET / SCRAP。"""
@@ -344,7 +311,6 @@ class RepairRecord(Base):
     reason: Mapped[Optional[str]] = mapped_column(Text)
     technician_id: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 
 class TestSession(Base):
     """测试会话：一次「进站 → 出站」的尝试，承载续测断点。
@@ -381,3 +347,4 @@ class TestSession(Base):
     end_reason: Mapped[Optional[str]] = mapped_column(Text)
     ended_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

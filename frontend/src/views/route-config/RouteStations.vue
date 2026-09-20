@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="tab-head tab-head-end">
-      <el-button type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">
@@ -14,8 +14,8 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button v-if="isAdmin" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -62,6 +62,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { stationApi } from '../../api'
@@ -70,6 +71,7 @@ import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
+const { isAdmin } = useAuth()
 const { loadProcesses } = useProcesses()
 const list = ref([])
 const loading = ref(false)
@@ -124,7 +126,6 @@ async function submit() {
     ElMessage.success(t('common.saveSuccess'))
     dialogVisible.value = false
     loadStations()
-    // 工位字典属于共享主数据，落库后刷新全局缓存供其它页面下拉使用
     loadProcesses({ force: true })
   } catch (e) {
     ElMessage.error(e.message)
@@ -153,3 +154,4 @@ async function onDelete(row) {
 
 onMounted(() => loadStations())
 </script>
+

@@ -42,8 +42,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Connection, FirstAidKit, Monitor, Notebook, PieChart, Setting, Tickets } from '@element-plus/icons-vue'
+import { Connection, FirstAidKit, Monitor, Notebook, PieChart, Setting, Tickets, User } from '@element-plus/icons-vue'
 import AppLogoMark from '../components/AppLogoMark.vue'
+import { useAuth } from '../stores/auth'
 
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
@@ -84,16 +85,20 @@ const activeMenu = computed(() => {
   return hit ? MENU_PARENT[hit] : path
 })
 
-/* 菜单：扁平结构，无业务域分组（与目标项目保持单层结构） */
-const menuItems = [
+/* 菜单：扁平结构，无业务域分组（与目标项目保持单层结构）。
+   roles 缺省 = 全员可见；用户管理仅 admin */
+const ALL_MENUS = [
   { path: '/dashboard', labelKey: 'menu.dashboard', icon: PieChart },
   { path: '/products',  labelKey: 'menu.products',  icon: Tickets },
   { path: '/records',   labelKey: 'menu.records',   icon: Notebook },
   { path: '/repairs',   labelKey: 'menu.repairs',   icon: FirstAidKit },
   { path: '/clients',   labelKey: 'menu.clients',   icon: Monitor },
   { path: '/sessions',  labelKey: 'menu.sessions',  icon: Connection },
-  { path: '/configs',   labelKey: 'menu.configs',   icon: Setting },
+  { path: '/configs',   labelKey: 'menu.configs',   icon: Setting, roles: ['admin'] },
+  { path: '/users',     labelKey: 'menu.users',     icon: User,     roles: ['admin'] },
 ]
+const { role } = useAuth()
+const menuItems = computed(() => ALL_MENUS.filter((m) => !m.roles || m.roles.includes(role.value)))
 </script>
 
 <style scoped>

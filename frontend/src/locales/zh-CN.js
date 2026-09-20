@@ -8,8 +8,6 @@ export default {
     systemVersion: '系统版本',
     langZh: '简体中文',
     langEn: 'English',
-    roleAdmin: '管理员',
-    roleUser: '操作员',
   },
 
   menu: {
@@ -22,6 +20,34 @@ export default {
     clients: '机台管理',
     sessions: '测试会话',
     configs: '工艺配置',
+    users: '用户管理',
+  },
+
+  users: {
+    username: '用户名',
+    usernamePh: '如：zhangsan',
+    roleRequired: '请先选择角色',
+    fullName: '姓名',
+    fullNamePh: '选填',
+    role: '角色',
+    roles: { viewer: '访客', operator: '操作员', admin: '管理员' },
+    roleTag: {
+      viewer: '只读浏览',
+      operator: '可做产线操作',
+      admin: '全部权限',
+    },
+    status: '状态',
+    enabled: '启用',
+    disabled: '停用',
+    createdAt: '创建时间',
+    password: '初始密码',
+    passwordPh: '至少 6 位',
+    resetPwd: '重置密码',
+    resetPwdPh: '留空则不修改',
+    createTitle: '新建用户',
+    editTitle: '编辑用户',
+    invalidInput: '请填写用户名，密码至少 6 位',
+    deleteConfirm: '确认删除用户 {name}？',
   },
 
   sessionStatus: {
@@ -51,6 +77,8 @@ export default {
     action: '操作',
     status: '状态',
     enabled: '启用',
+    saved: '已保存',
+    deleted: '已删除',
     result: '结果',
     noData: '暂无数据',
     yesDeleteItem: '确认删除该测试项？该操作不可撤销。',
@@ -69,7 +97,6 @@ export default {
     usernamePlaceholder: '请输入账号',
     passwordPlaceholder: '请输入密码',
     loggingIn: '登录中…',
-    // 登录页左侧品牌区（右侧为表单）
     brandSub: '集中管理测试在制品 / 工艺配置 / 良率台账',
     brandFooter: 'UNI-TREND TECHNOLOGY CO. 自动化测试管理平台',
     feature1: '用例ID防漏测 · 必测项强校验',
@@ -360,7 +387,6 @@ export default {
     tabTopology: '工步拓扑',
     tabItems: '用例ID',
 
-    // 工艺流程
     processId: '流程 ID',
     processName: '流程名称',
     tableModelCount: '机型数',
@@ -374,7 +400,6 @@ export default {
     cloneTo: '目标流程',
     yesDelete: '确认删除流程「{name}」？',
 
-    // 机型
     modelId: '机型',
     modelProcess: '所属流程',
     targetFw: '固件基线',
@@ -386,7 +411,6 @@ export default {
     yesDeleteModel: '确认删除机型「{name}」？',
     filterProcess: '按流程筛选',
 
-    // 工位
     stationId: '工位 ID',
     stationName: '工位名称',
     timeoutSec: '超时时长(秒)',
@@ -394,7 +418,6 @@ export default {
     editStation: '编辑工位',
     yesDeleteStation: '确认删除工位「{name}」？',
 
-    // 工步拓扑
     stepOrder: '工步序号',
     dependsOn: '前置工步',
     itemCount: '测试项',
@@ -404,7 +427,6 @@ export default {
     removeStepWarn: '移除工步 {stations} 会同时删除其 {count} 个测试项，是否继续？',
     selectStation: '选择工位',
 
-    // 用例ID
     caseId: '用例ID',
     itemName: '用例名称',
     detail: '详情',
@@ -458,7 +480,6 @@ export default {
     caseIdPh: 'tests/test_cal_param.py::TestAmp::test_amp_cal',
     filterStation: '按工位筛选',
 
-    // 校验
     validate: '校验',
     validateTitle: '工艺拓扑校验',
     validateOk: '拓扑校验通过',
@@ -473,3 +494,4 @@ export default {
     loadFailed: '加载失败',
   },
 }
+

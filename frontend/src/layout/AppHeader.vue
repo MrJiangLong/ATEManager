@@ -31,7 +31,11 @@
       </el-tag>
 
       <div v-if="isLoggedIn" class="user-box">
-        <el-avatar :size="34" class="avatar">{{ avatarText }}</el-avatar>
+        <el-tooltip :content="userRole" placement="bottom">
+          <div class="avatar role-avatar" :class="`role-${auth.role.value}`">
+            <el-icon :size="18"><component :is="roleIcon" /></el-icon>
+          </div>
+        </el-tooltip>
         <el-dropdown trigger="click" @command="$emit('user-command', $event)">
           <div class="user-meta user-meta-btn">
             <span class="user-name">{{ userName }}</span>
@@ -40,7 +44,7 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="changePassword">
-                <el-icon><Key /></el-icon>{{ $t('auth.changePassword') }}
+                <el-icon><Lock /></el-icon>{{ $t('auth.changePassword') }}
               </el-dropdown-item>
               <el-dropdown-item command="logout" divided>
                 <el-icon><SwitchButton /></el-icon>{{ $t('auth.logout') }}
@@ -57,7 +61,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, Calendar, Check, Expand, Fold, Key, Switch, SwitchButton } from '@element-plus/icons-vue'
+import { ArrowDown, Calendar, Check, Expand, Fold, Lock, Monitor, Stamp, Switch, SwitchButton, View } from '@element-plus/icons-vue'
 import { setLocale } from '../i18n'
 import { useAuth } from '../stores/auth'
 
@@ -92,7 +96,9 @@ const avatarText = computed(() => {
   return name ? name.slice(0, 1).toUpperCase() : 'U'
 })
 const userName = computed(() => auth.state.user?.full_name || auth.state.user?.username || '-')
-const userRole = computed(() => (auth.state.user?.is_admin ? t('layout.roleAdmin') : t('layout.roleUser')))
+const userRole = computed(() => t(`users.roles.${auth.role.value}`))
+const ROLE_ICONS = { viewer: View, operator: Monitor, admin: Stamp }
+const roleIcon = computed(() => ROLE_ICONS[auth.role.value] || View)
 
 function onLang(value) {
   setLocale(value)
@@ -169,14 +175,23 @@ function onLang(value) {
 .user-name { font-size: 13.5px; color: #3d4a6b; font-weight: 500; }
 .user-role { font-size: 10.5px; color: #a0abc2; letter-spacing: 1px; }
 
+/* 角色徽章：浅色底 + 同色图标，圆角方章造型（轻量、去投影） */
 .avatar {
-  background: linear-gradient(135deg, #2f6bff, #7aa2ff);
-  font-size: 13px;
-  color: #fff;
-  box-shadow: 0 3px 10px rgba(47, 107, 255, 0.35);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: background 0.2s ease, color 0.2s ease;
 }
+.role-viewer { background: #eef1f6; color: #7c8aa5; }
+.role-operator { background: rgba(47, 107, 255, 0.1); color: #2f6bff; }
+.role-admin { background: rgba(230, 131, 43, 0.13); color: #d9731a; }
 
 @media (max-width: 900px) {
   .user-meta-btn { display: none; }
 }
 </style>
+

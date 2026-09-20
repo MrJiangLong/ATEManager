@@ -54,7 +54,6 @@ ENV_FILE = BACKEND / ".env"
 
 DEFAULT_SQLITE = "sqlite:///./data/sim.db"
 
-
 def read_env_keys(*keys: str) -> dict:
     """从 backend/.env 解析指定键（跳过注释行，自动去掉首尾空白）。"""
     text = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
@@ -65,12 +64,10 @@ def read_env_keys(*keys: str) -> dict:
             out[key] = m.group(1)
     return out
 
-
 def port_open(port: int) -> bool:
     with socket.socket() as sock:
         sock.settimeout(1)
         return sock.connect_ex(("127.0.0.1", port)) == 0
-
 
 def wait_health(port: int, timeout: int = 60) -> bool:
     deadline = time.time() + timeout
@@ -81,7 +78,6 @@ def wait_health(port: int, timeout: int = 60) -> bool:
         except Exception:
             time.sleep(1)
     return False
-
 
 def prepare_sqlite(sim_db: str, keep: bool) -> None:
     db_path = sim_db.split("///", 1)[-1]
@@ -96,13 +92,11 @@ def prepare_sqlite(sim_db: str, keep: bool) -> None:
                     p.unlink()
                 except OSError as exc:
                     # 某些环境（IDE 安全删除策略）禁止 unlink；
-                    # 后续 seed --reset 会清空表内容，放行即可。
                     print(f"[db][warn] 无法删除旧库 {p.name}（{exc}），改由 --reset 清空表")
         print(f"[db] rebuilding local SQLite test db {sim_db}")
     else:
         print(f"[db] reusing local SQLite test db {sim_db}")
     target.parent.mkdir(parents=True, exist_ok=True)
-
 
 def prepare_pg() -> str:
     url = "postgresql+pg8000://postgres:postgres@127.0.0.1:55433/ate_sim"
@@ -126,11 +120,9 @@ def prepare_pg() -> str:
     print("[ERROR] PG not ready")
     sys.exit(1)
 
-
 def take_flag(argv: list, flag: str) -> tuple:
     """从参数里摘出开关（不传给 line_simulator），返回 (是否命中, 剩余参数)。"""
     return flag in argv, [a for a in argv if a != flag]
-
 
 def run_simulator(port: int, cfg: dict, extra: list, env: dict) -> int:
     """对指定端口的后端跑产线仿真。"""
@@ -140,7 +132,6 @@ def run_simulator(port: int, cfg: dict, extra: list, env: dict) -> int:
            "--admin-user", cfg.get("DEFAULT_ADMIN_USERNAME", "admin"),
            "--admin-password", cfg.get("DEFAULT_ADMIN_PASSWORD", "admin123")] + extra
     return subprocess.run(cmd, cwd=str(BACKEND), env=env).returncode
-
 
 def main() -> int:
     attach_flag, extra = take_flag(sys.argv[1:], "--attach")
@@ -165,7 +156,6 @@ def main() -> int:
     env["PYTHONIOENCODING"] = "utf-8"
 
     if attach:
-        # 只仿真：后端已在运行，直接打它的 API，不建库 / 不 seed / 不起服务 / 不清理
         if not wait_health(port, timeout=10):
             print(f"[ERROR] no backend answering on http://127.0.0.1:{port}")
             print("        Start it first (scripts\\dev-backend.bat) or set SIM_PORT.")
@@ -188,14 +178,12 @@ def main() -> int:
     env["DATABASE_URL"] = db_url
     env["SWEEPER_ENABLED"] = sweeper
 
-    # 1) 静态工艺规则（只写本地测试库）
     print("[seed] writing static process rules and scenario data...")
     if subprocess.run([str(PY), "-m", "app.seed", "--reset", "--products", products],
                       cwd=str(BACKEND), env=env).returncode != 0:
         print("[ERROR] seed failed")
         return 1
 
-    # 2) 起后端（不用 --reload，便于干净退出）
     print("[run] backend starting, waiting for health check...")
     proc = subprocess.Popen(
         [str(PY), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
@@ -207,7 +195,6 @@ def main() -> int:
             return 1
         print(f"[run] backend ready: http://127.0.0.1:{port}")
 
-        # 3) 跑仿真
         print("[sim] starting line simulator...")
         rc = run_simulator(port, cfg, extra, env)
     finally:
@@ -224,6 +211,6 @@ def main() -> int:
     print(f"[done] simulation finished, exit code {rc} (0=pass)")
     return rc
 
-
 if __name__ == "__main__":
     sys.exit(main())
+

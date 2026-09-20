@@ -23,21 +23,16 @@ from .timeutil import (
     utcnow,
 )
 
-# 单次统计最多拉取的事件数
 MAX_RECORDS = 50_000
-
 
 def _rate(passed: int, total: int) -> float:
     return round(passed / total * 100, 1) if total else 0.0
-
 
 def build_overview(
     db: Session, *, days: int, process_id: Optional[str] = None
 ) -> schemas.MetricsOverview:
     window_days = days or settings.METRICS_WINDOW_DAYS
     now = utcnow()
-    # 日界一律用本地时区（settings.TZ_INFO）：今日 = 本地 00:00 起，
-    # 日趋势窗口 = 最近 window_days 个本地自然日（含今日）。
     today_start = local_day_start(now)
     since = today_start - timedelta(days=window_days - 1)
 
@@ -118,8 +113,6 @@ def build_overview(
         )
 
     # 窗口整体良率按量加权（与 trend 同源）：不能用"日良率的算术平均"，
-    # 无产出的日期 pass_rate=0 会把均值整体拉低，
-    # 出现"趋势图 100%、均值线 7%"这类与今日良率对不上的显示。
     window_total = sum(point.total for point in trend)
     window_passed = sum(point.passed for point in trend)
     window = schemas.WindowStat(
@@ -138,8 +131,7 @@ def build_overview(
         口径与记录级良率同窗（含 MAX_RECORDS 上限约束）。
         """
         grouped: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "passed": 0})
-        first_outcome: Dict[tuple, tuple] = {}  # (sn, key) -> (created, overall_result)
-        # 件级"曾通过"集合：该键下有过任一条 PASS 记录的件
+        first_outcome: Dict[tuple, tuple] = {}
         ever_sns: Dict[str, set] = defaultdict(set)
         ever_passed: Dict[str, set] = defaultdict(set)
         for created, r in records:
@@ -191,7 +183,6 @@ def build_overview(
         pending 只数窗口内有测试活动但未走完流程的件；从未进过站的件不计入。
         """
         active_sns = {r.sn for _, r in records}
-        # FPY 按整件判定，不受时间窗截断影响：窗口外的失败同样算失败
         failed_sns = {
             sn
             for (sn,) in db.query(models.TestRecord.sn)
@@ -309,3 +300,4 @@ def build_overview(
         product_total=len(products),
         locks=lock_stat,
     )
+

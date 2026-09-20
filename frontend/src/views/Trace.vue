@@ -131,7 +131,6 @@
         </el-table>
       </DataCard>
 
-      <!-- 测试会话时间线：试了几次、每次跑到哪崩的 -->
       <DataCard :title="$t('sessions.title')">
         <el-table :data="sessions" stripe size="small">
           <el-table-column prop="station_id" :label="$t('sessions.tableStation')" width="140">
@@ -236,7 +235,6 @@ async function load() {
   } finally {
     loading.value = false
   }
-  // 会话时间线失败不阻断主流程
   try {
     const res = await productApi.sessions(sn.value)
     sessions.value = res.data
@@ -344,3 +342,4 @@ onMounted(() => load())
   white-space: nowrap;
 }
 </style>
+

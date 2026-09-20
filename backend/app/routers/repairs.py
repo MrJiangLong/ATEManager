@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..security import current_user
+from ..security import current_user, require_operator
 from ..services import apply_repair
 from ..services.timeutil import utcnow
 
@@ -42,7 +42,7 @@ def list_repairs(
 
 
 @router.post("", response_model=schemas.RepairOut, status_code=201, summary="登记维修处置")
-def create_repair(payload: schemas.RepairIn, db: Session = Depends(get_db), user=Depends(current_user)):
+def create_repair(payload: schemas.RepairIn, db: Session = Depends(get_db), user=Depends(require_operator)):
     """维修处置语义
         RETEST   清除指定工位印章，允许重测
         ROLLBACK 回退到指定工位（清除该工位及其后续所有印章）

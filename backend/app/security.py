@@ -26,8 +26,12 @@ from .models import User
 ALGORITHM = "HS256"
 PBKDF2_ITERATIONS = 260_000
 
-_bearer = HTTPBearer(auto_error=False)
+ROLE_VIEWER = "viewer"
+ROLE_OPERATOR = "operator"
+ROLE_ADMIN = "admin"
+ALL_ROLES = (ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN)
 
+_bearer = HTTPBearer(auto_error=False)
 
 # ---------- 密码 ----------
 def hash_password(password: str) -> str:
@@ -38,7 +42,6 @@ def hash_password(password: str) -> str:
         base64.b64encode(salt).decode(),
         base64.b64encode(digest).decode(),
     )
-
 
 def verify_password(password: str, encoded: str) -> bool:
     try:
@@ -53,25 +56,23 @@ def verify_password(password: str, encoded: str) -> bool:
     except Exception:
         return False
 
-
 # ---------- JWT ----------
 def create_access_token(user: User) -> str:
     now = int(time.time())
     payload = {
         "sub": str(user.id),
         "username": user.username,
+        "role": user.role,
         "iat": now,
         "exp": now + settings.JWT_EXPIRE_HOURS * 3600,
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALGORITHM)
-
 
 def decode_token(token: str) -> Optional[dict]:
     try:
         return jwt.decode(token, settings.JWT_SECRET, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         return None
-
 
 def _user_from_token(credentials: Optional[HTTPAuthorizationCredentials], db: Session) -> Optional[User]:
     if credentials is None:
@@ -83,10 +84,13 @@ def _user_from_token(credentials: Optional[HTTPAuthorizationCredentials], db: Se
         sub = payload.get("sub")
         if sub is None:
             return None
-        return db.get(User, int(sub))
+        user = db.get(User, int(sub))
+        # 被停用账号立即失效（即使 token 未过期）
+        if user is None or not user.is_active:
+            return None
+        return user
     except (TypeError, ValueError):
         return None
-
 
 # ---------- 依赖 ----------
 def current_user(
@@ -103,6 +107,27 @@ def current_user(
         )
     return user
 
+def require_role(*roles: str):
+    """角色依赖工厂：读端点用 current_user（登录即可），写端点按角色收口。
+
+    前端按钮显隐只是体验层，这里是真正的安全边界。
+    """
+
+    def dep(user: User = Depends(current_user)) -> User:
+        if user.role not in roles:
+            raise AppError(
+                status.HTTP_403_FORBIDDEN,
+                "permission_denied",
+                f"role '{user.role}' is not allowed for this operation",
+                exit_code=EXIT_GATE_BLOCKED,
+            )
+        return user
+
+    return dep
+
+# 产线操作（机台绑定/维修处置/强制解锁/中止会话）：operator 及以上
+require_operator = require_role(ROLE_OPERATOR, ROLE_ADMIN)
+require_admin = require_role(ROLE_ADMIN)
 
 def api_caller(
     request: Request,
@@ -124,3 +149,4 @@ def api_caller(
         "Missing X-API-Key or valid JWT",
         exit_code=EXIT_GATE_BLOCKED,
     )
+

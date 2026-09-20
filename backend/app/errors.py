@@ -6,7 +6,6 @@
 
 from typing import Any, Optional
 
-# 退出码（与 HTTP 状态并存，供上位机数值分支）
 EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_GATE_BLOCKED = 10
@@ -15,7 +14,6 @@ EXIT_MISSING_MANDATORY = 13
 EXIT_LOCK_EXPIRED = 14
 EXIT_CASE_ID_MISMATCH = 15
 EXIT_PRODUCT_LOCKED = 16
-
 
 class AppError(Exception):
     """业务异常：由全局处理器转换为统一响应包。"""
@@ -36,22 +34,17 @@ class AppError(Exception):
         self.exit_code = exit_code
         self.data = data
 
-
 def bad_request(code: str, message: str, **kw) -> AppError:
     return AppError(400, code, message, **kw)
-
 
 def forbidden(code: str, message: str, **kw) -> AppError:
     return AppError(403, code, message, **kw)
 
-
 def conflict_error(code: str, message: str, **kw) -> AppError:
     return AppError(409, code, message, **kw)
 
-
 def not_found(code: str = "not_found", message: str = "Resource not found") -> AppError:
     return AppError(404, code, message, exit_code=EXIT_GATE_BLOCKED)
-
 
 def get_or_404(db, model, key, label: str):
     """取实体，不存在抛 404。"""
@@ -59,3 +52,4 @@ def get_or_404(db, model, key, label: str):
     if row is None:
         raise not_found(f"{label}_not_found", f"{label}_not_found: {key}")
     return row
+

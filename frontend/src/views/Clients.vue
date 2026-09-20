@@ -12,7 +12,7 @@
       </el-select>
       <template #extra>
         <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
-        <el-button type="primary" :icon="Plus" @click="openCreate">{{ $t('clients.newClient') }}</el-button>
+        <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openCreate">{{ $t('clients.newClient') }}</el-button>
       </template>
     </PageToolbar>
 
@@ -24,7 +24,7 @@
         size="small"
         style="width: 100%; table-layout: fixed"
       >
-        <!-- 编号与名称是同一台机台的两种表示，合并为一列；名称为次要信息 -->
+        
         <el-table-column :label="$t('clients.tableMachine')" min-width="140">
           <template #default="{ row }">
             <div class="cell-stack">
@@ -36,7 +36,7 @@
         <el-table-column :label="$t('clients.tableStation')" width="260">
           <template #default="{ row }">
             <div v-if="row.bound_stations && row.bound_stations.length" class="cell-stack">
-              <!-- 超过 3 个折叠为 +N，悬浮查看全部 -->
+              
               <div class="station-tags">
                 <el-tag
                   v-for="s in row.bound_stations.slice(0, 3)"
@@ -59,10 +59,10 @@
             <el-tag v-else size="small" effect="plain" type="danger">{{ $t('clients.unbound') }}</el-tag>
           </template>
         </el-table-column>
-        <!-- 接入信息（IP / 程序版本）属次要信息，统一降级为小字 -->
+        
         <el-table-column :label="$t('clients.tableAccess')" min-width="170">
           <template #default="{ row }">
-            <!-- 空值不再用「—」占位：缺哪行少哪行，全缺才提示未上报 -->
+            
             <div v-if="row.ip_address || row.app_version" class="cell-stack">
               <span v-if="row.ip_address" class="cell-sub">{{ row.ip_address }}</span>
               <span v-if="row.app_version" class="muted cell-sub">{{ row.app_version }}</span>
@@ -70,7 +70,7 @@
             <span v-else class="muted cell-sub">{{ $t('clients.notReported') }}</span>
           </template>
         </el-table-column>
-        <!-- 状态是主角：圆点 + 状态词 + 心跳时间；离线整体转为警示色 -->
+        
         <el-table-column :label="$t('clients.tableState')" min-width="170">
           <template #default="{ row }">
             <div class="cell-stack state-cell" :class="row.online ? 'is-online' : 'is-offline'">
@@ -93,9 +93,9 @@
         </el-table-column>
         <el-table-column :label="$t('common.action')" width="200" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-if="canOperate" link type="primary" size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
             <el-button
-              v-if="row.holding_sn"
+              v-if="canOperate && row.holding_sn"
               link
               type="warning"
               size="small"
@@ -103,7 +103,7 @@
             >
               {{ $t('products.forceRelease') }}
             </el-button>
-            <el-button link type="danger" size="small" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-if="canOperate" link type="danger" size="small" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
         <template #empty><EmptyState :text="$t('common.noData')" /></template>
@@ -165,6 +165,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuth } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { clientApi, productApi } from '../api'
@@ -176,6 +177,7 @@ import { useProcesses } from '../composables/useProcesses'
 import { fmtRelative } from '../utils/format'
 
 const { t } = useI18n()
+const { canOperate } = useAuth()
 const { stations, loadProcesses } = useProcesses()
 
 const items = ref([])
@@ -202,7 +204,6 @@ async function load() {
   }
 }
 
-// 机台档案一次全量返回，搜索在本地过滤即可
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return items.value
@@ -215,7 +216,6 @@ const filtered = computed(() => {
 
 const page = ref(1)
 const pageSize = ref(20)
-// 过滤是本地的，分页同样本地做；过滤条件变化时回到第一页
 const paged = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
@@ -357,3 +357,4 @@ usePolling(load, 20000)
 .pager { display: flex; justify-content: flex-end; padding-top: 12px; }
 .holding-lost { font-size: 11px; margin-top: 2px; }
 </style>
+

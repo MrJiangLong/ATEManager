@@ -42,7 +42,6 @@ logger = get_logger("seed")
 TARGET_FW = "V3.20"
 
 # ---------------------------------------------------------------------
-# 静态工艺规则（方案给定）
 # ---------------------------------------------------------------------
 PROCESSES = [
     ("PROC-SCOPE-MSO-AWG", "TEK数字示波器-带AWG选件流程"),
@@ -63,7 +62,6 @@ MODELS = [
     ("DPO4054B", "PROC-SCOPE-DPO-BASE"),
 ]
 
-# (process_id, station_id, step_order, depends_on)
 TOPOLOGY = [
     ("PROC-SCOPE-MSO-AWG", "CAL-PARAM", 10, []),
     ("PROC-SCOPE-MSO-AWG", "CAL-IFACE", 20, ["CAL-PARAM"]),
@@ -77,10 +75,6 @@ TOPOLOGY = [
     ("PROC-SCOPE-DPO-BASE", "TST-IFACE", 40, ["TST-PARAM"]),
 ]
 
-# (station_id, nodeid, item_name)
-# nodeid 为用例ID：上位机 pytest 实际 nodeid，与执行时上报的值严格一致。
-# 完整 nodeid 形式：tests/test_<station>.py::Test<Class>::test_<method>
-# 长度上限由 station_items.nodeid(String(256)) 保障。
 ITEMS = [
     ("CAL-PARAM", "tests/test_cal_param.py::TestAmp::test_amp_cal", "CHn幅度校准"),
     ("CAL-PARAM", "tests/test_cal_param.py::TestPhase::test_phase_cal", "CHn_相位校准"),
@@ -105,17 +99,12 @@ ITEMS = [
     ("TST-AWG",   "tests/test_tst_awg.py::TestAfgSquare::test_afg_square_osc", "AFG 通道1方波测试(OSC)"),
 ]
 
-# DPO 流程剔除 AWG 站位
 DPO_EXCLUDED = {"CAL-AWG", "TST-AWG"}
 
 CLIENTS = [
-    # 第 4 列是上位机自报的 app_version：真机上由 gate 在注册/心跳时刷新，
-    # seed 里直接给定值，便于演示机台清单的「接入信息」列
     ("SZ-L1-CAL-01", "CAL-PARAM", "10.1.60.11", "V1.4.2"),
     ("SZ-L1-CAL-02", "CAL-IFACE", "10.1.60.12", "V1.4.2"),
     ("SZ-L1-CAL-03", "CAL-AWG", "10.1.60.13", "V1.4.2"),
-    # 备用机台：与主机台同工位，用于承载演示场景数据
-    # 一台机台同时只应持有一把工位锁，故每个持锁的场景件各占一台
     ("SZ-L1-CAL-07", "CAL-PARAM", "10.1.60.17", "V1.4.1"),
     ("SZ-L1-CAL-08", "CAL-PARAM", "10.1.60.18", "V1.4.2"),
     ("SZ-L1-TST-01", "TST-PARAM", "10.1.61.11", "V1.4.2"),
@@ -128,9 +117,7 @@ CLIENTS = [
 
 STATION_CLIENT = {c[1]: c[0] for c in CLIENTS}
 
-
 # ---------------------------------------------------------------------
-# 随机测试数据生成
 # ---------------------------------------------------------------------
 def _values_for(case_id: str, rng: random.Random, failed: bool) -> dict:
     """按用例类型生成贴近真实的测量值快照。
@@ -138,7 +125,6 @@ def _values_for(case_id: str, rng: random.Random, failed: bool) -> dict:
     case_id 现采用 pytest 完整 nodeid（tests/test_xxx.py::TestCls::test_method），
     通过 `test_xxx` 用例方法名识别测试类型，与上位机 pytest 端命名保持一致。
     """
-    # 提取方法名：`tests/test_cal_param.py::TestAmp::test_amp_cal` -> `test_amp_cal`
     method = case_id.rsplit("::", 1)[-1].lower()
 
     if "amp" in method:
@@ -165,19 +151,14 @@ def _values_for(case_id: str, rng: random.Random, failed: bool) -> dict:
         return {"triggered": 0 if failed else 1, "level_v": round(rng.uniform(0.9, 1.1), 3)}
     return {"value": round(rng.uniform(0, 1), 4)}
 
-
-# 复用查询结果：远端库每条 SQL 都是一次网络往返，N+1 写法会被放大上千倍
-# （60 台在制品 → 上千次往返 → 数十秒）。seed 是进程内一次性调用，缓存不跨进程。
 _GRAPH_CACHE: dict = {}
 _ITEM_CACHE: dict = {}
 _MODEL_CACHE: dict = {}
-
 
 def _reset_caches() -> None:
     _GRAPH_CACHE.clear()
     _ITEM_CACHE.clear()
     _MODEL_CACHE.clear()
-
 
 def _cached_model(db, product_model: str):
     if product_model not in _MODEL_CACHE:
@@ -186,12 +167,10 @@ def _cached_model(db, product_model: str):
         _MODEL_CACHE[product_model] = db.get(PM, product_model)
     return _MODEL_CACHE[product_model]
 
-
 def _cached_graph(db, process_id: str):
     if process_id not in _GRAPH_CACHE:
         _GRAPH_CACHE[process_id] = load_process(db, process_id)
     return _GRAPH_CACHE[process_id]
-
 
 def _make_items(db, process_id: str, station_id: str, rng: random.Random, failed: bool) -> list:
     key = (process_id, station_id)
@@ -209,7 +188,6 @@ def _make_items(db, process_id: str, station_id: str, rng: random.Random, failed
         _ITEM_CACHE[key] = rows
     items = []
     for row in rows:
-        # 失败时仅让某个必测项判定 FAIL，其余照常 PASS
         item_failed = failed and row.is_mandatory
         items.append(
             {
@@ -222,9 +200,8 @@ def _make_items(db, process_id: str, station_id: str, rng: random.Random, failed
             }
         )
         if item_failed:
-            failed = False  # 每次出站只让一项失败，贴近真实
+            failed = False
     return items
-
 
 def _write_record(db, *, sn, station_id, items, overall, when, firmware, duration_ms) -> TestRecord:
     record = TestRecord(
@@ -242,11 +219,8 @@ def _write_record(db, *, sn, station_id, items, overall, when, firmware, duratio
         },
         created_at=when,
     )
-    # 刻意不 flush：同一事务内的多条 INSERT 由 SQLAlchemy 攒批下发，
-    # 逐条 flush 会在远端库上把往返次数放大到记录数级别
     db.add(record)
     return record
-
 
 def _plan_start(now, rng, *, span_minutes: int) -> datetime:
     """把整条流程平移到统计窗口内的某个本地工作日，且不落到未来。
@@ -254,13 +228,10 @@ def _plan_start(now, rng, *, span_minutes: int) -> datetime:
     旧实现以 `now - randint(0,13)天` 起步、再按分钟累加，整批记录会堆在
     "当前时刻"附近（同一天、同一秒），日趋势只剩一天、窗口均值失去意义。
     """
-    # 最晚起点：整条流程跑完后仍在过去
     latest = now - timedelta(minutes=5) - timedelta(minutes=max(span_minutes, 0))
     day_start = local_day_start(now) - timedelta(days=rng.randint(0, 13))
-    # 工作时段 08:00–20:00 内随机起步，贴近真实产线节拍
     cursor = day_start + timedelta(minutes=rng.randint(8 * 60, 19 * 60 + 59))
     return cursor if cursor < latest else latest
-
 
 def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
     """按流程拓扑推进一台在制品，产生合法的事件账本。"""
@@ -273,11 +244,9 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
     fail_count = 0
     status = "IDLE"
     locked_reason = None
-    # 先用"相对分钟"排出整条时间轴，最后整体平移到窗口内的某个本地工作日
     cursor = 0
-    plan = []  # [(offset_minutes, station_id, overall)]
+    plan = []
 
-    # 25% 的在制品停在半途，让看板呈现真实在制分布
     stop_at = len(graph.stations)
     if rng.random() < 0.25 and len(graph.stations) > 1:
         stop_at = rng.randint(1, len(graph.stations) - 1)
@@ -287,7 +256,7 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
             break
 
         roll = rng.random()
-        if roll < 0.05:  # 连续失败达上限 → 工程锁定
+        if roll < 0.05:
             for _ in range(settings.FAIL_LIMIT):
                 cursor += rng.randint(20, 90)
                 plan.append((cursor, station_id, "FAIL"))
@@ -295,7 +264,7 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
             status = "LOCKED"
             locked_reason = f"连续 {settings.FAIL_LIMIT} 次在 {station_id} 判定 FAIL"
             break
-        if roll < 0.18:  # 一次失败后重测通过
+        if roll < 0.18:
             cursor += rng.randint(20, 90)
             plan.append((cursor, station_id, "FAIL"))
             cursor += rng.randint(20, 90)
@@ -305,7 +274,6 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
         passed.add(station_id)
         fail_count = 0
 
-    # 整体平移到窗口内某个本地工作日：既铺满 14 天，又不写出未来时间戳
     base = _plan_start(now, rng, span_minutes=cursor)
     for offset, station_id, overall in plan:
         _write_record(
@@ -334,9 +302,7 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
         )
     )
 
-
 # ---------------------------------------------------------------------
-# 写入
 # ---------------------------------------------------------------------
 def _ensure_admin(db) -> None:
     if db.query(User).count() == 0:
@@ -345,11 +311,11 @@ def _ensure_admin(db) -> None:
                 username=settings.DEFAULT_ADMIN_USERNAME,
                 password_hash=hash_password(settings.DEFAULT_ADMIN_PASSWORD),
                 full_name=settings.DEFAULT_ADMIN_NAME,
+                role="admin",
             )
         )
         db.commit()
         print(f"[seed] 默认管理员 {settings.DEFAULT_ADMIN_USERNAME} / {settings.DEFAULT_ADMIN_PASSWORD}")
-
 
 def _reset_all_tables(db) -> None:
     """清空全部业务表与工艺配置表（users 保留），随后由 _seed_static_rules 重建。
@@ -373,7 +339,6 @@ def _reset_all_tables(db) -> None:
     db.commit()
     print("[seed] --reset: 已清空业务表与工艺配置（users 保留，随后重建工艺配置）")
 
-
 def _clear_business_only(db) -> None:
     """只清空运行时业务数据，保留工艺配置与 users。
 
@@ -390,7 +355,6 @@ def _clear_business_only(db) -> None:
         db.execute(Base.metadata.tables[table].delete())
     db.commit()
     print("[seed] --clear-business: 已清空业务数据（工艺配置与 users 保留）")
-
 
 def _backfill_is_completed(db) -> None:
     """回填 is_completed 冗余列：新增该列后对存量数据执行一次。
@@ -419,7 +383,6 @@ def _backfill_is_completed(db) -> None:
             updated += 1
     db.commit()
     print(f"[seed] 回填 is_completed：更新 {updated} / {len(rows)} 行")
-
 
 def _seed_static_rules(db) -> None:
     """写入静态工艺规则（幂等：已存在的行跳过）。
@@ -500,18 +463,15 @@ def _seed_static_rules(db) -> None:
             )
     db.commit()
 
-
 def _seed_random_products(db, count: int, rng: random.Random) -> None:
     now = utcnow()
     for i in range(count):
         product_model = "MSO4054B" if rng.random() < 0.55 else "DPO4054B"
         sn = f"C0{20000 + i}"
-        # 8% 的在制品固件非基线，用于演示固件拦截场景
         firmware = TARGET_FW if rng.random() < 0.92 else "V3.10"
         _simulate_product(db, rng, sn=sn, product_model=product_model, firmware=firmware, now=now)
     db.commit()
     print(f"[seed] 随机在制品 {count} 台")
-
 
 def _seed_repairs(db, rng: random.Random) -> None:
     """在已生成的在制品上登记若干维修处置，展示履历与回滚效果。"""
@@ -525,7 +485,7 @@ def _seed_repairs(db, rng: random.Random) -> None:
     rng.shuffle(with_stamps)
 
     applied = 0
-    for product in with_stamps[:2]:  # RETEST：收回最后一个印章允许重测
+    for product in with_stamps[:2]:
         try:
             apply_repair(
                 db,
@@ -536,10 +496,10 @@ def _seed_repairs(db, rng: random.Random) -> None:
                 technician_id="admin",
             )
             applied += 1
-        except Exception as exc:  # 状态不满足则跳过
+        except Exception as exc:
             logger.debug("skip RETEST %s: %s", product.sn, exc)
 
-    for product in with_stamps[2:4]:  # ROLLBACK：回退到第二工步
+    for product in with_stamps[2:4]:
         stamps = sorted(_as_list(product.passed_stations))
         if len(stamps) < 2:
             continue
@@ -574,22 +534,19 @@ def _seed_repairs(db, rng: random.Random) -> None:
     db.commit()
     print(f"[seed] 维修处置履历 {applied} 条")
 
-
 # ---------------------------------------------------------------------
 # 租约锁 / 测试会话场景数据（崩溃续测、失联接管、硬超时、强制解锁）
 # ---------------------------------------------------------------------
-# 场景 SN 统一使用 C0990xx 前缀，与随机在制品 C02xxxx 区分，便于在页面上检索。
 SCENARIO_SNS = {
-    "healthy": "C099001",  # 正常持锁：心跳新鲜
+    "healthy": "C099001",
     "lost": "C099002",  # 僵尸锁：心跳断流，可被接管 / 强制解锁
-    "resuming": "C099003",  # 崩溃过一次，当前正在续测（attempt=2）
+    "resuming": "C099003",
     "expired": "C099004",  # 硬超时：持锁超 30min 但心跳仍在
     "resumed": "C099005",  # 历史：崩溃后续测成功出库
     "takeover": "C099006",  # 历史：原机台崩溃，被备用机台接管
-    "lost_repeat": "C099007",  # 连续失联达阈值 → 已计一次失败
+    "lost_repeat": "C099007",
     "timeout": "C099008",  # 历史：硬超时终止（计失败）
 }
-
 
 def _mk_session(
     db,
@@ -625,7 +582,6 @@ def _mk_session(
     db.add(row)
     return row
 
-
 def _mk_product(db, *, sn, product_model, status, passed, fail_count=0, locked_reason=None):
     row = db.get(ProductStatus, sn)
     if row is None:
@@ -645,11 +601,9 @@ def _mk_product(db, *, sn, product_model, status, passed, fail_count=0, locked_r
     row.locked_reason = locked_reason
     return row
 
-
 def _partial_items(db, process_id, station_id, rng, count):
     """取该工位前 count 个用例作为"已执行"的断点。"""
     return _make_items(db, process_id, station_id, rng, False)[:count]
-
 
 def _ensure_scenario_clients(db) -> None:
     """确保演示场景依赖的机台档案存在（幂等 merge）。
@@ -679,7 +633,6 @@ def _ensure_scenario_clients(db) -> None:
             )
     db.commit()
 
-
 def _seed_lock_scenarios(db, rng: random.Random) -> int:
     """构造覆盖各类租约锁/会话状态的场景数据（幂等：已存在则整组重建）。"""
     _ensure_scenario_clients(db)
@@ -701,7 +654,6 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     dpo = db.get(ProductModel, "DPO4054B")
     process_id = dpo.process_id if dpo else "PROC-SCOPE-DPO-BASE"
 
-    # --- 1) 正常持锁：心跳 20s 前，已上报 3/5 断点 ---
     p = _mk_product(
         db, sn=SCENARIO_SNS["healthy"], product_model="DPO4054B",
         status="TESTING", passed=[],
@@ -739,13 +691,12 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     p.testing_started_at = p.lock_acquired_at
     p.updated_at = p.lock_last_seen_at
 
-    # --- 3) 崩溃一次后正在续测：attempt=2，心跳新鲜 ---
     p = _mk_product(
         db, sn=SCENARIO_SNS["resuming"], product_model="DPO4054B",
         status="TESTING", passed=[],
     )
     items = _partial_items(db, process_id, "CAL-PARAM", rng, 4)
-    _mk_session(  # 第一次尝试：崩溃失联
+    _mk_session(
         db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-07", attempt=1,
         status="ABORTED", started_at=now - timedelta(seconds=900),
         last_heartbeat_at=now - timedelta(seconds=780),
@@ -753,7 +704,7 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         end_reason="client_lost: no heartbeat for 180s", ended_by="sweeper",
         ended_at=now - timedelta(seconds=600),
     )
-    session = _mk_session(  # 第二次尝试：续测中
+    session = _mk_session(
         db, sn=p.sn, station_id="CAL-PARAM", client_id="SZ-L1-CAL-07", attempt=2,
         status="RUNNING", started_at=now - timedelta(seconds=300),
         last_heartbeat_at=now - timedelta(seconds=30), items=items,
@@ -805,7 +756,6 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         items=_partial_items(db, process_id, "CAL-IFACE", rng, 1),
         end_reason="checked out", ended_at=now - timedelta(hours=2) + timedelta(seconds=200),
     )
-    # 台账：本次出站由 checkpoint 补回了 2 个崩溃前已跑完的用例
     all_items = _make_items(db, process_id, "CAL-IFACE", rng, False)
     record = _write_record(
         db, sn=p.sn, station_id="CAL-IFACE",
@@ -813,7 +763,6 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         when=now - timedelta(hours=2) + timedelta(seconds=200),
         firmware=TARGET_FW, duration_ms=182000,
     )
-    # 整体重新赋值才会让 SQLAlchemy 标记 JSON 字段为脏
     record.executed_items = {
         **record.executed_items,
         "session_id": resumed_session.session_id,
@@ -849,7 +798,6 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
     p.testing_started_at = p.lock_acquired_at
     p.updated_at = p.lock_last_seen_at
 
-    # --- 7) 连续失联达阈值 → 已计一次失败 ---
     p = _mk_product(
         db, sn=SCENARIO_SNS["lost_repeat"], product_model="DPO4054B",
         status="IDLE", passed=["CAL-PARAM"], fail_count=1,
@@ -894,7 +842,6 @@ def _seed_lock_scenarios(db, rng: random.Random) -> int:
         )
     return len(SCENARIO_SNS)
 
-
 def seed(
     reset: bool = False,
     products: int = 60,
@@ -931,9 +878,7 @@ def seed(
         if with_repairs:
             _seed_repairs(db, rng)
         _seed_lock_scenarios(db, rng)
-        # is_completed 由 gate._write_passed() 维护，seed 是直接构造行、不走该路径，
         # 故末尾统一回填：否则列表页"已完工"筛选（SQL 层按该列过滤）一条都筛不出，
-        # 但列表标签（运行时派生）却显示"已完工"，两处口径打架。
         _backfill_is_completed(db)
 
         models_count = db.query(ProductModel).count()
@@ -944,7 +889,6 @@ def seed(
     finally:
         print(f"[seed] 耗时 {time.perf_counter() - started:.1f}s")
         db.close()
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ATE Manager 数据初始化")
@@ -976,6 +920,6 @@ def main() -> None:
         backfill_completed=args.backfill_completed,
     )
 
-
 if __name__ == "__main__":
     sys.exit(main())
+

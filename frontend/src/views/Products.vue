@@ -18,8 +18,7 @@
     </PageToolbar>
 
     <DataCard>
-      <!-- table-layout:fixed 让列宽严格按声明分配；SN 左固定 + 操作右固定，
-           列多导致横向滚动时主键与操作始终可见 -->
+      
       <el-table v-loading="loading" :data="items" stripe size="small" style="width:100%; table-layout:fixed">
         <el-table-column prop="sn" :label="$t('products.tableSn')" width="152" fixed show-overflow-tooltip>
           <template #default="{ row }">
@@ -183,7 +182,6 @@ function search() {
   else page.value = 1
 }
 
-// 已完工是派生状态：库里 current_status 仍是 IDLE，靠 is_completed 区分。
 // 文案与配色必须共用同一个状态键，否则会出现「文字已完工、颜色仍是待处理的灰」。
 function statusKey(row) {
   return row.is_completed ? 'COMPLETED' : row.current_status
@@ -352,3 +350,4 @@ usePolling(load, 20000)
 .products :deep(.el-table__fixed-right .cell),
 .products :deep(.el-table__fixed .cell) { padding-left: 8px; padding-right: 8px; }
 </style>
+

@@ -12,12 +12,11 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404, not_found
-from ..security import current_user
+from ..security import current_user, require_admin
 from ..services.routing import process_topology, station_item_summary, validate_process
 from ..services.timeutil import utcnow
 
 router = APIRouter(prefix="/api/admin/routing", tags=["admin-工艺拓扑"])
-
 
 def _assert_station_in_process(db: Session, process_id: str, station_id: str) -> None:
     """测试项必须挂在流程拓扑内的工位上。
@@ -39,12 +38,8 @@ def _assert_station_in_process(db: Session, process_id: str, station_id: str) ->
             f"station_not_in_process: {station_id} is not a step of {process_id}",
         )
 
-
-# 保存前阻断的结构性问题：这类错误一旦落库，流程会直接不可用，且无法靠后续补配置挽回。
-# 刻意不含 station_no_item —— 先编排拓扑、后补测试项是正常操作顺序，一并阻断会形成
 # "没测试项不让存拓扑 → 没拓扑不让加测试项"的死锁。
 _BLOCKING_SAVE_CODES = frozenset({"config_cycle", "station_undefined"})
-
 
 # ==================== 工步拓扑 ====================
 @router.get("/topology", response_model=schemas.TopologyOut, summary="流程拓扑视图(工步 + 测试项)")
@@ -53,7 +48,6 @@ def topology(
 ):
     return process_topology(db, process_id)
 
-
 @router.get("/stations", response_model=List[schemas.ProcessStationOut], summary="工步清单")
 def list_steps(
     process_id: str = Query(..., min_length=1), db: Session = Depends(get_db), user=Depends(current_user)
@@ -61,14 +55,13 @@ def list_steps(
     get_or_404(db, models.Process, process_id, "process")
     return process_topology(db, process_id).steps
 
-
 @router.put("/stations", response_model=List[schemas.ProcessStationOut], summary="整体保存工步拓扑")
 def save_steps(
     process_id: str,
     payload: List[schemas.ProcessStationIn],
     force: bool = Query(False, description="跳过结构性校验强行保存"),
     db: Session = Depends(get_db),
-    user=Depends(current_user),
+    user=Depends(require_admin),
 ):
     """以「整体覆盖」方式保存拓扑，前端一屏编排后一次性提交。
 
@@ -124,10 +117,9 @@ def save_steps(
     db.commit()
     return process_topology(db, process_id).steps
 
-
 @router.delete("/stations/{station_id}", status_code=204, summary="移除工步(连带清理其测试项)")
 def delete_step(
-    process_id: str, station_id: str, db: Session = Depends(get_db), user=Depends(current_user)
+    process_id: str, station_id: str, db: Session = Depends(get_db), user=Depends(require_admin)
 ):
     row = db.get(models.ProcessStation, (process_id, station_id))
     if row is None:
@@ -138,7 +130,6 @@ def delete_step(
         models.StationItem.station_id == station_id,
     ).delete(synchronize_session=False)
     db.commit()
-
 
 def _running_sessions_on(db: Session, process_id: str, station_id: str) -> int:
     """该流程 + 工位上正在跑的会话数。
@@ -168,7 +159,6 @@ def _running_sessions_on(db: Session, process_id: str, station_id: str) -> int:
         .count()
     )
 
-
 # ==================== 用例ID测试项 ====================
 @router.get("/items", response_model=List[schemas.StationItemOut], summary="测试项清单")
 def list_items(
@@ -182,9 +172,8 @@ def list_items(
         query = query.filter(models.StationItem.station_id == station_id)
     return query.order_by(models.StationItem.station_id, models.StationItem.case_id).all()
 
-
 @router.post("/items", response_model=schemas.StationItemOut, status_code=201, summary="新增用例ID测试项")
-def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(current_user)):
+def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(require_admin)):
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
     exists = (
@@ -205,10 +194,9 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
     db.commit()
     return row
 
-
 @router.put("/items/{item_id}", response_model=schemas.StationItemOut, summary="更新测试项")
 def update_item(
-    item_id: int, payload: schemas.StationItemUpdateIn, db: Session = Depends(get_db), user=Depends(current_user)
+    item_id: int, payload: schemas.StationItemUpdateIn, db: Session = Depends(get_db), user=Depends(require_admin)
 ):
     row = get_or_404(db, models.StationItem, item_id, "item")
     for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
@@ -216,20 +204,18 @@ def update_item(
     db.commit()
     return row
 
-
 @router.delete("/items/{item_id}", status_code=204, summary="删除测试项")
-def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(current_user)):
+def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
     row = get_or_404(db, models.StationItem, item_id, "item")
     db.delete(row)
     db.commit()
-
 
 @router.post("/items/import", response_model=schemas.StationItemImportOut, summary="批量导入用例ID清单(幂等upsert)")
 def import_items(
     payload: schemas.StationItemImportIn,
     force: bool = Query(False, description="忽略 RUNNING 会话闸门强行同步"),
     db: Session = Depends(get_db),
-    user=Depends(current_user),
+    user=Depends(require_admin),
 ):
     """整批同步某工位的用例ID清单，供上位机脚本自动对齐（pytest --collect-only 的输出）。
 
@@ -255,7 +241,6 @@ def import_items(
         )
         .all()
     }
-    # 导入前的生效状态快照，用于判定哪些用例被"新增为必测"（闸门依据）
     prev_state = {cid: (bool(r.is_active), bool(r.is_mandatory)) for cid, r in existing.items()}
 
     warnings: List[str] = []
@@ -297,12 +282,11 @@ def import_items(
             row.is_mandatory = row_in.is_mandatory
             changed = True
         if not row.is_active:
-            row.is_active = True  # 重新出现在清单里 → 自动复活
+            row.is_active = True
             changed = True
         updated += 1 if changed else 0
         unchanged += 1 if not changed else 0
 
-    # 闸门：本次导入会把哪些用例"变成必测"？（不在快照里 / 原先停用 / 原先非必测）
     newly_mandatory = sorted(
         cid for cid, m in mand.items() if m and (cid not in prev_state or not all(prev_state[cid]))
     )
@@ -323,7 +307,6 @@ def import_items(
                     data={"running_sessions": running, "newly_mandatory": newly_mandatory},
                 )
 
-    # 清单外仍启用的项：upsert 只报告（保持必测），replace 才停用
     orphans = sorted(
         case_id for case_id, row in existing.items() if case_id not in seen and row.is_active
     )
@@ -355,7 +338,6 @@ def import_items(
         warnings=warnings,
     )
 
-
 # ==================== 校验与克隆 ====================
 @router.get("/validate", response_model=schemas.ValidateOut, summary="校验流程拓扑(成环/悬空依赖/无测试项)")
 def validate(
@@ -363,9 +345,8 @@ def validate(
 ):
     return validate_process(db, process_id)
 
-
 @router.post("/clone", response_model=schemas.CloneOut, summary="克隆流程(派生机型时复用拓扑与测试项)")
-def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=Depends(current_user)):
+def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=Depends(require_admin)):
     steps = (
         db.query(models.ProcessStation)
         .filter(models.ProcessStation.process_id == payload.from_process)
@@ -414,13 +395,11 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
         process_id=payload.to_process, cloned_steps=len(steps), cloned_items=len(items)
     )
 
-
 @router.get("/item-summary", summary="各工位生效测试项数")
 def item_summary(
     process_id: str = Query(..., min_length=1), db: Session = Depends(get_db), user=Depends(current_user)
 ):
     return station_item_summary(db, process_id)
-
 
 # ==================== 流程导入 / 导出 ====================
 def _build_process_export(db: Session, process: models.Process) -> schemas.ProcessExportOut:
@@ -478,7 +457,6 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
         ],
     )
 
-
 @router.get(
     "/processes/{process_id}/export",
     response_model=schemas.ProcessExportOut,
@@ -489,7 +467,6 @@ def export_process(
 ):
     process = get_or_404(db, models.Process, process_id, "process")
     return _build_process_export(db, process)
-
 
 @router.get(
     "/processes/export-all",
@@ -503,14 +480,13 @@ def export_all_processes(db: Session = Depends(get_db), user=Depends(current_use
         processes=[_build_process_export(db, p) for p in processes],
     )
 
-
 @router.post(
     "/processes/import",
     response_model=schemas.ProcessImportResult,
     status_code=201,
     summary="导入流程完整定义（JSON）",
 )
-def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(current_user)):
+def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(require_admin)):
     """事务式导入：流程不存在（409 可改编号重试）；缺失工位自动补建（已有配置
     不覆盖——工位是跨流程共享字典）；机型已存在时跳过（绑定关系不迁移）；
     全部写入后复用拓扑校验，error 级问题整体回滚。"""
@@ -531,7 +507,6 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
             f"depends_on 引用了流程外的工位: {', '.join(bad_deps)}",
         )
 
-    # 1) 流程
     db.add(
         models.Process(
             process_id=proc_in.process_id,
@@ -540,7 +515,6 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
         )
     )
 
-    # 2) 工位：缺失才建（共享字典，已有配置一律不覆盖）；工步引用但清单缺失的按占位补建
     stations_created = 0
     station_ids = {s.station_id for s in payload.stations} | step_ids
     for sid in sorted(station_ids):
@@ -572,7 +546,6 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
         )
         models_created += 1
 
-    # 4) 工步 + 5) 用例
     for s in payload.steps:
         db.add(
             models.ProcessStation(
@@ -620,3 +593,4 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
         steps_created=len(payload.steps),
         items_created=items_created,
     )
+

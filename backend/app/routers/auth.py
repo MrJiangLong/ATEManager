@@ -16,6 +16,8 @@ def login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise AppError(401, "invalid_credentials", "Username or password incorrect", exit_code=EXIT_GATE_BLOCKED)
+    if not user.is_active:
+        raise AppError(403, "user_disabled", "Account is disabled, contact administrator")
     return {"access_token": create_access_token(user), "token_type": "bearer", "user": user}
 
 

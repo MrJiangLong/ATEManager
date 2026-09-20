@@ -89,20 +89,23 @@ X-API-Key: <V1_API_KEY>
 Content-Type: application/json
 ```
 
-> 若服务端未配置 `V1_API_KEY`，可退化为网页 JWT（`Authorization: Bearer <token>`），
-> 仅供开发调试，**产线禁止**。
+> - 若服务端未配置 `V1_API_KEY`，可退化为网页 JWT（`Authorization: Bearer <token>`），
+>   仅供开发调试，**产线禁止**。
+> - 上位机与 Web 端的**三角色权限体系无关**：通道一只认 API Key，不存在角色概念。
+>   Web 端用户管理（viewer/operator/admin）仅约束管理端接口。
 
 ### 2.2 注册机台并绑定工位
 
 机台（物理工控机）必须先与逻辑工位绑定，否则进站返回 `403 client_not_bound`。
-由运维在 Web 端「机台管理」完成，或用管理端接口注册：
+由运维在 Web 端「机台管理」完成（需 operator 及以上角色），或用管理端接口注册：
 
 ```http
 POST /api/admin/clients
-{"client_id": "SZ-L1-CAL-01", "station_id": "CAL-PARAM", "ip_address": "10.1.60.11"}
+{"client_id": "SZ-L1-CAL-01", "bound_stations": ["CAL-PARAM"], "ip_address": "10.1.60.11"}
 ```
 
-也可用 `POST /api/v1/client/resolve` 自动注册（此时 `station_id` 为空，仍需 Web 端补录绑定）。
+`bound_stations` 为绑定集合（一机可绑多个工位，但同一流程内只能绑定一个，否则保存即 `400 station_ambiguous`）。
+也可用 `POST /api/v1/client/resolve` 自动注册（此时绑定为空，仍需 Web 端补录绑定）。
 
 ### 2.3 确认识别用例清单
 
@@ -530,6 +533,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 401 | `invalid_credentials` | 10 | 全部 | 缺少或无效的 `X-API-Key` |
 | 400 | `station_not_in_process` | 10 | check-in / check-out | 工位不属于该机型流程 |
 | 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID |
+| 400 | `station_ambiguous` | 10 | 管理端保存绑定 / check-in | 同一流程内命中多个绑定工位（配置层拒绝或拓扑漂移兜底） |
 | 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP） |
 | 400 | `session_mismatch` | 10 | check-in / checkpoint | 会话与 SN/工位不匹配 |
 | 400 | `station_mismatch` | 10 | checkpoint | 会话属于其他工位 |

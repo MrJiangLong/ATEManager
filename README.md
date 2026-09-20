@@ -68,6 +68,7 @@
 - **维修处置**：RETEST / ROLLBACK / RESET / SCRAP，自动作废受影响记录
 - **SN 全追溯**：事件台账 + 维修履历 + 会话时间线
 - **SPC 良率看板**：产量/良率趋势、工位与流程良率、失效用例排行、机台在线
+- **三角色权限**：viewer 只读 / operator 产线操作 / admin 配置与用户管理，后端逐端点收口
 
 ---
 
@@ -120,13 +121,23 @@ routers  ──▶  services  ──▶  models
 | `services/views.py` | ORM 实体 → 展示模型的派生与组装 |
 | `services/timeutil.py` | UTC 时间语义统一 + 统计日界（本地自然日切分） |
 
-### 3.2 双通道鉴权
+### 3.2 双通道鉴权与三角色
 
 | 通道 | 前缀 | 鉴权 | 使用者 |
 |---|---|---|---|
 | 通道一 | `/api/v1/*` | `X-API-Key` | 产线上位机（pytest） |
 | 通道二 | `/api/admin/*` | JWT Bearer | Web 管理端 |
 | 鉴权 | `/api/auth/*` | 账密换 token | 登录 |
+
+通道二按**三角色**收口（`users.role`，JWT 携带，逐端点校验）：
+
+| 角色 | 权限 |
+|---|---|
+| `viewer` | 只读全部：运营总览、在制/台账/追溯、工艺配置查看 |
+| `operator` | viewer + 机台注册/绑定/注销、维修处置、强制解锁、中止会话 |
+| `admin` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、用户管理 |
+
+防自锁守卫：系统中永远保证至少一个启用中的 admin——删除/停用/降权最后一个有效 admin 一律 `409 last_admin`，不能删除自己的账号。被停用账号登录拒绝且已有 token 立即失效。
 
 > 服务端不做多语言协商，错误信息一律为英文 `code: message`，前端按 `code` 自行翻译。
 
@@ -532,19 +543,22 @@ URL、SCPI 指令、日志文件名里都无需转义。
 
 ### 9.2 通道二 `/api/admin/*` 与 `/api/auth/*`（JWT）
 
-| 分组 | 接口 |
-|---|---|
-| 鉴权 | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
-| 工艺流程 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
-| 机型 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}` |
-| 工位 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`GET /api/admin/routing/item-summary` |
-| 在制品 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
-| 台账追溯 | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}` |
-| 维修履历 | `GET /api/admin/repairs`、`POST /api/admin/repairs` |
-| 测试会话 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
-| 机台 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
-| 统计 | `GET /api/admin/metrics/overview` |
+最低角色列：`view` = 登录即可读（三角色均可），`op` = operator 及以上，`admin` = 仅管理员。写端点角色不足返回 `403 permission_denied`。
+
+| 分组 | 最低角色 | 接口 |
+|---|---|---|
+| 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
+| 工艺流程 | view / admin 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
+| 机型 | view / admin 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}` |
+| 工位 | view / admin 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
+| 工艺拓扑 | view / admin 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
+| 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
+| 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}` |
+| 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs` |
+| 测试会话 | view / op 写 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
+| 机台 | view / op 写 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
+| 统计 | view | `GET /api/admin/metrics/overview` |
+| 用户管理 | admin | `GET/POST /api/admin/users`、`PUT/DELETE /api/admin/users/{user_id}` |
 
 完整参数与响应模型见 Swagger（`http://localhost:8000/docs`）。
 
@@ -606,8 +620,8 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 |---|---|---|
 | `JWT_SECRET` | 开发默认值 | 通道二签名密钥，**生产必须更换 ≥32 字节随机串** |
 | `JWT_EXPIRE_HOURS` | `168` | Web 登录态有效期 |
-| `DEFAULT_ADMIN_USERNAME` | `admin` | 首次启动自动创建的账号 |
-| `DEFAULT_ADMIN_PASSWORD` | `admin123` | 首次启动自动创建的口令（仅用户表为空时生效） |
+| `DEFAULT_ADMIN_USERNAME` | `admin` | 首次启动自动创建的账号（角色=admin，存量库迁移时自动回填 admin） |
+| `DEFAULT_ADMIN_PASSWORD` | `admin123` | 首次启动自动创建的口令（仅用户表为空时生效），**首次登录后立即修改** |
 | `DEFAULT_ADMIN_NAME` | `系统管理员` | 显示名 |
 | `V1_API_KEY` | 空 | 通道一密钥，留空则仅允许网页登录用户调试 |
 
