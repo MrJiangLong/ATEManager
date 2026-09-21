@@ -64,7 +64,6 @@
 
     <el-drawer v-model="validateVisible" size="560px" destroy-on-close>
       <div v-if="validateResult">
-        
         <el-alert
           :title="validateMeta.title"
           :type="validateMeta.type"

@@ -14,7 +14,6 @@
       <el-select v-model="filters.status" clearable :placeholder="$t('sessions.filterStatus')" style="width: 140px">
         <el-option v-for="s in SESSION_STATUS_LIST" :key="s" :value="s" :label="$t(`sessionStatus.${s}`)" />
       </el-select>
-      
       <el-select v-model="filters.view" clearable :placeholder="$t('sessions.filterView')" style="width: 150px">
         <el-option value="abnormal" :label="$t('sessions.abnormalOnly')" />
         <el-option value="zombie" :label="$t('sessions.zombieOnly')" />

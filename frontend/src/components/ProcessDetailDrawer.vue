@@ -1,6 +1,5 @@
 <template>
   <el-drawer v-model="visible" size="640px" destroy-on-close @opened="load">
-    
     <template #header>
       <div class="d-head">
         <span class="code d-id">{{ process?.process_id }}</span>

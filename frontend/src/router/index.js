@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import Layout from '../layout/Layout.vue'
-// 从而冻结一个过期的 store 引用
 import { useAuth } from '../stores/auth'
 import { applyRouteTitle } from '../utils/title'
 

@@ -33,7 +33,6 @@ from .. import models, schemas
 from ..config import IS_SQLITE, settings
 from ..errors import (
     EXIT_CASE_ID_MISMATCH,
-    EXIT_GATE_BLOCKED,
     EXIT_LOCK_CONFLICT,
     EXIT_LOCK_EXPIRED,
     EXIT_MISSING_MANDATORY,
@@ -78,7 +77,6 @@ def _write_passed(product: models.ProductStatus, passed: Set[str], graph=None) -
         product.is_completed = is_completed(graph, passed)
 
 # =====================================================================
-# =====================================================================
 def get_client(
     db: Session,
     client_id: str,
@@ -118,7 +116,6 @@ def touch_client(db: Session, client_id: str) -> Optional[models.StationClient]:
         db.commit()
     return client
 
-# =====================================================================
 # =====================================================================
 def _locked_product(db: Session, sn: str) -> Optional[models.ProductStatus]:
     """按 sn 取在制品并加行锁（PG: FOR UPDATE；SQLite 无行锁）。
@@ -198,7 +195,6 @@ def _token_mismatch(product: models.ProductStatus, token: Optional[str]) -> bool
         return settings.STRICT_LOCK_TOKEN
     return token != stored
 
-# =====================================================================
 # =====================================================================
 def _checkpoint_items(session: models.TestSession) -> List[dict]:
     payload = session.checkpoint if isinstance(session.checkpoint, dict) else {}
@@ -282,7 +278,6 @@ def _count_consecutive_lost(db: Session, sn: str, station_id: str) -> int:
 
 LOST_REASON_PREFIX = "client_lost"
 
-# =====================================================================
 # =====================================================================
 def check_in(
     db: Session,
@@ -592,7 +587,6 @@ def heartbeat(
     )
 
 # =====================================================================
-# =====================================================================
 def save_checkpoint(
     db: Session,
     *,
@@ -739,7 +733,6 @@ def force_release_lock(
     )
 
 # =====================================================================
-# =====================================================================
 def _running_session_of(db: Session, sn: str):
     """该 SN 当前处于 RUNNING 的最新会话（回收与接管都以此为准）。"""
     return (
@@ -840,7 +833,6 @@ def _station_of_client(db: Session, product: models.ProductStatus) -> str:
         return ""
     return client.station_id
 
-# =====================================================================
 # =====================================================================
 def _find_by_checkout_id(db: Session, sn: str, station_id: str, checkout_id: str):
     """按 executed_items.checkout_id 回放既有记录（限近 200 条，重试场景足够）。"""
@@ -1039,7 +1031,6 @@ def _ack(
         server_time=utcnow().isoformat(),
     )
 
-# =====================================================================
 # =====================================================================
 def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> int:
     if not station_ids:

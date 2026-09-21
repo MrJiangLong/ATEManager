@@ -50,7 +50,6 @@ logger = get_logger("seed")
 TARGET_FW = "V3.20"
 
 # ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
 PROCESSES = [
     ("PROC-SCOPE-MSO-AWG", "TEK数字示波器-带AWG选件流程"),
     ("PROC-SCOPE-DPO-BASE", "TEK数字示波器-无AWG标准流程"),
@@ -125,7 +124,6 @@ CLIENTS = [
 
 STATION_CLIENT = {c[1]: c[0] for c in CLIENTS}
 
-# ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
 def _values_for(case_id: str, rng: random.Random, failed: bool) -> dict:
     """按用例类型生成贴近真实的测量值快照。
@@ -311,7 +309,6 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
     )
 
 # ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
 def _ensure_admin(db) -> None:
     if db.query(User).count() == 0:
         db.add(
@@ -482,7 +479,6 @@ def _seed_random_products(db, count: int, rng: random.Random) -> None:
 
 def _seed_repairs(db, rng: random.Random) -> None:
     """在已生成的在制品上登记若干维修处置，展示履历与回滚效果。"""
-    now = utcnow()
     candidates = (
         db.query(ProductStatus)
         .filter(ProductStatus.current_status == "IDLE")
@@ -927,7 +923,6 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.reset or args.wipe:
-        # 不可逆且会抹掉全部工艺配置，交互确认防误触（无人值守脚本可管道喂 YES）
         verb = "--reset" if args.reset else "--wipe"
         try:
             reply = input(f"{verb} 将清空业务表与工艺配置（users 保留）且不可恢复，输入 YES 继续：").strip()
@@ -935,7 +930,7 @@ def main() -> None:
             reply = ""
         if reply != "YES":
             print("[seed] 已取消（未做任何修改）")
-            return 1
+            return
     seed(
         reset=args.reset,
         products=args.products,

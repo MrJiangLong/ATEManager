@@ -1,5 +1,4 @@
 <template>
-  
   <span class="code case-id">
     <span class="case-id-head">{{ head }}</span><span class="case-id-tail">{{ tail }}</span>
   </span>

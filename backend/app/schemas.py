@@ -71,7 +71,6 @@ class MessageOut(BaseModel):
     code: str
 
 # =====================================================================
-# =====================================================================
 class LoginRequest(BaseModel):
     username: TrimmedRequired
     password: str
@@ -109,7 +108,6 @@ class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=6)
 
-# =====================================================================
 # =====================================================================
 class ClientResolveIn(BaseModel):
     """机台身份上报（首次调用自动注册）。"""
@@ -292,7 +290,6 @@ class HeartbeatData(BaseModel):
     session_id: Optional[str] = None
 
 # =====================================================================
-# =====================================================================
 class ProcessOut(ORMModel):
     process_id: str
     process_name: str
@@ -390,7 +387,6 @@ class ClientUpdateIn(BaseModel):
     ip_address: Trimmed = Field(default=None, max_length=45)
 
 # =====================================================================
-# =====================================================================
 class ProcessStationOut(ORMModel):
     process_id: str
     station_id: str
@@ -477,7 +473,6 @@ class ValidateOut(BaseModel):
     ok: bool
     issues: List[ValidateIssue] = []
 
-# =====================================================================
 # =====================================================================
 class ExportProcess(BaseModel):
     process_id: str
@@ -586,7 +581,6 @@ class CloneOut(BaseModel):
     cloned_steps: int
     cloned_items: int
 
-# =====================================================================
 # =====================================================================
 class ProductOut(ORMModel):
     sn: str
@@ -737,7 +731,6 @@ class SessionAbortRunningOut(BaseModel):
     items: List[AbortedSessionPoint] = []
 
 # =====================================================================
-# =====================================================================
 class RecordOut(ORMModel):
     record_id: int
     sn: str
@@ -771,7 +764,6 @@ class TraceOut(BaseModel):
     records: List[RecordOut] = []
     repairs: List[RepairOut] = []
 
-# =====================================================================
 # =====================================================================
 class WipStat(BaseModel):
     idle: int = 0

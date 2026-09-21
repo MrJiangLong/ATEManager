@@ -91,10 +91,6 @@ const today = computed(() => {
 const langLabel = computed(() => (locale.value === 'en' ? t('layout.langEn') : t('layout.langZh')))
 
 /* 直接读全局会话，避免父组件透传 */
-const avatarText = computed(() => {
-  const name = auth.state.user?.full_name || auth.state.user?.username || ''
-  return name ? name.slice(0, 1).toUpperCase() : 'U'
-})
 const userName = computed(() => auth.state.user?.full_name || auth.state.user?.username || '-')
 const userRole = computed(() => t(`users.roles.${auth.role.value}`))
 const ROLE_ICONS = { viewer: View, operator: Monitor, admin: Stamp }

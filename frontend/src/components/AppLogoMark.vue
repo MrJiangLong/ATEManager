@@ -1,6 +1,5 @@
 <template>
   <div class="app-logo-mark" :style="boxStyle">
-    
     <svg
       :width="size"
       :height="size"

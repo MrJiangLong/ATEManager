@@ -87,7 +87,7 @@ def list_products(
             items=[_build_view(db, r, models_by_name, graphs) for r in rows],
         )
 
-    # 没有可落库的字段（随时间自行变化，不能像 is_completed 那样冗余），
+    # 僵尸锁没有可落库的字段（随时间自行变化，不能像 is_completed 那样冗余），只能扫描后按派生字段过滤。
     if zombie_only:
         candidates = (
             query.filter(models.ProductStatus.current_status == models.STATUS_TESTING)

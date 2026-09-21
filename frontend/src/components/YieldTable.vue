@@ -1,6 +1,5 @@
 <template>
   <div class="yield-wrap">
-    
     <div v-if="hasData" class="yield-tools">
       <el-input
         v-model="keyword"
@@ -230,12 +229,9 @@ function rowClass(rate) {
   color: var(--app-text-faint);
   font-variant-numeric: tabular-nums;
 }
-.yield-rate.good,
-.m-rate.good { color: #2f6bff; }
-.yield-rate.warn,
-.m-rate.warn { color: #8aa8ff; }
-.yield-rate.bad,
-.m-rate.bad { color: #ef4444; }
+.yield-rate.good { color: #2f6bff; }
+.yield-rate.warn { color: #8aa8ff; }
+.yield-rate.bad { color: #ef4444; }
 
 /* 底部计数 / 展开 */
 .yield-foot {

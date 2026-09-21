@@ -121,7 +121,6 @@ def is_completed(graph: ProcessGraph, passed: Set[str]) -> bool:
     return bool(graph.stations) and set(graph.stations).issubset(passed)
 
 # ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
 def _find_cycle(deps_of: Dict[str, List[str]]) -> Optional[List[str]]:
     """DFS 三色标记，返回首个环路径（闭合）或 None。"""
     WHITE, GRAY, BLACK = 0, 1, 2
@@ -254,7 +253,6 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     ok = not any(i.level == "error" for i in issues)
     return schemas.ValidateOut(process_id=process_id, ok=ok, issues=issues)
 
-# ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
 def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
     """流程清单 + 机型数 / 工位数 / 测试项数。"""

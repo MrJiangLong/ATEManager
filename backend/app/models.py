@@ -100,7 +100,6 @@ def _table_args(*args):
     return tuple(a for a in args if a is not None)
 
 # =====================================================================
-# =====================================================================
 class User(Base):
     __tablename__ = "users"
 
@@ -112,7 +111,6 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="admin", server_default=text("'admin'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-# =====================================================================
 # =====================================================================
 class Process(Base):
     """工艺流程主表：一个硬件构型一条独立流程（带 AWG / 不带 AWG 彻底解耦）。"""
@@ -197,7 +195,6 @@ class StationItem(Base):
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
 
 # =====================================================================
-# =====================================================================
 class StationClient(Base):
     """物理测试机台档案：一台工控机绑定一个逻辑工位。"""
 
@@ -220,7 +217,6 @@ class StationClient(Base):
 
     station = relationship("Station", back_populates="clients")
 
-# =====================================================================
 # =====================================================================
 class ProductStatus(Base):
     """在制品状态机：sn 主键，首工位 *IDN? 直读后动态建档。

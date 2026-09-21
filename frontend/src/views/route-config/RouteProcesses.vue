@@ -18,7 +18,6 @@
       <el-table-column prop="process_name" :label="t('configs.processName')" min-width="220" />
       <el-table-column :label="t('configs.tableModelCount')" width="180">
         <template #default="{ row }">
-          
           <div v-if="row.models?.length" class="model-tags">
             <el-tag v-for="m in row.models.slice(0, 2)" :key="m" size="small" effect="plain">{{ m }}</el-tag>
             <el-tooltip v-if="row.models.length > 2" :content="row.models.join(', ')" placement="top">
@@ -117,7 +116,6 @@
       </el-button>
       <template v-if="importDoc">
         <div class="import-preview">
-          
           <div class="imp-file">
             <el-icon><Document /></el-icon>
             <span class="imp-file-name">{{ importFileName }}</span>
@@ -284,11 +282,6 @@ const importMandatory = computed(() =>
 )
 const importBatch = computed(() => importDoc.value?.__batch || null)
 
-function pickImportFile() {
-  importFileEl.value?.click()
-}
-
-// 关闭后重置：避免下次打开还显示上一次的文件信息
 function resetImport() {
   importDoc.value = null
   importId.value = ''
