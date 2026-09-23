@@ -1,7 +1,7 @@
 """Pydantic 输入输出模型：API 契约的唯一声明处。"""
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import (
@@ -842,4 +842,98 @@ class MetricsOverview(BaseModel):
     clients: ClientStat
     product_total: int = 0
     locks: LockStat = Field(default_factory=LockStat)
+
+# =====================================================================
+# 出厂报告生成
+# =====================================================================
+class ReportCandidateOut(ORMModel):
+    """盖章完成、可生成报告的候选设备。"""
+
+    sn: str
+    product_model: str
+    current_fw_version: str
+    completed_at: Optional[datetime] = None
+    has_job: bool = False
+
+class ReportCandidatePageOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[ReportCandidateOut]
+
+class ReportJobOut(ORMModel):
+    job_id: str
+    sn: str
+    model: str
+    rule: Optional[str] = None
+    auto: bool = True
+    status: str
+    artifacts: List[Dict[str, Any]] = []
+    failed_items: List[Any] = []
+    mes_status: str = "none"
+    mes_message: Optional[str] = None
+    error: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+class ReportJobPageOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[ReportJobOut]
+
+class ReportBatchIn(BaseModel):
+    """批量生成：SN 清单必填。"""
+
+    sns: List[str] = Field(min_length=1)
+
+class ReportBatchCreatedOut(BaseModel):
+    created: int = 0
+    skipped: List[Dict[str, Any]] = []
+
+class ReportPdfClaimOut(BaseModel):
+    """外部 PDF Worker 认领结果。"""
+
+    job_id: str
+    artifact_index: int
+    download_url: str
+
+class ReportDownloadOut(BaseModel):
+    filename: str
+    url: str
+
+# ---- 报告规则（上传式插件，仅 admin）----
+class ReportRuleIn(BaseModel):
+    """新建/更新报告规则基础信息（脚本与模板经独立上传接口维护）。"""
+
+    rule: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
+    models: List[str] = Field(min_length=1)
+    mes_url: Optional[str] = None
+    auto_trigger: bool = True
+    enabled: bool = True
+
+class ReportRuleOut(ORMModel):
+    rule: str
+    models: List[str] = []
+    mes_url: Optional[str] = None
+    auto_trigger: bool = True
+    enabled: bool = True
+    has_script: bool = False
+    script_name: Optional[str] = None
+    templates: List[str] = []
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+class ReportStandardIn(BaseModel):
+    rule: str = Field(min_length=1, max_length=64)
+    manufacturer: str = Field(min_length=1, max_length=64)
+    pc_name: str = Field(min_length=1, max_length=64)
+    user_id: Optional[str] = Field(default=None, max_length=64)
+    model: str = Field(min_length=1, max_length=128)
+    sn: str = Field(min_length=1, max_length=128)
+    cal_date: Optional[date] = None
+
+class ReportStandardOut(ReportStandardIn):
+    id: int
 

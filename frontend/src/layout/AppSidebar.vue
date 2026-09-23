@@ -42,7 +42,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Connection, FirstAidKit, Monitor, Notebook, PieChart, Setting, Tickets, User } from '@element-plus/icons-vue'
+import { Connection, Document, FirstAidKit, Monitor, Notebook, PieChart, Setting, Tickets, User } from '@element-plus/icons-vue'
 import AppLogoMark from '../components/AppLogoMark.vue'
 import { useAuth } from '../stores/auth'
 
@@ -94,6 +94,7 @@ const ALL_MENUS = [
   { path: '/repairs',   labelKey: 'menu.repairs',   icon: FirstAidKit },
   { path: '/clients',   labelKey: 'menu.clients',   icon: Monitor },
   { path: '/sessions',  labelKey: 'menu.sessions',  icon: Connection },
+  { path: '/reports',   labelKey: 'menu.reports',   icon: Document },
   { path: '/configs',   labelKey: 'menu.configs',   icon: Setting, roles: ['admin'] },
   { path: '/users',     labelKey: 'menu.users',     icon: User,     roles: ['admin'] },
 ]

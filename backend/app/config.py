@@ -44,7 +44,7 @@ def _tz_info() -> tzinfo:
 class Settings:
     # ---- 应用 ----
     APP_NAME: str = "ATE Manager API"
-    APP_VERSION: str = "1.2.0"
+    APP_VERSION: str = "2.0.0"
     APP_DEBUG: bool = _as_bool(os.getenv("APP_DEBUG"), True)
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if APP_DEBUG else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
@@ -95,6 +95,39 @@ class Settings:
     APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Shanghai")
     APP_TZ_OFFSET_HOURS: int = _as_int(os.getenv("APP_TZ_OFFSET_HOURS"), 8)
     TZ_INFO: tzinfo = _tz_info()
+
+    # ---- 出厂报告引擎 ----
+    # 生成过程工作目录（xlsx 先落盘再传 MinIO；MinIO 未配置时也作为归档目录）
+    REPORT_WORK_DIR: str = os.getenv("REPORT_WORK_DIR", "reports")
+    REPORT_MAX_CONCURRENCY: int = _as_int(os.getenv("REPORT_MAX_CONCURRENCY"), 2)
+    # 盖章完成产品扫描入队 + 调度间隔
+    REPORT_SCAN_INTERVAL_SEC: int = _as_int(os.getenv("REPORT_SCAN_INTERVAL_SEC"), 60)
+    REPORT_SCAN_BATCH: int = _as_int(os.getenv("REPORT_SCAN_BATCH"), 20)
+    REPORT_RETENTION_DAYS: int = _as_int(os.getenv("REPORT_RETENTION_DAYS"), 90)
+    # PDF 转换：off = 仅 Excel；libreoffice = 服务端 headless；external = 外部 Worker（WPS COM）经 API 领取
+    REPORT_PDF_MODE: str = os.getenv("REPORT_PDF_MODE", "off")
+    SOFFICE_CMD: str = os.getenv("SOFFICE_CMD", "soffice")
+    # MES（各产品族统一接口：multipart sn + calibrationReport + calibrationCertificate）
+    REPORT_MES_URL: str = os.getenv(
+        "REPORT_MES_URL", "http://mes.uni-t.com.cn:7775/MES/api/upload/tek/calibration/data"
+    )
+    # MinIO 对象存储（报告成品归档与下载；模板登记同样复用此桶）
+    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
+    MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "share")
+    MINIO_SECURE: bool = _as_bool(os.getenv("MINIO_SECURE"), False)
+    MINIO_REPORT_PREFIX: str = os.getenv("MINIO_REPORT_PREFIX", "reports")
+    MINIO_TEMPLATE_PREFIX: str = os.getenv("MINIO_TEMPLATE_PREFIX", "report-templates")
+    MINIO_SCRIPT_PREFIX: str = os.getenv("MINIO_SCRIPT_PREFIX", "report-scripts")
+    # 上传式插件：模板物化缓存目录 + 脚本执行超时
+    REPORT_TEMPLATE_DIR: str = os.getenv("REPORT_TEMPLATE_DIR", "report_templates")
+    REPORT_SCRIPT_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_SCRIPT_TIMEOUT_SEC"), 300)
+    # 工厂测试库（各型号分库同一台 PG，库名 = 型号；报告引擎只读）
+    FACTORY_DB_HOST: str = os.getenv("FACTORY_DB_HOST", "")
+    FACTORY_DB_PORT: int = _as_int(os.getenv("FACTORY_DB_PORT"), 5432)
+    FACTORY_DB_USER: str = os.getenv("FACTORY_DB_USER", "")
+    FACTORY_DB_PASSWORD: str = os.getenv("FACTORY_DB_PASSWORD", "")
 
 settings = Settings()
 

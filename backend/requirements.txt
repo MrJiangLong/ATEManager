@@ -8,3 +8,9 @@ python-dotenv>=1.0
 pyjwt>=2.6,<2.9
 # VSCode F5 断点调试
 debugpy>=1.8
+# ---- 出厂报告引擎 ----
+openpyxl>=3.1      # 读写报告 xlsx 模板
+httpx>=0.27        # MES multipart 上传
+minio>=7.2         # 报告成品归档
+Pillow>=8.0        # openpyxl 图片往返必需：报告模板中的签名图/logo 在插件写值保存时不丢失
+python-multipart>=0.0.9  # PDF Worker 回传接口（UploadFile/Form）

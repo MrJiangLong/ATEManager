@@ -20,6 +20,23 @@ services:
       ENFORCE_CASE_IDS: "true"
       CLIENT_ONLINE_WINDOW_SECONDS: "90"
       METRICS_WINDOW_DAYS: "14"
+      # ---- 出厂报告引擎 ----
+      FACTORY_DB_HOST: "10.1.1.4"
+      FACTORY_DB_PORT: "5432"
+      FACTORY_DB_USER: "share_analyst"
+      FACTORY_DB_PASSWORD: "Unitcd123"
+      MINIO_ENDPOINT: "10.1.1.4:3000"
+      MINIO_ACCESS_KEY: "LQI0BEKyOhGQdN0NUMJw"
+      MINIO_SECRET_KEY: "XEulhQqdP2gIAQ6TowwhTjcdQmTgCib54fTs0Udg"
+      MINIO_BUCKET: "share"
+      MINIO_SECURE: "false"
+      REPORT_PDF_MODE: "external"
+      REPORT_MES_URL: "<填真实 MES 地址>"
+      REPORT_MAX_CONCURRENCY: "2"
+      REPORT_SCAN_INTERVAL_SEC: "60"
+      REPORT_RETENTION_DAYS: "90"
+      REPORT_WORK_DIR: /app/data/reports
+      REPORT_TEMPLATE_DIR: /app/data/report_templates
     volumes:
       - ./data:/app/data
     restart: unless-stopped

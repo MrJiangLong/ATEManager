@@ -1,0 +1,7 @@
+{
+  "server_url": "http://10.1.1.4:8000",
+  "api_key": "与服务端 V1_API_KEY 一致",
+  "poll_interval": 10,
+  "work_dir": "",
+  "convert_timeout": 120
+}

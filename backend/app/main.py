@@ -30,6 +30,7 @@ from .routers import (
     products,
     records,
     repairs,
+    reports,
     routing,
     sessions,
     users,
@@ -38,6 +39,7 @@ from .routers import (
 from .schemas import EnvelopeOut
 from .security import hash_password
 from .services import sweeper
+from .services.reports import scheduler as report_scheduler
 
 configure_logging()
 logger = get_logger("startup")
@@ -68,9 +70,12 @@ def _bootstrap() -> None:
 async def lifespan(_: FastAPI):
     _bootstrap()
     sweeper.start()
+    if report_scheduler.enabled():
+        report_scheduler.start()
     try:
         yield
     finally:
+        report_scheduler.stop()
         await sweeper.stop()
         engine.dispose()
 
@@ -119,6 +124,9 @@ for _router in (
     sessions.router,
     metrics.router,
     users.router,
+    reports.router,
+    reports.rules_router,
+    reports.standards_router,
 ):
     app.include_router(_router)
 

@@ -23,7 +23,19 @@ frontend/.vite/
 .ate_session_*.json
 backend/*.db
 backend_test.db
-
+# 插件本地台架产物与本地连接配置
+backend/reports
+backend/report_templates
+backend/.pytest_cache
+# ---- PDF Worker 打包产物（PyInstaller，位于 tools/pdf_worker/）----
+tools/pdf_worker/build/
+tools/pdf_worker/dist/
+tools/pdf_worker/*.spec
+tools/pdf_worker/worker_config.json
+tools/_mes_sink
+tools/plugin/tek_mso/_out
+tools/plugin/_out/
+tools/plugin/.env
 # ---- 系统 ----
 .DS_Store
 Thumbs.db

@@ -23,6 +23,7 @@ from typing import List, Optional
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -343,4 +344,89 @@ class TestSession(Base):
     end_reason: Mapped[Optional[str]] = mapped_column(Text)
     ended_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+# =====================================================================
+class ReportJob(Base):
+    """出厂报告任务：一台盖章完成的 SN 一次全量生成（数据报告/校准报告/证书）。
+
+    产物清单落 artifacts JSONB（每元素：type/filename/object_key/mes/pdf/
+    pdf_status/pdf_object_key），使「生成」与「转 PDF」两阶段可独立重试，
+    并支持外部 Worker（WPS COM）经 API 认领转换。生成失败不影响测试主流程。
+    """
+
+    __tablename__ = "report_jobs"
+    __table_args__ = (
+        Index("idx_rj_sn", "sn"),
+        Index("idx_rj_status", "status"),
+        Index("idx_rj_created", "created_at"),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    sn: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    rule: Mapped[Optional[str]] = mapped_column(String(64))  # 报告规则（rule 名）
+    auto: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default=text("'pending'")
+    )
+    artifacts: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    failed_items: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    mes_status: Mapped[str] = mapped_column(
+        String(16), default="none", server_default=text("'none'")
+    )
+    mes_message: Mapped[Optional[str]] = mapped_column(Text)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ReportRule(Base):
+    """出厂报告规则：绑定确定型号清单 + 上传式插件（受信任代码，仅 admin 维护）。
+
+    一条规则 = 一个脚本（generate(api)）+ 多个模板，服务确定型号清单内的全部型号；
+    型号派生（通道/带宽/AFG 等）全部在脚本内完成，服务器不解析型号字符串。
+    版本来源由脚本自定（api.latest），上传同名覆盖、保存即生效。
+    """
+
+    __tablename__ = "report_rules"
+
+    rule: Mapped[str] = mapped_column(String(64), primary_key=True)
+    models: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    mes_url: Mapped[Optional[str]] = mapped_column(String(256))
+    auto_trigger: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    enabled: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    script: Mapped[Optional[str]] = mapped_column(Text)
+    script_name: Mapped[Optional[str]] = mapped_column(String(256))  # 上传时的原始文件名（MinIO 归档同名）
+    updated_by: Mapped[Optional[str]] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ReportTemplate(Base):
+    """报告规则 Excel 模板登记：文件本体存 MinIO（未配置时存本地模板目录）。"""
+
+    __tablename__ = "report_templates"
+
+    rule: Mapped[str] = mapped_column(String(64), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(256), primary_key=True)
+    object_key: Mapped[Optional[str]] = mapped_column(String(512))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReportStandard(Base):
+    """标准器台账（按报告规则隔离）：证书回填与「标准器校准日期不得早于被测件」校验的数据源。"""
+
+    __tablename__ = "report_standards"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    rule: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    manufacturer: Mapped[str] = mapped_column(String(64), nullable=False)
+    pc_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    sn: Mapped[str] = mapped_column(String(128), nullable=False)
+    cal_date: Mapped[Optional[datetime]] = mapped_column(Date)
 

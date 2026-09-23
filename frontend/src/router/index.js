@@ -62,6 +62,12 @@ const router = createRouter({
           meta: { titleKey: 'menu.sessions' },
         },
         {
+          path: 'reports',
+          name: 'Reports',
+          component: () => import('../views/Reports.vue'),
+          meta: { titleKey: 'menu.reports' },
+        },
+        {
           path: 'configs',
           name: 'RouteConfig',
           component: () => import('../views/RouteConfig.vue'),

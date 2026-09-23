@@ -108,6 +108,7 @@ const features = computed(() => [
   { key: 'f1', text: t('auth.feature1') },
   { key: 'f2', text: t('auth.feature2') },
   { key: 'f3', text: t('auth.feature3') },
+  { key: 'f4', text: t('auth.feature4') },
 ])
 
 function changeLang(value) {

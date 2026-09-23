@@ -10,9 +10,9 @@
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| 后端 API | `1.0.0` | `backend/app/config.py::APP_VERSION` |
+| 后端 API | `2.0.0` | `backend/app/config.py::APP_VERSION` |
 | 上位机接口文档 | `v1.0` | `doc/API.md` |
-| 前端 | `1.0.0` | `frontend/package.json` |
+| 前端 | `2.0.0` | `frontend/package.json` |
 
 ---
 
@@ -68,6 +68,8 @@
 - **维修处置**：RETEST / ROLLBACK / RESET / SCRAP，自动作废受影响记录
 - **SN 全追溯**：事件台账 + 维修履历 + 会话时间线
 - **SPC 良率看板**：产量/良率趋势、工位与流程良率、失效用例排行、机台在线
+- **出厂报告引擎**：盖章完成自动入队（60s 轮询，不触碰出站事务）→ 上传式插件产 Excel → MinIO 归档 → PDF 转换（服务端 LibreOffice 或外部 WPS Worker）→ MES 上传（multipart 字段名由插件 `mes_field` 声明）；报告规则（型号清单精确匹配 + 脚本 + 模板 + 标准器台账）全部 Web 端维护，后端零改动扩展新产品族
+- **报告产物存储语义**：走 MES 的产物上传成功即清理 ATEManager 侧 MinIO 对象与本地副本（MES 即唯一归档）；未走 MES 的产物（数据报告）随 `REPORT_RETENTION_DAYS` 到期连 MinIO 对象、本地目录、DB 记录一并清除；失败任务全量保留待重试
 - **三角色权限**：viewer 只读 / operator 产线操作 / admin 配置与用户管理，后端逐端点收口
 
 ---
@@ -120,13 +122,14 @@ routers  ──▶  services  ──▶  models
 | `services/metrics.py` | 仪表盘聚合（流程缓存 / 在制品 / 日趋势 / TOP 失效 / 窗口良率） |
 | `services/views.py` | ORM 实体 → 展示模型的派生与组装 |
 | `services/timeutil.py` | UTC 时间语义统一 + 统计日界（本地自然日切分） |
+| `services/reports/` | 出厂报告引擎：调度入队（scheduler）/ 插件执行（executor）/ 工厂库只读取数（extractor）/ 规则注册表与模板物化（registry）/ MinIO 归档（store）/ PDF 转换（pdf）/ MES 上传（mes）/ 任务管线（engine） |
 
 ### 3.2 双通道鉴权与三角色
 
 | 通道 | 前缀 | 鉴权 | 使用者 |
 |---|---|---|---|
 | 通道一 | `/api/v1/*` | `X-API-Key` | 产线上位机（pytest） |
-| 通道二 | `/api/admin/*` | JWT Bearer | Web 管理端 |
+| 通道二 | `/api/admin/*` | JWT Bearer | Web 管理端（例外：`report-jobs/pdf-claim` 与 `pdf-result` 接受 `X-API-Key`，供 PDF Worker 调用） |
 | 鉴权 | `/api/auth/*` | 账密换 token | 登录 |
 
 通道二按**三角色**收口（`users.role`，JWT 携带，逐端点校验）：
@@ -135,7 +138,7 @@ routers  ──▶  services  ──▶  models
 |---|---|
 | `viewer` | 只读全部：运营总览、在制/台账/追溯、工艺配置查看 |
 | `operator` | viewer + 机台注册/绑定/注销、维修处置、强制解锁、中止会话 |
-| `admin` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、用户管理 |
+| `admin` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、报告规则/模板/标准器台账、用户管理 |
 
 防自锁守卫：系统中永远保证至少一个启用中的 admin——删除/停用/降权最后一个有效 admin 一律 `409 last_admin`，不能删除自己的账号。被停用账号登录拒绝且已有 token 立即失效。
 
@@ -152,6 +155,32 @@ routers  ──▶  services  ──▶  models
 
 机型只需绑定 `process_id`，上位机按用例ID清单执行，服务端按拓扑判定 —— 运行期零分支。
 
+### 3.4 出厂报告引擎
+
+完整管线（后台调度线程轮询触发，与测试主流程彻底解耦，不触碰出站事务）：
+
+```
+盖章完成（is_completed）─ 60s 扫描入队 ─▶ 匹配报告规则（型号清单精确匹配）
+    ─▶ 插件 generate(api)：型号解析 / 工厂库只读取数 / 渲染 Excel（产品知识全在插件）
+    ─▶ 产物归档 MinIO ─▶ PDF 转换（off / libreoffice / external WPS Worker）
+    ─▶ MES 上传（按产物 mes_field 声明的字段名）─▶ 任务终态（页面可查 / 重试 / 重传）
+```
+
+服务器**不含任何产品知识**：表名列名、型号字符串解析、MES 字段名、模板形态全部在插件或 Web 配置侧。
+
+存储与删除规则（按产物是否声明 `mes` 区分，与产品族无关）：
+
+| 产物 | MinIO | 本地 work_dir | DB 记录 |
+|---|---|---|---|
+| `mes=true`（校准报告/证书） | 上传成功**即刻删除** | 同左 | `REPORT_RETENTION_DAYS`（90 天） |
+| `mes=false`（数据报告） | 保留至保留期到期，随记录一并删除 | 同左 | 同左 |
+| 失败/部分成功任务 | 保留（重试与排查现场） | 保留 | 保留，到期一并清 |
+
+两条硬保证：
+
+- MES 成功判定与 TekReport 上传工具同口径（HTTP 2xx 且 JSON `success=true`/`"true"`，无字段/字符串 `"false"`/数字均判失败）
+- 到期清理顺序：**先删文件（MinIO + 本地），全部删净后再清 DB 记录**；删除失败的任务保留记录下轮重试，不产生无索引的孤儿文件
+
 ---
 
 ## 4. 技术栈
@@ -167,6 +196,10 @@ routers  ──▶  services  ──▶  models
 | pg8000 | ≥ 1.30 | PostgreSQL 纯 Python 驱动 |
 | PyJWT | ≥ 2.6 | 通道二鉴权 |
 | Uvicorn | ≥ 0.29 | ASGI 服务器 |
+| openpyxl | ≥ 3.1 | 出厂报告 xlsx 模板读写 |
+| minio | ≥ 7.2 | 报告成品/模板/脚本归档 |
+| httpx | ≥ 0.27 | MES multipart 上传 |
+| Pillow | ≥ 8.0 | openpyxl 图片往返（模板签名图/logo） |
 
 ### 前端
 
@@ -227,7 +260,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，40 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，44 项全部通过 |
 | 上位机链路 | `python tools/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -259,11 +292,13 @@ python -m app.seed --backfill-completed   # 回填 is_completed 冗余列
 ```
 ATEManager/
 ├── backend/
+│   ├── .env.example          全部配置项及注释（复制为 .env 使用）
+│   ├── requirements.txt      Python 依赖
 │   ├── app/
 │   │   ├── main.py           入口：路由装配、schema 初始化、托管前端产物、SPA 回退
 │   │   ├── config.py         集中配置（环境变量 → Settings 单例）
 │   │   ├── database.py       引擎 / 会话 / 建表
-│   │   ├── models.py         10 张业务表 + users（用例ID：列名 nodeid → 属性 case_id）
+│   │   ├── models.py         14 张业务表 + users（用例ID：列名 nodeid → 属性 case_id）
 │   │   ├── schemas.py        API 契约（In / Out）
 │   │   ├── security.py       双通道鉴权：JWT + X-API-Key
 │   │   ├── errors.py         业务异常 → 统一响应包
@@ -276,7 +311,16 @@ ATEManager/
 │   │   │   ├── sweeper.py    孤儿锁回收后台任务（失联 / 硬超时）
 │   │   │   ├── metrics.py    仪表盘聚合（在制品 / 日趋势 / 窗口良率 / TOP 失效）
 │   │   │   ├── views.py      ORM → 展示模型的派生与组装
-│   │   │   └── timeutil.py   UTC 时间语义、"距某时刻多久"、统计日界
+│   │   │   ├── timeutil.py   UTC 时间语义、"距某时刻多久"、统计日界
+│   │   │   └── reports/      出厂报告引擎
+│   │   │       ├── engine.py       任务管线：入队 / 执行 / 终态 / MES 就绪判定
+│   │   │       ├── scheduler.py    后台调度：扫描盖章完成自动入队 + 限流派发 + 过期清理
+│   │   │       ├── registry.py     规则注册表：型号精确匹配 / 脚本编译 / 模板物化缓存
+│   │   │       ├── executor.py     插件执行器：注入只读 api，隔离线程带超时运行
+│   │   │       ├── extractor.py    工厂测试库只读取数（各型号分库，库名=型号）
+│   │   │       ├── store.py        MinIO 归档：上传 / 预签名下载 / ETag 校验
+│   │   │       ├── pdf.py          PDF 转换：off / libreoffice / external 三种模式
+│   │   │       └── mes.py          MES multipart 传输层（字段名由插件产物声明，不做产品解释）
 │   │   └── routers/
 │   │       ├── auth.py       登录 / 当前用户 / 改密
 │   │       ├── v1.py         通道一：resolve / check-in / heartbeat / checkpoint
@@ -288,14 +332,22 @@ ATEManager/
 │   │       ├── repairs.py    维修处置履历
 │   │       ├── sessions.py   测试会话：续测断点 / 僵尸锁 / 强制终止
 │   │       ├── clients.py    机台档案与工位绑定
-│   │       └── metrics.py    仪表盘统计
-│   └── tests/test_backend.py 端到端回归测试（40 项）
-├── tools/                    运维与验证脚本（Python，仅标准库）
+│   │       ├── metrics.py    仪表盘统计
+│   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
+│   ├── tests/
+│   │   └── test_backend.py   端到端回归测试（44 项）
+│   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
+│   ├── logs/                 滚动日志（gitignore）
+│   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
+│   └── report_templates/     报告模板物化缓存（按 MinIO ETag 校验，gitignore）
+├── tools/                    运维与验证脚本
 │   ├── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
 │   ├── sim_local.py          本地测试库一键仿真（--attach 只对运行中后端）
 │   ├── sync_cases.py         用例ID全量同步（JSON + 中止会话 + 沉降等待）
 │   ├── cases.example.json    用例清单 JSON 模板（sync_cases 的输入示例）
-│   └── ate_client.py         SDK 参考实现 + 演示脚本（仅标准库，非产线执行器）
+│   ├── ate_client.py         SDK 参考实现 + 演示脚本（仅标准库，非产线执行器）
+│   ├── pdf_worker/           出厂报告 PDF 外部转换 Worker（部署在装有 WPS/Office 的 Windows 测试机）
+│   └── plugin/               报告插件开发包：tek_mso 参考实现 + 本地台架 + 开发规则文档
 ├── doc/                      上位机接入文档与参考实现
 │   └── API.md                上位机接口文档（唯一契约依据）
 │
@@ -304,8 +356,9 @@ ATEManager/
 │       ├── api/              Axios 封装 + 按域划分的 API 模块
 │       ├── components/       DataCard / PageToolbar / StatTile / EmptyState
 │       │                     YieldTable / RepairDialog / ProductDrawer / SessionDrawer
-│       │                     TopFailedList / AppLogoMark
+│       │                     ProcessDetailDrawer / CaseIdText / TopFailedList / AppLogoMark
 │       ├── composables/      useProcesses（工艺字典缓存）/ usePolling（静默轮询）
+│       │                     usePagination（通用分页）
 │       ├── layout/           Layout / AppHeader / AppSidebar / ChangePasswordDialog
 │       ├── locales/          zh-CN / en-US（i18n 词条）
 │       ├── router/           vue-router 路由表与鉴权守卫
@@ -323,6 +376,9 @@ ATEManager/
 │           ├── Clients.vue      机台管理
 │           ├── Login.vue        登录
 │           ├── RouteConfig.vue  工艺配置入口
+│           ├── Users.vue        用户管理
+│           ├── Reports.vue      出厂报告（报告任务 / 候选入队 / 报告规则 三个 Tab）
+│           ├── reports/         ReportJobsPanel / ReportCandidatesPanel / ReportRulesPanel
 │           └── route-config/    RouteProcesses / RouteModels / RouteStations
 │                                 RouteTopology / RouteItems
 ├── scripts/                  Windows 启动器（.bat）：setup / dev-backend / dev-frontend
@@ -336,7 +392,7 @@ ATEManager/
 
 ## 7. 数据模型
 
-**10 张业务表 + 1 张鉴权表**，严格按生产级 DDL 实现。
+**14 张业务表 + 1 张鉴权表**，严格按生产级 DDL 实现。
 
 ### 7.1 静态工艺与主数据（Web 低频维护）
 
@@ -462,7 +518,24 @@ URL、SCPI 指令、日志文件名里都无需转义。
 
 > `users` 表为 Web 管理端鉴权所需的基础设施，不属于业务表。
 
-### 7.4 关键字段语义
+### 7.4 出厂报告（规则 admin 维护 + 引擎生成）
+
+| 表 | 主键 | 作用 |
+|---|---|---|
+| `report_rules` | `rule` | 报告规则：绑定确定型号清单（JSON，精确匹配）+ 上传式插件脚本 + MES 地址 + 自动触发开关 |
+| `report_templates` | `(rule, filename)` | 规则的 Excel 模板登记（文件本体存 MinIO，生成时按 ETag 校验物化到本地缓存） |
+| `report_standards` | `id` | 标准器台账（按 rule 隔离），证书校验用 |
+| `report_jobs` | `job_id` | 报告任务状态机：pending → running → success/partial/failed；artifacts JSON 记录产物与 PDF/MES 进度 |
+
+> **`report_jobs.artifacts`（JSON 数组）逐产物字段**：
+> `type`（data_report / cal_report / certificate 等，由插件声明）、`filename`、
+> `object_key` / `pdf_object_key`（MinIO 归档键，MES 上传成功后置空）、
+> `pdf_status`（none / pending / done / failed）、`pdf_error`（转换失败原因）、
+> `mes` / `mes_field`（是否随 MES 上传及该 PDF 在 multipart 中的字段名）、
+> `purged`（true = 已随 MES 上传清理，前端下载按钮置灰并提示）、
+> `failed_items`（缺数据/校验失败明细，页面展示与重试依据）。
+
+### 7.5 关键字段语义
 
 | 字段 | 说明 |
 |---|---|
@@ -474,8 +547,12 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | `product_models.fw_match_rule` | 固件基线口径：`exact` 完全一致（默认）；`min` 不低于基线，按数字段比较（`V3.9 < V3.20`） |
 | `station_clients.app_version` | 上位机程序版本，身份上报与进站时刷新，用于排查版本漂移 |
 | `processes.is_active` | 停用只作用于管理端（不再接受新机型绑定），运行期已绑定机型的在制品照常流转 |
+| `report_rules.models` | 报告规则绑定的确定型号清单（JSON），**精确匹配**不做字符串派生；型号规格（通道/带宽/AFG）由插件脚本自行解析 |
+| `report_rules.auto_trigger` | 盖章完成自动入队开关；`false` 时仅允许 Web「报告候选入队」手动生成 |
+| `report_rules.mes_url` | 该族 MES 上传地址，未配置时回退 `REPORT_MES_URL` |
+| `report_jobs.artifacts` | 产物明细 JSON，结构见 7.4 注；`purged=true` 表示已随 MES 上传清理，ATEManager 不再保留副本 |
 
-### 7.5 租约锁模型（v1.0）
+### 7.6 租约锁模型（v1.0）
 
 ```
 持锁    = current_status == 'TESTING' AND current_client == <client_id> AND lock_token
@@ -559,6 +636,10 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机台 | view / op 写 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
 | 统计 | view | `GET /api/admin/metrics/overview` |
 | 用户管理 | admin | `GET/POST /api/admin/users`、`PUT/DELETE /api/admin/users/{user_id}` |
+| 报告任务 | view / op 写 | `GET /api/admin/report-jobs`、`GET .../models`、`GET .../candidates`、`POST .../batch`、`POST /{job_id}/retry`、`POST /{job_id}/resend-mes`、`GET /{job_id}/download/{index}` |
+| 报告规则 | admin | `GET/POST /api/admin/report-rules`、`PUT/DELETE /{rule}`、`POST /{rule}/script`、`POST/DELETE /{rule}/templates[/{filename}]` |
+| 标准器台账 | admin | `GET/POST /api/admin/report-standards`、`PUT/DELETE /{id}` |
+| PDF Worker | Worker 专用 | `GET /api/admin/report-jobs/pdf-claim`、`POST /api/admin/report-jobs/pdf-result`（X-API-Key 鉴权，部署在 Windows 测试机的 Worker 轮询调用） |
 
 完整参数与响应模型见 Swagger（`http://localhost:8000/docs`）。
 
@@ -644,6 +725,23 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `MERGE_CHECKPOINT_ON_CHECKOUT` | `true` | 出站时用断点补齐未提交用例 |
 | `STRICT_LOCK_TOKEN` | `false` | `true` 时"未携带 token"也拒绝；**token 不匹配始终拒绝** |
 
+### 11.5 出厂报告引擎
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `FACTORY_DB_HOST/PORT/USER/PASSWORD` | 空 | 工厂测试库（各型号一个分库，库名=型号），报告引擎**只读**；未配置则报告功能整体关闭 |
+| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 空 | MinIO 归档（报告成品/模板/脚本共用一个桶）；未配置时本地产物即归档 |
+| `MINIO_BUCKET` / `MINIO_SECURE` | `share` / `false` | 桶名与 TLS 开关 |
+| `MINIO_REPORT_PREFIX` / `MINIO_TEMPLATE_PREFIX` / `MINIO_SCRIPT_PREFIX` | `reports` / `report-templates` / `report-scripts` | 对象键前缀 |
+| `REPORT_PDF_MODE` | `off` | PDF 转换：`off` 仅 Excel / `libreoffice` 服务端 headless（`SOFFICE_CMD`）/ `external` 外部 WPS Worker（`tools/pdf_worker/`，部署在装有 WPS/Office 的 Windows 测试机） |
+| `REPORT_MES_URL` | MES 校准接口 | 各产品族统一的校准数据上传地址（multipart：`sn` + 各 PDF，字段名由插件产物 `mes_field` 声明）；成功判定与 TekReport 同口径（2xx 且 JSON `success=true`/`"true"`） |
+| `REPORT_MAX_CONCURRENCY` | `2` | 报告生成并发上限 |
+| `REPORT_SCAN_INTERVAL_SEC` / `REPORT_SCAN_BATCH` | `60` / `20` | 盖章完成产品扫描入队的间隔与单轮批量 |
+| `REPORT_WORK_DIR` | `reports` | 生成过程工作目录（xlsx 先落盘再传 MinIO；随任务记录保留期一起清理） |
+| `REPORT_RETENTION_DAYS` | `90` | 任务记录保留天数；到期时产物对应的 MinIO 对象、本地工作目录与任务记录一并删除（已上传 MES 的产物在上传成功时即清理，MES 即其归档） |
+| `REPORT_TEMPLATE_DIR` | `report_templates` | 模板本地物化缓存目录 |
+| `REPORT_SCRIPT_TIMEOUT_SEC` | `300` | 插件 `generate()` 执行超时 |
+
 ---
 
 ## 12. 维修处置
@@ -657,12 +755,13 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 
 处置仅在在制品未被持锁（非 `TESTING`）时允许执行，否则返回 `409 product_holding_lock`。
 
+
 ---
 
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 40 项，覆盖全部卡控场景
+python tests/test_backend.py      # 44 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 
@@ -716,6 +815,12 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 锁长时间不释放 | Sweeper 关闭或周期过长 | 检查 `SWEEPER_ENABLED` / `SWEEPER_INTERVAL_SEC`；或用强制解锁 |
 | 演示场景数据看不到僵尸锁 | 被后台任务自动回收 | 以 `SWEEPER_ENABLED=false` 启动后端 |
 | 前端页面 404（刷新后） | 静态托管未生效 | 确认 `frontend/dist/index.html` 存在，或改用 Hash 路由 |
+| 报告任务一直 pending | 调度器未启动 | 核对 `FACTORY_DB_*` 已配置且存在启用中的报告规则；启动日志应出现「报告调度器已启动」 |
+| PDF 长时间 pending | external 模式 Worker 未运行 | 在装有 WPS/Office 的 Windows 测试机启动 `tools/pdf_worker/report_pdf_worker.py`（核对 server_url 与 api_key） |
+| PDF/Excel 下载按钮置灰 | 产物已上传 MES，ATEManager 不再保留副本 | 到 MES 侧查取；数据报告不受影响 |
+| 产物下载 404 | 任务记录已过保留期（默认 90 天），MinIO 对象随记录一并清除 | 到 MES 侧查取（校准类）；数据报告超期后不再提供下载 |
+| MES 上传失败（HTTP 503/连接拒绝） | `REPORT_MES_URL` 不可达或 MES 服务异常 | 核对地址；恢复后用「重传 MES」重试 |
+| 报告分页/排版与样张不一致 | 模板打印设置被改动 | 引擎转 PDF 前会自动规范化（多节回退 scale、单页锁 A4 + fitToPage 1×1）；检查模板是否被手工调整过分节符与纸张 |
 
 ---
 
@@ -724,5 +829,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 文档 | 内容 |
 |---|---|
 | [`doc/API.md`](doc/API.md) | 上位机接口完整契约（错误码 / 时序 / 实现规范） |
+| `tools/plugin/插件开发规则.md` | 出厂报告插件开发指南（脚本契约 / 开发流程 / tek_mso 要点） |
+| `tools/pdf_worker/build_exe.md` | PDF Worker 的 PyInstaller 打包与部署说明 |
 | `backend/.env.example` | 全部配置项及注释 |
 | `/docs`（运行时） | OpenAPI 交互式文档 |

@@ -158,5 +158,45 @@ export const usersApi = {
   remove: (userId) => api.delete(`/admin/users/${userId}`),
 }
 
+/** 出厂报告生成（盖章完成 → 数据报告/校准报告/证书 → MinIO → MES） */
+export const reportApi = {
+  listJobs: (params) => api.get('/admin/report-jobs', { params }),
+  models: () => api.get('/admin/report-jobs/models'),
+  candidates: (params) => api.get('/admin/report-jobs/candidates', { params }),
+  batch: (data) => api.post('/admin/report-jobs/batch', data),
+  retry: (jobId) => api.post(`/admin/report-jobs/${jobId}/retry`),
+  resendMes: (jobId) => api.post(`/admin/report-jobs/${jobId}/resend-mes`),
+  downloadUrl: (jobId, index, variant) =>
+    api.get(`/admin/report-jobs/${jobId}/download/${index}`, { params: { variant } }),
+}
+
+/** 报告规则（上传式插件，仅 admin） */
+export const ruleApi = {
+  list: () => api.get('/admin/report-rules'),
+  create: (data) => api.post('/admin/report-rules', data),
+  update: (rule, data) => api.put(`/admin/report-rules/${rule}`, data),
+  remove: (rule) => api.delete(`/admin/report-rules/${rule}`),
+  uploadScript: (rule, file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post(`/admin/report-rules/${rule}/script`, form)
+  },
+  uploadTemplates: (rule, files) => {
+    const form = new FormData()
+    files.forEach((f) => form.append('files', f))
+    return api.post(`/admin/report-rules/${rule}/templates`, form)
+  },
+  removeTemplate: (rule, filename) =>
+    api.delete(`/admin/report-rules/${rule}/templates/${encodeURIComponent(filename)}`),
+}
+
+/** 标准器台账（按报告规则隔离，仅 admin） */
+export const standardsApi = {
+  list: (rule) => api.get('/admin/report-standards', { params: { rule } }),
+  create: (data) => api.post('/admin/report-standards', data),
+  update: (id, data) => api.put(`/admin/report-standards/${id}`, data),
+  remove: (id) => api.delete(`/admin/report-standards/${id}`),
+}
+
 export default api
 
