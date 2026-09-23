@@ -375,6 +375,7 @@ export default {
     status_success: 'Done',
     status_partial: 'Partial',
     status_failed: 'Failed',
+    status_invalid: 'Invalidated',
     type_data_report: 'Data Report',
     type_cal_report: 'Cal Report',
     type_certificate: 'Certificate',

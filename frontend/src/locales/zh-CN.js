@@ -377,6 +377,7 @@ export default {
     status_success: '已完成',
     status_partial: '部分成功',
     status_failed: '失败',
+    status_invalid: '已作废',
     type_data_report: '测试数据报告',
     type_cal_report: '校准报告',
     type_certificate: '校准证书',

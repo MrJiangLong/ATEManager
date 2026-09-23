@@ -168,25 +168,50 @@ def upload_mes_if_ready(db, job: models.ReportJob) -> None:
         # 通用清理规则（与产品族无关）：凡声明 mes=true 的产物，上传成功即视为
         # MES 是其唯一归档，立即清除 MinIO 对象与本地副本；未声明 MES 的产物
         # （如数据报告）保留在存储里作为 ATEManager 侧归档。失败任务不清理，保重试。
-        for art in mes_arts:
-            if store.enabled():
-                if art.get("object_key"):
-                    store.remove(art["object_key"])
-                    art["object_key"] = None
-                if art.get("pdf_object_key"):
-                    store.remove(art["pdf_object_key"])
-                    art["pdf_object_key"] = None
-            for key in ("local_path", "local_pdf_path"):
-                p = art.get(key)
-                if p and Path(p).exists():
-                    try:
-                        Path(p).unlink()
-                    except OSError:
-                        pass
-                art[key] = None
-            art["purged"] = True
-        flag_modified(job, "artifacts")
+        _purge_artifacts(job, mes_arts)
     db.commit()
+
+
+def _purge_artifacts(job: models.ReportJob, arts: list) -> None:
+    """清除产物存储：MinIO 对象（键置空）+ 本地副本，并标记 purged 落库。"""
+    for art in arts:
+        if store.enabled():
+            if art.get("object_key"):
+                store.remove(art["object_key"])
+                art["object_key"] = None
+            if art.get("pdf_object_key"):
+                store.remove(art["pdf_object_key"])
+                art["pdf_object_key"] = None
+        for key in ("local_path", "local_pdf_path"):
+            p = art.get(key)
+            if p and Path(p).exists():
+                try:
+                    Path(p).unlink()
+                except OSError:
+                    pass
+            art[key] = None
+        art["purged"] = True
+    flag_modified(job, "artifacts")
+
+
+def invalidate_jobs_for_sn(db, sn: str) -> int:
+    """维修处置破坏完工态时：作废该 SN 的全部报告任务并清除产物存储。
+
+    MES 已上传的副本无法撤回（由 MES 侧保留历史）；作废任务保留 90 天后随
+    到期清理一并删除；产品重新完工后由完工扫描自动生成新报告。"""
+    jobs = (
+        db.query(models.ReportJob)
+        .filter(
+            models.ReportJob.sn == sn,
+            models.ReportJob.status != models.REPORT_JOB_INVALID,
+        )
+        .all()
+    )
+    for job in jobs:
+        _purge_artifacts(job, job.artifacts or [])
+        job.status = models.REPORT_JOB_INVALID
+        job.error = "invalidated by repair disposition"
+    return len(jobs)
 
 def run_job(job_id: str) -> None:
     """执行一个报告任务（在调度线程池中运行，可阻塞）。"""

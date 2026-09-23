@@ -42,6 +42,7 @@ from ..errors import (
     forbidden,
     not_found,
 )
+from ..logging import get_logger
 from .firmware import fw_matches
 from .routing import (
     _as_list,
@@ -53,6 +54,8 @@ from .routing import (
     station_rules,
 )
 from .timeutil import elapsed_sec, utcnow
+
+logger = get_logger("gate")
 
 RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
@@ -1071,6 +1074,7 @@ def apply_repair(
     graph = load_process(db, model_row.process_id) if model_row else None
 
     passed = _passed(product)
+    was_completed = bool(product.is_completed)
     action = repair_action.upper()
 
     if action == models.REPAIR_SCRAP:
@@ -1119,6 +1123,17 @@ def apply_repair(
             product.fail_count = 0
     else:
         raise bad_request("invalid_repair_action", f"invalid_repair_action: {repair_action}")
+
+    # 维修处置破坏完工态时，联动作废该 SN 的报告任务（含存储清理）；
+    # 产品重新完工后由完工扫描自动生成新报告（SCRAP 不作废，报告为报废前最后有效记录）
+    if action in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK, models.REPAIR_RESET) and was_completed:
+        from .reports import engine as report_engine
+
+        invalidated = report_engine.invalidate_jobs_for_sn(db, sn)
+        if invalidated:
+            logger.info(
+                "维修处置使完工态失效，已作废 %d 个报告任务：%s %s", invalidated, sn, action
+            )
 
     product.updated_at = utcnow()
     repair = models.RepairRecord(

@@ -346,6 +346,7 @@ class TestSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 # =====================================================================
+REPORT_JOB_INVALID = "invalid"  # 维修处置破坏完工态后，原报告任务作废（存储已清，待重新完工再生成）
 class ReportJob(Base):
     """出厂报告任务：一台盖章完成的 SN 一次全量生成（数据报告/校准报告/证书）。
 

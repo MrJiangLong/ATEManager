@@ -81,7 +81,12 @@ def _enqueue_completed() -> None:
             .limit(settings.REPORT_SCAN_BATCH * 4)
             .all()
         )
-        existing = {row[0] for row in db.query(models.ReportJob.sn).all()}
+        existing = {
+            row[0]
+            for row in db.query(models.ReportJob.sn)
+            .filter(models.ReportJob.status != models.REPORT_JOB_INVALID)
+            .all()
+        }
         created = 0
         for product in products:
             if created >= settings.REPORT_SCAN_BATCH:
@@ -161,7 +166,7 @@ def cleanup_expired() -> None:
             db.query(models.ReportJob)
             .filter(
                 models.ReportJob.created_at < deadline,
-                models.ReportJob.status.in_(("success", "failed", "partial")),
+                models.ReportJob.status.in_(("success", "failed", "partial", models.REPORT_JOB_INVALID)),
             )
             .all()
         )

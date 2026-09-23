@@ -148,13 +148,14 @@ const { role } = useAuth()
 // 重试/重传为 operator+；viewer 只读浏览
 const canOperate = computed(() => ['operator', 'admin'].includes(role.value))
 
-const JOB_STATUSES = ['pending', 'running', 'success', 'partial', 'failed']
+const JOB_STATUSES = ['pending', 'running', 'success', 'partial', 'failed', 'invalid']
 const STATUS_META = {
   pending: { tag: 'info' },
   running: { tag: 'warning' },
   success: { tag: 'success' },
   partial: { tag: 'warning' },
   failed: { tag: 'danger' },
+  invalid: { tag: 'danger' },
 }
 const MES_META = { none: 'info', skipped: 'warning', pending: 'warning', success: 'success', failed: 'danger' }
 

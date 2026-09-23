@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import bad_request, not_found
+from ..errors import bad_request, conflict_error, not_found
 from ..logging import get_logger
 from ..security import api_caller, current_user, require_admin, require_operator
 from ..services import reports
@@ -132,7 +132,12 @@ def batch_create(
     user=Depends(require_operator),
 ):
     created, skipped = 0, []
-    existing = {row[0] for row in db.query(models.ReportJob.sn).all()}
+    existing = {
+        row[0]
+        for row in db.query(models.ReportJob.sn)
+        .filter(models.ReportJob.status != models.REPORT_JOB_INVALID)
+        .all()
+    }
     for sn in body.sns:
         product = db.get(models.ProductStatus, sn)
         if product is None:
@@ -171,6 +176,12 @@ def resend_mes(job_id: str, db: Session = Depends(get_db), user=Depends(require_
     job = db.get(models.ReportJob, job_id)
     if job is None:
         raise not_found("job_not_found", f"job_not_found: {job_id}")
+    if job.status == models.REPORT_JOB_INVALID:
+        raise conflict_error(
+            "job_invalid",
+            f"job_invalid: {job_id} was invalidated by repair disposition; "
+            "reports regenerate automatically after re-completion",
+        )
     report_engine.upload_mes_if_ready(db, job)
     return job
 
