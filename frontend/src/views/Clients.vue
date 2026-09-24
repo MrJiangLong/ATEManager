@@ -39,21 +39,25 @@
             <div v-if="row.bound_stations && row.bound_stations.length" class="cell-stack">
 
               <div class="station-tags">
-                <span
+                <el-tag
                   v-for="s in row.bound_stations.slice(0, 3)"
                   :key="s"
-                  class="soft-tag"
-                >{{ s }}</span>
+                  size="small"
+                  effect="plain"
+                  type="primary"
+                >{{ s }}</el-tag>
                 <el-tooltip
                   v-if="row.bound_stations.length > 3"
                   :content="row.bound_stations.join(', ')"
                   placement="top"
                 >
-                  <span class="soft-tag soft-tag-more">+{{ row.bound_stations.length - 3 }}</span>
+                  <el-tag size="small" effect="plain" type="info">
+                    +{{ row.bound_stations.length - 3 }}
+                  </el-tag>
                 </el-tooltip>
               </div>
             </div>
-            <span v-else class="soft-tag soft-tag-warn">{{ $t('clients.unbound') }}</span>
+            <el-tag v-else size="small" effect="plain" type="danger">{{ $t('clients.unbound') }}</el-tag>
           </template>
         </el-table-column>
         
@@ -363,16 +367,8 @@ usePolling(load, 20000)
 /* 单元格内两行堆叠：主信息一行、次要信息一行，形成主次层次 */
 .cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .cell-sub { font-size: 12.5px; line-height: 1.4; }
-/* 绑定工位标签：Soft Tag（浅底微弱色、无描边），超 3 个折叠为 +N */
+/* 绑定工位标签：与其他页面同款 el-tag（plain 描边），超 3 个折叠为 +N */
 .station-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.soft-tag {
-  display: inline-flex; align-items: center;
-  padding: 1px 8px; border-radius: 4px;
-  font-size: 12px; line-height: 20px;
-  background: #eff6ff; color: #1d4ed8;
-}
-.soft-tag-more { background: #f3f4f6; color: #6b7280; }
-.soft-tag-warn { background: #fff7ed; color: #c2410c; }
 
 /* 状态列：在线绿点；离线是常态而非异常，用中性灰，红色只留给真故障（持锁失联） */
 .state-line { display: inline-flex; align-items: center; gap: 6px; }
@@ -381,7 +377,7 @@ usePolling(load, 20000)
   background: #c3cfe6; flex: none;
 }
 .state-text { font-weight: 500; }
-.state-time { font-size: 12px; color: #8c8c8c; }
+.state-time { font-size: 12px; color: var(--app-text-faint, #9aa6bd); }
 .state-cell.is-online .state-dot { background: var(--app-success, #12b76a); }
 .state-cell.is-online .state-text { color: var(--app-success, #12b76a); }
 
