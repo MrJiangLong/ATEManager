@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard fade-up">
     <PageToolbar :title="$t('dashboard.title')" :subtitle="$t('dashboard.subtitle')">
-      <el-select v-model="processFilter" clearable :placeholder="$t('common.process')" style="width:200px">
+      <el-select v-model="processFilter" clearable :placeholder="$t('common.process')" style="width:300px">
         <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
       </el-select>
       <el-radio-group v-model="windowDays" size="small" class="window-switch">
