@@ -449,7 +449,8 @@ export default {
     snRequired: '请输入产品 SN',
     reasonRequired: '请输入处置原因',
     created: '处置已登记',
-    chartTitle: '处置动作分布',
+    distributionTitle: '处置分布',
+ quickNeedPerm: '需要操作员及以上权限',
     chartTotal: '总计',
     snLooking: '正在查询在制状态…',
     snNotFound: '未找到该 SN 的在制记录，请核对序列号',
@@ -460,6 +461,7 @@ export default {
   clients: {
     title: '机台管理',
     subtitle: '物理工控机档案与逻辑工位绑定',
+    exportBindings: '导出',
     filterStation: '工位',
     tableMachine: '机台',
     tableState: '状态',

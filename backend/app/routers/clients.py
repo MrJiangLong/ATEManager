@@ -114,7 +114,7 @@ def update_client(
     if payload.client_name is not None:
         client.client_name = payload.client_name or None
     if payload.ip_address is not None:
-        client.ip_address = payload.ip_address
+        client.ip_address = payload.ip_address or None  # 空串 = 清空（null = 不修改）
     db.commit()
     return _client_view(db, client)
 

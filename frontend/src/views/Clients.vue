@@ -12,6 +12,7 @@
       </el-select>
       <template #extra>
         <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
+        <el-button :icon="Download" :loading="exporting" @click="exportBindings">{{ $t('clients.exportBindings') }}</el-button>
         <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openCreate">{{ $t('clients.newClient') }}</el-button>
       </template>
     </PageToolbar>
@@ -29,34 +30,30 @@
           <template #default="{ row }">
             <div class="cell-stack">
               <span class="code">{{ row.client_id }}</span>
-              <span v-if="row.client_name" class="muted cell-sub">{{ row.client_name }}</span>
+              <span v-if="row.client_name && row.client_name !== row.client_id" class="muted cell-sub">{{ row.client_name }}</span>
             </div>
           </template>
         </el-table-column>
         <el-table-column :label="$t('clients.tableStation')" width="260">
           <template #default="{ row }">
             <div v-if="row.bound_stations && row.bound_stations.length" class="cell-stack">
-              
+
               <div class="station-tags">
-                <el-tag
+                <span
                   v-for="s in row.bound_stations.slice(0, 3)"
                   :key="s"
-                  size="small"
-                  effect="plain"
-                  type="primary"
-                >{{ s }}</el-tag>
+                  class="soft-tag"
+                >{{ s }}</span>
                 <el-tooltip
                   v-if="row.bound_stations.length > 3"
                   :content="row.bound_stations.join(', ')"
                   placement="top"
                 >
-                  <el-tag size="small" effect="plain" type="info">
-                    +{{ row.bound_stations.length - 3 }}
-                  </el-tag>
+                  <span class="soft-tag soft-tag-more">+{{ row.bound_stations.length - 3 }}</span>
                 </el-tooltip>
               </div>
             </div>
-            <el-tag v-else size="small" effect="plain" type="danger">{{ $t('clients.unbound') }}</el-tag>
+            <span v-else class="soft-tag soft-tag-warn">{{ $t('clients.unbound') }}</span>
           </template>
         </el-table-column>
         
@@ -78,7 +75,7 @@
                 <i class="state-dot" />
                 <span class="state-text">{{ row.online ? $t('clients.online') : $t('clients.offline') }}</span>
               </span>
-              <span class="muted cell-sub">{{ fmtRelative(row.last_seen_at, t) }}</span>
+              <span class="state-time">{{ fmtRelative(row.last_seen_at, t) }}</span>
             </div>
           </template>
         </el-table-column>
@@ -167,7 +164,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { Download, Plus, Refresh } from '@element-plus/icons-vue'
 import { clientApi, productApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -201,6 +198,36 @@ async function load() {
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+/* 导出绑定清单：仅 client_id ↔ 绑定工位映射（IP/在线等运行时字段导出即失真，不入档） */
+const exporting = ref(false)
+async function exportBindings() {
+  exporting.value = true
+  try {
+    const res = await clientApi.list({})
+    const rows = res.data || []
+    const esc = (v) => {
+      const s = String(v ?? '')
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const lines = [
+      'client_id,client_name,bound_stations',
+      ...rows.map((c) =>
+        [esc(c.client_id), esc(c.client_name || ''), esc((c.bound_stations || []).join('; '))].join(',')
+      ),
+    ]
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `clients-bindings-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) {
+    ElMessage.error(e.message || t('errors.loadFailed'))
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -258,8 +285,9 @@ async function submit() {
   try {
     const payload = {
       bound_stations: form.bound_stations || [],
-      client_name: form.client_name || null,
-      ip_address: form.ip_address || null,
+      // 空串 = 清空（后端 null 视为不修改）；否则清空名称/IP 永远不生效
+      client_name: form.client_name || '',
+      ip_address: form.ip_address || '',
     }
     if (isEdit.value) {
       await clientApi.update(form.client_id, payload)
@@ -335,20 +363,27 @@ usePolling(load, 20000)
 /* 单元格内两行堆叠：主信息一行、次要信息一行，形成主次层次 */
 .cell-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .cell-sub { font-size: 12.5px; line-height: 1.4; }
-/* 绑定工位标签：换行排布，超 3 个折叠为 +N（tooltip 看全部） */
+/* 绑定工位标签：Soft Tag（浅底微弱色、无描边），超 3 个折叠为 +N */
 .station-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.soft-tag {
+  display: inline-flex; align-items: center;
+  padding: 1px 8px; border-radius: 4px;
+  font-size: 12px; line-height: 20px;
+  background: #eff6ff; color: #1d4ed8;
+}
+.soft-tag-more { background: #f3f4f6; color: #6b7280; }
+.soft-tag-warn { background: #fff7ed; color: #c2410c; }
 
-/* 状态列：小号文字 + 圆点，靠颜色区分而非字号字重，避免喧宾夺主 */
+/* 状态列：在线绿点；离线是常态而非异常，用中性灰，红色只留给真故障（持锁失联） */
 .state-line { display: inline-flex; align-items: center; gap: 6px; }
 .state-dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--app-border, #c3cfe6); flex: none;
+  background: #c3cfe6; flex: none;
 }
 .state-text { font-weight: 500; }
+.state-time { font-size: 12px; color: #8c8c8c; }
 .state-cell.is-online .state-dot { background: var(--app-success, #12b76a); }
 .state-cell.is-online .state-text { color: var(--app-success, #12b76a); }
-.state-cell.is-offline .state-dot { background: var(--app-danger, #f56c6c); }
-.state-cell.is-offline .state-text { color: var(--app-danger, #f56c6c); }
 
 /* 字号与其他页面同一体系：正文继承默认 14px，辅助 12.5px 对齐全局 muted/code */
 .clients :deep(.el-table .el-table__cell) { padding: 11px 12px; }

@@ -447,7 +447,8 @@ export default {
     snRequired: 'Serial number is required',
     reasonRequired: 'Reason is required',
     created: 'Repair recorded',
-    chartTitle: 'Action Distribution',
+    distributionTitle: 'Disposition Distribution',
+ quickNeedPerm: 'Operator role required',
     chartTotal: 'Total',
     snLooking: 'Looking up WIP status…',
     snNotFound: 'No WIP record found for this SN',
@@ -458,6 +459,7 @@ export default {
   clients: {
     title: 'Stations',
     subtitle: 'Test PCs and their station bindings',
+    exportBindings: 'Export',
     filterStation: 'Station',
     tableMachine: 'Station PC',
     tableState: 'Status',

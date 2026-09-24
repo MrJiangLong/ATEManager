@@ -2,8 +2,8 @@
   <div class="repairs fade-up">
     <PageToolbar :title="$t('repairs.title')" :subtitle="$t('repairs.subtitle')" />
 
-    <DataCard :title="$t('repairs.quickTitle')">
-      <div class="quick-flex">
+    <div class="repairs-top">
+      <DataCard class="quick-card" :title="$t('repairs.quickTitle')">
         <el-form v-if="canOperate" :model="form" label-position="top" class="quick-form" @submit.prevent="submit">
         <el-form-item :label="t('common.sn')" required>
           <el-input
@@ -57,22 +57,25 @@
           {{ t('common.confirm') }}
         </el-button>
       </el-form>
-      
-      <div class="chart-pane">
-        <div v-show="statsTotal > 0" class="chart-body">
-          <div ref="chartEl" class="chart-el" />
-          <div class="chart-side">
-            <div v-for="it in statsItems" :key="it.action" class="side-row">
-              <span class="side-dot" :style="{ background: ACTION_COLORS[it.action] || '#909399' }" />
-              <span class="side-name">{{ t(`repair.${it.action}`) }}</span>
-              <span class="side-count">{{ it.count }}</span>
+      <EmptyState v-else :text="t('repairs.quickNeedPerm')" />
+      </DataCard>
+
+      <DataCard class="dist-card" :title="$t('repairs.distributionTitle')">
+        <div class="chart-pane">
+          <div v-show="statsTotal > 0" class="chart-body">
+            <div ref="chartEl" class="chart-el" />
+            <div class="chart-side">
+              <div v-for="it in statsItems" :key="it.action" class="side-row">
+                <span class="side-dot" :style="{ background: ACTION_COLORS[it.action] || '#909399' }" />
+                <span class="side-name">{{ t(`repair.${it.action}`) }}</span>
+                <span class="side-count">{{ it.count }}</span>
+              </div>
             </div>
           </div>
+          <EmptyState v-if="statsLoaded && statsTotal === 0" :text="t('common.noData')" />
         </div>
-        <EmptyState v-if="statsLoaded && statsTotal === 0" :text="t('common.noData')" />
-      </div>
+      </DataCard>
     </div>
-  </DataCard>
 
     <DataCard :title="t('menu.repairs')">
       <template #extra>
@@ -178,17 +181,6 @@ function renderChart(items) {
   if (!chart) chart = echarts.init(chartEl.value)
   chart.setOption({
     title: [
-      {
-        text: t('repairs.chartTitle'),
-        left: 'center',
-        top: 0,
-        textStyle: {
-          fontSize: 14,
-          fontWeight: 400,
-          color: '#606266',
-          fontFamily: "'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
-        },
-      },
       {
         text: String(statsTotal.value),
         subtext: t('repairs.chartTotal'),
@@ -354,11 +346,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .repairs { display: flex; flex-direction: column; gap: 16px; }
-.quick-form { flex: 0 0 420px; max-width: 420px; }
+/* 顶部左右分栏：左快速登记、右维修分布，两卡等宽平分，窄屏自动换行 */
+.repairs-top { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; }
+.quick-card, .dist-card { flex: 1 1 0; min-width: 420px; }
+.quick-form { width: 100%; }
 .action-group { display: flex; flex-wrap: wrap; }
-/* 快速登记左右分栏：左表单、右环图 */
-.quick-flex { display: flex; gap: 24px; align-items: stretch; flex-wrap: wrap; }
-.chart-pane { flex: 1 1 480px; min-width: 360px; display: flex; flex-direction: column; }
+.chart-pane { display: flex; flex-direction: column; height: 100%; }
 /* 环图 + 右侧明细列表：在剩余空间内均匀分布，不留中段空档 */
 .chart-body { display: flex; align-items: center; justify-content: center; gap: 48px; flex: 1; }
 .chart-el { flex: 0 1 400px; width: 400px; max-width: 100%; min-height: 300px; align-self: center; }
