@@ -10,7 +10,7 @@
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
-| 配套代码 | `tools/ate_client.py`（SDK + 演示）、`tools/line_simulator.py`（多机台并发验证） |
+| 配套代码 | `tools/client/ate_client.py`（SDK + 演示）、`tools/client/line_simulator.py`（多机台并发验证） |
 
 ---
 
@@ -750,7 +750,7 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 
 ### 10.5 宿主职责分工与接入指引
 
-SDK（`tools/ate_client.py`，单文件零第三方依赖）已覆盖传输层全部职责（重试退避、
+SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传输层全部职责（重试退避、
 断点队列、幂等重传、失锁感知），宿主只负责四件事：执行测试、调 `checkpoint`、
 失锁停机、出站重试。完整 conftest.py 骨架见**附录 A**。
 
@@ -821,7 +821,7 @@ $env:SWEEPER_ENABLED="false"
 scripts\dev-backend.bat
 
 # 3) 另开终端（api-key 取 backend/.env 的 V1_API_KEY）
-python tools/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> demo
+python tools/client/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> demo
 ```
 
 | 场景 | 参数 | 验收点 |
@@ -837,8 +837,8 @@ python tools/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KEY> demo
 ### 13.2 多机台并发验证（`line_simulator.py`）
 
 ```powershell
-python tools\line_simulator.py --api-key <KEY> --mode normal --units 15
-python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
+python tools\client\line_simulator.py --api-key <KEY> --mode normal --units 15
+python tools\client\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 ```
 
 | 参数 | 默认 | 说明 |
@@ -888,7 +888,7 @@ python tools\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 0.12
 
 ### 附录 A：完整接入示例（conftest.py）
 
-产线 pytest 工程只需把 `tools/ate_client.py` 拷为工程内模块，再写一个 conftest。
+产线 pytest 工程只需把 `tools/client/ate_client.py` 拷为工程内模块（完整可运行的自测参考见 `tools/atetest/`），再写一个 conftest。
 职责分工（谁管断网重传、谁管停机）见 **10.5**，本附录给出完整骨架：
 
 ```python

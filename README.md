@@ -261,7 +261,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
 | 契约回归 | 执行 `scripts\test-backend.bat`，44 项全部通过 |
-| 上位机链路 | `python tools/ate_client.py --api-key <V1_API_KEY> demo` |
+| 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
 
@@ -340,14 +340,13 @@ ATEManager/
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
 │   └── report_templates/     报告模板物化缓存（按 MinIO ETag 校验，gitignore）
-├── tools/                    运维与验证脚本
-│   ├── line_simulator.py     多机台并发模拟器（锁竞争 / 崩溃续测 / 失联接管）
-│   ├── sim_local.py          本地测试库一键仿真（--attach 只对运行中后端）
-│   ├── sync_cases.py         用例ID全量同步（JSON + 中止会话 + 沉降等待）
-│   ├── cases.example.json    用例清单 JSON 模板（sync_cases 的输入示例）
-│   ├── ate_client.py         SDK 参考实现 + 演示脚本（仅标准库，非产线执行器）
-│   ├── pdf_worker/           出厂报告 PDF 外部转换 Worker（部署在装有 WPS/Office 的 Windows 测试机）
-│   └── plugin/               报告插件开发包：tek_mso 参考实现 + 本地台架 + 开发规则文档
+├── tools/                    运维与验证工具（分域组织，见 tools/README.md 索引）
+│   ├── client/               上位机接入：ate_client.py（SDK 参考实现 + 演示）
+│   │                           line_simulator.py（多机台并发模拟）/ sim_local.py（一键仿真）
+│   ├── atetest/              上位机契约自测工程（pytest 全场景：防呆/漏测/崩溃续测/锁冲突）
+│   ├── cases/                用例清单：sync_cases.py（全量同步）+ cases.example.json（输入模板）
+│   └── reports/              出厂报告域：report_test.py（E2E）
+│                               pdf_worker/（PDF 外部转换 Worker）/ plugin/（插件开发包）
 ├── doc/                      上位机接入文档与参考实现
 │   └── API.md                上位机接口文档（唯一契约依据）
 │
@@ -668,8 +667,8 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 
 | 文件 | 定位 |
 |---|---|
-| `tools/ate_client.py` | 参考实现 SDK + 演示脚本（仅标准库，非产线执行器） |
-| `tools/line_simulator.py` | 多机台并发验证（锁竞争 / 崩溃续测 / 失联接管） |
+| `tools/client/ate_client.py` | 参考实现 SDK + 演示脚本（仅标准库，非产线执行器） |
+| `tools/client/line_simulator.py` | 多机台并发验证（锁竞争 / 崩溃续测 / 失联接管） |
 
 ---
 
@@ -733,7 +732,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 空 | MinIO 归档（报告成品/模板/脚本共用一个桶）；未配置时本地产物即归档 |
 | `MINIO_BUCKET` / `MINIO_SECURE` | `share` / `false` | 桶名与 TLS 开关 |
 | `MINIO_REPORT_PREFIX` / `MINIO_TEMPLATE_PREFIX` / `MINIO_SCRIPT_PREFIX` | `reports` / `report-templates` / `report-scripts` | 对象键前缀 |
-| `REPORT_PDF_MODE` | `off` | PDF 转换：`off` 仅 Excel / `libreoffice` 服务端 headless（`SOFFICE_CMD`）/ `external` 外部 WPS Worker（`tools/pdf_worker/`，部署在装有 WPS/Office 的 Windows 测试机） |
+| `REPORT_PDF_MODE` | `off` | PDF 转换：`off` 仅 Excel / `libreoffice` 服务端 headless（`SOFFICE_CMD`）/ `external` 外部 WPS Worker（`tools/reports/pdf_worker/`，部署在装有 WPS/Office 的 Windows 测试机） |
 | `REPORT_MES_URL` | MES 校准接口 | 各产品族统一的校准数据上传地址（multipart：`sn` + 各 PDF，字段名由插件产物 `mes_field` 声明）；成功判定与 TekReport 同口径（2xx 且 JSON `success=true`/`"true"`） |
 | `REPORT_MAX_CONCURRENCY` | `2` | 报告生成并发上限 |
 | `REPORT_SCAN_INTERVAL_SEC` / `REPORT_SCAN_BATCH` | `60` / `20` | 盖章完成产品扫描入队的间隔与单轮批量 |
@@ -741,6 +740,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `REPORT_RETENTION_DAYS` | `90` | 任务记录保留天数；到期时产物对应的 MinIO 对象、本地工作目录与任务记录一并删除（已上传 MES 的产物在上传成功时即清理，MES 即其归档） |
 | `REPORT_TEMPLATE_DIR` | `report_templates` | 模板本地物化缓存目录 |
 | `REPORT_SCRIPT_TIMEOUT_SEC` | `300` | 插件 `generate()` 执行超时 |
+| `REPORT_JOB_TIMEOUT_SEC` | `600` | 任务级运行超时：超时仍为 running 的任务判失败可重试（防服务重启遗留孤儿卡死）；`<=0` 关闭看门狗 |
 
 ---
 
@@ -821,7 +821,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 演示场景数据看不到僵尸锁 | 被后台任务自动回收 | 以 `SWEEPER_ENABLED=false` 启动后端 |
 | 前端页面 404（刷新后） | 静态托管未生效 | 确认 `frontend/dist/index.html` 存在，或改用 Hash 路由 |
 | 报告任务一直 pending | 调度器未启动 | 核对 `FACTORY_DB_*` 已配置且存在启用中的报告规则；启动日志应出现「报告调度器已启动」 |
-| PDF 长时间 pending | external 模式 Worker 未运行 | 在装有 WPS/Office 的 Windows 测试机启动 `tools/pdf_worker/report_pdf_worker.py`（核对 server_url 与 api_key） |
+| PDF 长时间 pending | external 模式 Worker 未运行 | 在装有 WPS/Office 的 Windows 测试机启动 `tools/reports/pdf_worker/report_pdf_worker.py`（核对 server_url 与 api_key） |
 | PDF/Excel 下载按钮置灰 | 产物已上传 MES，ATEManager 不再保留副本 | 到 MES 侧查取；数据报告不受影响 |
 | 产物下载 404 | 任务记录已过保留期（默认 90 天），MinIO 对象随记录一并清除 | 到 MES 侧查取（校准类）；数据报告超期后不再提供下载 |
 | MES 上传失败（HTTP 503/连接拒绝） | `REPORT_MES_URL` 不可达或 MES 服务异常 | 核对地址；恢复后用「重传 MES」重试 |
@@ -834,7 +834,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 文档 | 内容 |
 |---|---|
 | [`doc/API.md`](doc/API.md) | 上位机接口完整契约（错误码 / 时序 / 实现规范） |
-| `tools/plugin/插件开发规则.md` | 出厂报告插件开发指南（脚本契约 / 开发流程 / tek_mso 要点） |
-| `tools/pdf_worker/build_exe.md` | PDF Worker 的 PyInstaller 打包与部署说明 |
+| `tools/reports/plugin/插件开发规则.md` | 出厂报告插件开发指南（脚本契约 / 开发流程 / tek_mso 要点） |
+| `tools/reports/pdf_worker/build_exe.md` | PDF Worker 的 PyInstaller 打包与部署说明 |
 | `backend/.env.example` | 全部配置项及注释 |
 | `/docs`（运行时） | OpenAPI 交互式文档 |

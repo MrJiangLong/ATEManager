@@ -1,7 +1,7 @@
 """PDF 转换：libreoffice（服务端 headless）/ external（外部 Worker 经 API 领取）。
 
 外部 Worker 模式下引擎只把产物标记为 pdf_status=pending，
-转换由部署在装有 WPS/Office 的 Windows 机器上的 worker 完成（见 tools/pdf_worker/report_pdf_worker.py），
+转换由部署在装有 WPS/Office 的 Windows 机器上的 worker 完成（见 tools/reports/pdf_worker/report_pdf_worker.py），
 转换结果经 /api/admin/report-jobs/pdf-result 回写。
 """
 

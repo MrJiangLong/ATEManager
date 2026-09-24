@@ -10,12 +10,12 @@
 pip install pyinstaller pywin32
 
 # 打包（单文件 exe，内嵌 Python 运行时）
-cd tools\pdf_worker
+cd tools\reports\pdf_worker
 python -m PyInstaller --onefile --console --name ReportPdfWorker `
   --hidden-import win32timezone report_pdf_worker.py
 ```
 
-产物：`tools/pdf_worker/dist/ReportPdfWorker.exe`（约 12MB，32/64 位随构建机 Python 位数）。
+产物：`tools/reports/pdf_worker/dist/ReportPdfWorker.exe`（约 12MB，32/64 位随构建机 Python 位数）。
 `build/`、`*.spec` 为中间产物，已加入 .gitignore。
 
 ## 二、部署（目标 Windows 机器）

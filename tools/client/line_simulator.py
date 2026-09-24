@@ -26,7 +26,7 @@ v2：补齐产线状态
     scripts\sim-local.bat
 
     # 2) 另开终端跑模拟器
-    python tools\line_simulator.py --api-key <V1_API_KEY>
+    python tools\client\line_simulator.py --api-key <V1_API_KEY>
 
     # 常用参数
     --clients 2            每工位的机台数（自动注册并绑定该工位）

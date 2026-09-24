@@ -28,13 +28,13 @@
     ack = cli.check_out(items, duration_ms=...)     # 必须收到 ACK 才允许拔线
 
 运行演示
-    python tools/ate_client.py --api-key <V1_API_KEY> demo        # 全部场景
-    python tools/ate_client.py --api-key <V1_API_KEY> normal      # 正常全流程
-    python tools/ate_client.py --api-key <V1_API_KEY> gate        # 防跳站拦截（需求 2）
-    python tools/ate_client.py --api-key <V1_API_KEY> resume      # 崩溃 → 断点续测
-    python tools/ate_client.py --api-key <V1_API_KEY> takeover    # 崩溃 → 备用机台接管
-    python tools/ate_client.py --api-key <V1_API_KEY> sweep       # 孤儿锁回收（留一把锁在服务端）
-    python tools/ate_client.py --api-key <V1_API_KEY> resolve     # 只做机台身份上报
+    python tools/client/ate_client.py --api-key <V1_API_KEY> demo        # 全部场景
+    python tools/client/ate_client.py --api-key <V1_API_KEY> normal      # 正常全流程
+    python tools/client/ate_client.py --api-key <V1_API_KEY> gate        # 防跳站拦截（需求 2）
+    python tools/client/ate_client.py --api-key <V1_API_KEY> resume      # 崩溃 → 断点续测
+    python tools/client/ate_client.py --api-key <V1_API_KEY> takeover    # 崩溃 → 备用机台接管
+    python tools/client/ate_client.py --api-key <V1_API_KEY> sweep       # 孤儿锁回收（留一把锁在服务端）
+    python tools/client/ate_client.py --api-key <V1_API_KEY> resolve     # 只做机台身份上报
 """
 
 from __future__ import annotations

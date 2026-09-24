@@ -27,15 +27,19 @@ backend_test.db
 backend/reports
 backend/report_templates
 backend/.pytest_cache
-# ---- PDF Worker 打包产物（PyInstaller，位于 tools/pdf_worker/）----
-tools/pdf_worker/build/
-tools/pdf_worker/dist/
-tools/pdf_worker/*.spec
-tools/pdf_worker/worker_config.json
-tools/_mes_sink
-tools/plugin/tek_mso/_out
-tools/plugin/_out/
-tools/plugin/.env
+# ---- PDF Worker 打包产物（PyInstaller，位于 tools/reports/pdf_worker/）----
+tools/reports/pdf_worker/build/
+tools/reports/pdf_worker/dist/
+tools/reports/pdf_worker/*.spec
+tools/reports/pdf_worker/worker_config.json
+tools/reports/_mes_sink
+tools/reports/plugin/_out/
+tools/reports/plugin/.env
+tools/reports/plugin/tek_mso/_out
+# ---- 契约自测断点（tools/atetest 运行时落在仓库根）----
+.state/
+# ---- ate_client demo 断点文件（运行时落在 CWD）----
+.ate_session_*.json
 # ---- 系统 ----
 .DS_Store
 Thumbs.db

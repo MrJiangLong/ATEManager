@@ -46,7 +46,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 PY = BACKEND / ".venv" / "Scripts" / "python.exe"
 STATE_DIR = BACKEND / ".sim_state"
@@ -126,7 +126,7 @@ def take_flag(argv: list, flag: str) -> tuple:
 
 def run_simulator(port: int, cfg: dict, extra: list, env: dict) -> int:
     """对指定端口的后端跑产线仿真。"""
-    cmd = [str(PY), str(ROOT / "tools" / "line_simulator.py"),
+    cmd = [str(PY), str(ROOT / "tools" / "client" / "line_simulator.py"),
            "--base-url", f"http://127.0.0.1:{port}",
            "--api-key", cfg["V1_API_KEY"],
            "--admin-user", cfg.get("DEFAULT_ADMIN_USERNAME", "admin"),

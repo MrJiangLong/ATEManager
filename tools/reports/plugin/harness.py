@@ -30,7 +30,7 @@ def _setup_runtime():
     sys.path.insert(0, str(HERE / "engine"))
     env_file = HERE / ".env"
     if not env_file.exists():
-        env_file = HERE.parents[1] / "backend" / ".env"
+        env_file = HERE.parents[2] / "backend" / ".env"
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()

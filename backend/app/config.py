@@ -123,6 +123,8 @@ class Settings:
     # 上传式插件：模板物化缓存目录 + 脚本执行超时
     REPORT_TEMPLATE_DIR: str = os.getenv("REPORT_TEMPLATE_DIR", "report_templates")
     REPORT_SCRIPT_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_SCRIPT_TIMEOUT_SEC"), 300)
+    # 任务级运行超时：超时仍为 running 的任务是进程中断遗留的孤儿，判失败可重试；<=0 关闭看门狗
+    REPORT_JOB_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_JOB_TIMEOUT_SEC"), 600)
     # 工厂测试库（各型号分库同一台 PG，库名 = 型号；报告引擎只读）
     FACTORY_DB_HOST: str = os.getenv("FACTORY_DB_HOST", "")
     FACTORY_DB_PORT: int = _as_int(os.getenv("FACTORY_DB_PORT"), 5432)

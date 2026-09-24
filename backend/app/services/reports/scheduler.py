@@ -66,6 +66,7 @@ def _loop() -> None:
         try:
             _enqueue_completed()
             _drain_queue()
+            _reclaim_stale_running()
             _maybe_cleanup()
         except Exception as exc:
             logger.exception("调度循环异常：%s", exc)
@@ -126,6 +127,41 @@ def _drain_queue() -> None:
             with _active_lock:
                 _active.add(job.job_id)
             threading.Thread(target=_run_one, args=(job.job_id,), daemon=True).start()
+    finally:
+        db.close()
+
+def _reclaim_stale_running() -> None:
+    """看门狗：运行超时的任务判失败。
+
+    running 态本应被插件超时（REPORT_SCRIPT_TIMEOUT_SEC）与本地执行路径约束在
+    几分钟内；超过 REPORT_JOB_TIMEOUT_SEC 仍是 running 的一定是后端进程中途
+    崩溃/重启遗留的孤儿（重启后没有任何机制会再次派发它们）。判失败并清理
+    活跃集合，可从页面手动重试。<=0 关闭看门狗。
+    """
+    timeout = settings.REPORT_JOB_TIMEOUT_SEC
+    if timeout <= 0:
+        return
+    deadline = utcnow() - timedelta(seconds=timeout)
+    db = SessionLocal()
+    try:
+        stale = (
+            db.query(models.ReportJob)
+            .filter(
+                models.ReportJob.status == "running",
+                models.ReportJob.started_at < deadline,
+            )
+            .all()
+        )
+        if not stale:
+            return
+        stale_ids = {job.job_id for job in stale}
+        for job in stale:
+            job.status = "failed"
+            job.error = f"运行超时（>{timeout}s，通常因服务重启中断）；可手动重试"
+            logger.warning("报告任务运行超时判失败：%s %s %s", job.job_id, job.model, job.sn)
+        db.commit()
+        with _active_lock:
+            _active.difference_update(stale_ids)
     finally:
         db.close()
 
