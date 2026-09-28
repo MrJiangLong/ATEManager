@@ -58,6 +58,91 @@
         </div>
       </DataCard>
 
+      <DataCard v-if="data.repairs.length" :title="$t('trace.repairs')">
+        <el-table :data="data.repairs" stripe size="small">
+          <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90" />
+          <el-table-column :label="$t('repairs.tableAction')" width="130" align="center">
+            <template #default="{ row }">
+              <el-tag :type="repairTagType(row.repair_action)" size="small">{{ $t(`repair.${row.repair_action}`) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="target_station" :label="$t('repairs.tableTarget')" width="140" />
+          <el-table-column prop="reason" :label="$t('repairs.tableReason')" min-width="240" show-overflow-tooltip />
+          <el-table-column prop="technician_id" :label="$t('repairs.tableTech')" width="120" />
+          <el-table-column :label="$t('repairs.tableTime')" width="170">
+            <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
+          </el-table-column>
+          <template #empty><EmptyState :text="$t('common.noData')" /></template>
+        </el-table>
+      </DataCard>
+
+      <DataCard v-if="reportJobs.length" :title="$t('trace.reportTitle')">
+        <el-table :data="reportJobs" stripe size="small">
+          <el-table-column :label="$t('reports.tableStatus')" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" :type="STATUS_META[row.status]?.tag || 'info'">
+                {{ $t(`reports.status_${row.status}`) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('reports.tableArtifacts')" min-width="220">
+            <template #default="{ row }">
+              <div class="artifact-list">
+                <div v-for="(art, index) in row.artifacts || []" :key="index" class="artifact-row">
+                  <el-tag size="small" effect="plain" class="art-type" :type="art.failed ? 'danger' : 'info'">
+                    {{ $t(`reports.type_${art.type}`) }}
+                  </el-tag>
+                  <el-tooltip :disabled="!art.purged" :content="t('reports.mesArchived')" placement="top" :show-after="300">
+                    <button class="dl-chip" :disabled="dlDisabled(art, 'xlsx')" @click="download(row, index, 'xlsx')">
+                      {{ $t('reports.excel') }}
+                    </button>
+                  </el-tooltip>
+                  <el-tooltip
+                    :disabled="(!art.pdf || art.pdf_status === 'done') && !art.purged"
+                    :content="dlTip(art)"
+                    placement="top"
+                    :show-after="300"
+                  >
+                    <button class="dl-chip" :disabled="dlDisabled(art, 'pdf')" @click="download(row, index, 'pdf')">
+                      {{ $t('reports.pdf') }}
+                      <span v-if="art.pdf && art.pdf_status !== 'done'" class="pdf-dot" :class="`pdf-${art.pdf_status}`" />
+                    </button>
+                  </el-tooltip>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('reports.failedItems')" min-width="120">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="(row.failed_items || []).length"
+                :content="(row.failed_items || []).join('\n')"
+                placement="top"
+                :show-after="300"
+              >
+                <span class="failed-items">{{ (row.failed_items || []).join('; ') }}</span>
+              </el-tooltip>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('reports.tableMes')" width="115">
+            <template #default="{ row }">
+              <el-tooltip v-if="row.mes_message" :content="row.mes_message" placement="top" :show-after="300">
+                <el-tag size="small" :type="MES_META[row.mes_status] || 'info'" effect="plain">
+                  {{ $t(`reports.mes_${row.mes_status}`) }}
+                </el-tag>
+              </el-tooltip>
+              <el-tag v-else size="small" :type="MES_META[row.mes_status] || 'info'" effect="plain">
+                {{ $t(`reports.mes_${row.mes_status}`) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('reports.tableCreated')" width="170">
+            <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
+          </el-table-column>
+        </el-table>
+      </DataCard>
+
       <DataCard :title="$t('trace.ledger')">
         <el-table
           :data="data.records"
@@ -101,23 +186,23 @@
             </template>
           </el-table-column>
           <el-table-column prop="record_id" :label="$t('records.tableId')" width="110" sortable />
-          <el-table-column prop="station_id" :label="$t('records.tableStation')" width="140">
+          <el-table-column prop="station_id" :label="$t('records.tableStation')" width="160">
             <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
           </el-table-column>
-          <el-table-column :label="$t('common.result')" width="100">
+          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="180" show-overflow-tooltip>
+          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+        </el-table-column>
+          <el-table-column :label="$t('records.tableItems')" min-width="90" align="right">
+            <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
+          </el-table-column>
+          <el-table-column :label="$t('common.result')" width="120">
             <template #default="{ row }">
               <el-tag size="small" :type="resultTagType(row.overall_result)">
                 {{ $t(`result.${row.overall_result}`) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('records.tableItems')" min-width="90" align="right">
-            <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
-          </el-table-column>
-          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="150" show-overflow-tooltip>
-          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
-        </el-table-column>
-          <el-table-column :label="$t('records.tableValid')" width="90">
+          <el-table-column :label="$t('records.tableValid')" width="120">
             <template #default="{ row }">
               <el-tag size="small" :type="row.is_valid ? 'success' : 'info'" effect="plain">
                 {{ row.is_valid ? $t('records.valid') : $t('records.invalid') }}
@@ -136,10 +221,10 @@
           <el-table-column prop="station_id" :label="$t('sessions.tableStation')" width="140">
             <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
           </el-table-column>
-          <el-table-column prop="client_id" :label="$t('sessions.tableClient')" width="150" show-overflow-tooltip>
+          <el-table-column prop="client_id" :label="$t('sessions.tableClient')" width="180" show-overflow-tooltip>
             <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
           </el-table-column>
-          <el-table-column :label="$t('sessions.tableAttempt')" width="120">
+          <el-table-column :label="$t('sessions.tableAttempt')" width="180">
             <template #default="{ row }">
               <el-tooltip :content="attemptTipText(row.attempt, t)" placement="top">
                 <span class="attempt-track">
@@ -154,6 +239,12 @@
               </el-tooltip>
             </template>
           </el-table-column>
+          <el-table-column :label="$t('sessions.tableCheckpoint')" width="180" align="right">
+            <template #default="{ row }">{{ row.item_count }}</template>
+          </el-table-column>
+          <el-table-column :label="$t('sessions.tableEndReason')" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }"><span class="muted">{{ row.end_reason || '—' }}</span></template>
+          </el-table-column>
           <el-table-column :label="$t('sessions.tableStatus')" width="120">
             <template #default="{ row }">
               <el-tag size="small" :type="sessionTagType(row.status)" effect="plain">
@@ -161,32 +252,8 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('sessions.tableCheckpoint')" width="100" align="right">
-            <template #default="{ row }">{{ row.item_count }}</template>
-          </el-table-column>
           <el-table-column :label="$t('sessions.tableStarted')" width="170">
             <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.started_at) }}</span></template>
-          </el-table-column>
-          <el-table-column :label="$t('sessions.tableEndReason')" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }"><span class="muted">{{ row.end_reason || '—' }}</span></template>
-          </el-table-column>
-          <template #empty><EmptyState :text="$t('common.noData')" /></template>
-        </el-table>
-      </DataCard>
-
-      <DataCard :title="$t('trace.repairs')">
-        <el-table :data="data.repairs" stripe size="small">
-          <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90" />
-          <el-table-column :label="$t('repairs.tableAction')" width="130" align="center">
-            <template #default="{ row }">
-              <el-tag :type="repairTagType(row.repair_action)" size="small">{{ $t(`repair.${row.repair_action}`) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="target_station" :label="$t('repairs.tableTarget')" width="140" />
-          <el-table-column prop="reason" :label="$t('repairs.tableReason')" min-width="240" show-overflow-tooltip />
-          <el-table-column prop="technician_id" :label="$t('repairs.tableTech')" width="120" />
-          <el-table-column :label="$t('repairs.tableTime')" width="170">
-            <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
           </el-table-column>
           <template #empty><EmptyState :text="$t('common.noData')" /></template>
         </el-table>
@@ -205,7 +272,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, CircleCheck, Cpu, Select } from '@element-plus/icons-vue'
-import { productApi, recordApi } from '../api'
+import { productApi, recordApi, reportApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
@@ -221,7 +288,38 @@ const sn = ref(decodeURIComponent(route.params.sn || ''))
 const inputSn = ref(sn.value)
 const data = ref(null)
 const sessions = ref([])
+const reportJobs = ref([])
 const loading = ref(false)
+
+/* 与报告页 ReportJobsPanel 同一套状态映射，保证两处观感一致 */
+const STATUS_META = {
+  pending: { tag: 'info' },
+  running: { tag: 'warning' },
+  success: { tag: 'success' },
+  partial: { tag: 'warning' },
+  failed: { tag: 'danger' },
+  invalid: { tag: 'danger' },
+}
+const MES_META = { none: 'info', skipped: 'warning', pending: 'warning', success: 'success', failed: 'danger' }
+
+// MES 上传成功的产物（purged）已不在 ATEManager 存储中，下载置灰并给出说明
+function dlDisabled(art, variant) {
+  if (art.purged) return true
+  if (variant === 'pdf') return !art.pdf || art.pdf_status !== 'done'
+  return !art.filename
+}
+function dlTip(art) {
+  if (art.purged) return t('reports.mesArchived')
+  return t(`reports.pdf_${art.pdf_status}`)
+}
+async function download(row, index, variant) {
+  try {
+    const res = await reportApi.downloadUrl(row.job_id, index, variant)
+    window.open(res.data.url, '_blank')
+  } catch (e) {
+    ElMessage.error(e.message || t('errors.loadFailed'))
+  }
+}
 
 async function load() {
   if (!sn.value) return
@@ -240,6 +338,13 @@ async function load() {
     sessions.value = res.data
   } catch {
     sessions.value = []
+  }
+  // 出厂报告（只读展示，操作入口在报告页）；加载失败静默，不打断追溯主数据
+  try {
+    const res = await reportApi.listJobs({ sn: sn.value })
+    reportJobs.value = res.data.items || []
+  } catch {
+    reportJobs.value = []
   }
 }
 
@@ -341,5 +446,48 @@ onMounted(() => load())
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 出厂报告产物网格：类型 + Excel/PDF 下载芯片，与报告页同款 */
+.artifact-list { display: flex; flex-direction: column; gap: 5px; }
+.artifact-row {
+  display: grid;
+  grid-template-columns: 88px 50px 50px auto;
+  align-items: center;
+  gap: 8px;
+}
+.art-type { justify-content: center; }
+.dl-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 50px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  line-height: 16px;
+  font-family: var(--app-mono, monospace);
+  border-radius: 4px;
+  border: 1px solid var(--el-color-primary-light-7, #d9ecff);
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  color: var(--el-color-primary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dl-chip:hover:not(:disabled) { border-color: var(--el-color-primary); background: var(--el-color-primary-light-8, #e1effe); }
+.dl-chip:disabled {
+  border-style: dashed;
+  border-color: var(--el-border-color, #dcdfe6);
+  background: transparent;
+  color: var(--el-text-color-disabled, #a8abb2);
+  cursor: not-allowed;
+}
+.pdf-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.pdf-pending, .pdf-claimed { background: var(--el-color-warning); }
+.pdf-failed { background: var(--el-color-danger); }
+.failed-items { color: var(--el-color-danger); font-size: 12px; }
 </style>
 

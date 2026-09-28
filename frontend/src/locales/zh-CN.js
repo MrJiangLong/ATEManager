@@ -403,6 +403,7 @@ export default {
     pending: '待执行',
     ledger: '事件台账',
     repairs: '维修履历',
+    reportTitle: '出厂报告',
     executedItems: '执行明细',
     fwBaseline: '固件基线',
     completed: '已完工',

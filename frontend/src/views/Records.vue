@@ -74,19 +74,19 @@
         <el-table-column prop="station_id" :label="$t('records.tableStation')" min-width="160">
           <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
         </el-table-column>
+        <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150" />
+        <el-table-column :label="$t('records.tableItems')" min-width="100" align="right">
+          <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
+        </el-table-column>
+        <el-table-column :label="$t('records.tableDuration')" min-width="120" align="right">
+          <template #default="{ row }">{{ fmtDurationMs(row.duration_ms) }}</template>
+        </el-table-column>
         <el-table-column :label="$t('common.result')" min-width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="resultTagType(row.overall_result)">
               {{ $t(`result.${row.overall_result}`) }}
             </el-tag>
           </template>
-        </el-table-column>
-        <el-table-column :label="$t('records.tableItems')" min-width="100" align="right">
-          <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
-        </el-table-column>
-        <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150" />
-        <el-table-column :label="$t('records.tableDuration')" min-width="120" align="right">
-          <template #default="{ row }">{{ fmtDurationMs(row.duration_ms) }}</template>
         </el-table-column>
         <el-table-column :label="$t('records.tableValid')" min-width="110">
           <template #default="{ row }">

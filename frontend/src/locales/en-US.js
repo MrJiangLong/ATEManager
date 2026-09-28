@@ -401,6 +401,7 @@ export default {
     pending: 'Pending',
     ledger: 'Event Ledger',
     repairs: 'Repair History',
+    reportTitle: 'Factory Reports',
     executedItems: 'Executed Items',
     fwBaseline: 'FW Baseline',
     completed: 'Completed',
