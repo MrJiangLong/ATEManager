@@ -43,7 +43,7 @@ from ..errors import (
     not_found,
 )
 from ..logging import get_logger
-from .firmware import fw_matches
+from .version import version_matches
 from .routing import (
     _as_list,
     is_completed,
@@ -291,6 +291,7 @@ def check_in(
     firmware: str,
     case_ids: Optional[List[str]] = None,
     resume_session_id: Optional[str] = None,
+    app_version: Optional[str] = None,
 ) -> schemas.CheckInData:
     model_row = db.get(models.ProductModel, product_model)
     if model_row is None:
@@ -348,7 +349,7 @@ def check_in(
         )
 
     rule = model_row.fw_match_rule or models.FW_RULE_EXACT
-    fw_match = fw_matches(firmware, model_row.target_fw_version, rule)
+    fw_match = version_matches(firmware, model_row.target_fw_version, rule)
     if not fw_match and settings.ENFORCE_FW:
         raise forbidden(
             "firmware_mismatch",
@@ -360,6 +361,25 @@ def check_in(
             },
         )
     product.current_fw_version = firmware
+
+    # 4.5) 测试软件版本基线：低于/不符合机型基线拒绝；unknown/空版本视为不满足
+    target_app = model_row.target_app_version
+    if settings.ENFORCE_APP_SW and target_app:
+        reported = (app_version or "").strip()
+        app_rule = model_row.app_match_rule or models.FW_RULE_EXACT
+        if not reported or reported.lower() == "unknown" or not version_matches(
+            reported, target_app, app_rule
+        ):
+            raise forbidden(
+                "app_version_mismatch",
+                f"app_version_mismatch: {sn} expected {app_rule} {target_app}, "
+                f"got {reported or 'unknown'}",
+                data={
+                    "expected": target_app,
+                    "actual": reported or None,
+                    "rule": app_rule,
+                },
+            )
 
     if product.current_status == models.STATUS_SCRAPPED:
         raise forbidden("product_scrapped", f"product_scrapped: {sn} has been scrapped")

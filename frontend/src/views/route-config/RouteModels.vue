@@ -25,11 +25,30 @@
           <el-tag size="small" type="success" effect="plain">{{ row.target_fw_version }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('configs.fwRule')" width="140">
+      <el-table-column :label="t('configs.fwRule')" width="180">
         <template #default="{ row }">
           <el-tag size="small" effect="plain" :type="row.fw_match_rule === 'min' ? 'warning' : 'info'">
             {{ row.fw_match_rule === 'min' ? t('configs.fwRuleMin') : t('configs.fwRuleExact') }}
           </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('configs.targetApp')" width="130">
+        <template #default="{ row }">
+          <el-tag v-if="row.target_app_version" size="small" effect="plain">{{ row.target_app_version }}</el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('configs.appRule')" width="180">
+        <template #default="{ row }">
+          <el-tag
+            v-if="row.target_app_version"
+            size="small"
+            effect="plain"
+            :type="row.app_match_rule === 'min' ? 'warning' : 'info'"
+          >
+            {{ row.app_match_rule === 'min' ? t('configs.fwRuleMin') : t('configs.fwRuleExact') }}
+          </el-tag>
+          <span v-else class="muted">—</span>
         </template>
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
@@ -83,6 +102,15 @@
             <el-option value="min" :label="t('configs.fwRuleMin')" />
           </el-select>
         </el-form-item>
+        <el-form-item :label="t('configs.targetApp')">
+          <el-input v-model="form.target_app_version" placeholder="V1.0.0（留空 = 不卡控）" />
+        </el-form-item>
+        <el-form-item :label="t('configs.appRule')">
+          <el-select v-model="form.app_match_rule" style="width:100%">
+            <el-option value="min" :label="t('configs.fwRuleMin')" />
+            <el-option value="exact" :label="t('configs.fwRuleExact')" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
@@ -119,6 +147,8 @@ const form = reactive({
   process_id: '',
   target_fw_version: '',
   fw_match_rule: 'exact',
+  target_app_version: '',
+  app_match_rule: 'min',
 })
 
 const filtered = computed(() =>
@@ -150,6 +180,8 @@ function openCreate() {
     process_id: processFilter.value || processes.value[0]?.process_id || '',
     target_fw_version: '',
     fw_match_rule: 'exact',
+    target_app_version: '',
+    app_match_rule: 'min',
   })
   dialogVisible.value = true
 }
@@ -160,6 +192,8 @@ function openEdit(row) {
     process_id: row.process_id,
     target_fw_version: row.target_fw_version || '',
     fw_match_rule: row.fw_match_rule || 'exact',
+    target_app_version: row.target_app_version || '',
+    app_match_rule: row.app_match_rule || 'min',
   })
   dialogVisible.value = true
 }
@@ -174,6 +208,8 @@ async function submit() {
       process_id: form.process_id,
       target_fw_version: form.target_fw_version.trim(),
       fw_match_rule: form.fw_match_rule,
+      target_app_version: form.target_app_version.trim(),
+      app_match_rule: form.app_match_rule,
     }
     if (isEdit.value) {
       await modelApi.update(form.product_model, payload)

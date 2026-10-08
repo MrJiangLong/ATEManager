@@ -108,6 +108,7 @@ def check_in_endpoint(
         firmware=payload.firmware,
         case_ids=payload.case_ids or None,
         resume_session_id=payload.resume_session_id or None,
+        app_version=payload.app_version,
     )
     return _ok("ok.checkin", data.model_dump())
 

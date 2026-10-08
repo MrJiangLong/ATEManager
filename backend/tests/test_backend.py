@@ -1163,6 +1163,78 @@ def test_firmware_match_rule():
     resp = admin("PUT", f"/api/admin/product-models/{model}", {"fw_match_rule": "bogus"})
     check(resp.status_code == 422, f"invalid rule must be 422: {resp.text}")
 
+def test_app_version_baseline():
+    """测试软件基线：低于/缺失/unknown 拒绝；min 与 exact 两种口径；清空基线 = 不卡控。
+
+    app_version 来自上位机 config.toml [system].version，随 check-in 上报；
+    版本不明（缺失/unknown）且基线已配置时视为不满足——版本不明不得上线。
+    """
+    pid = f"PROC-TEST-APP-{STAMP}"
+    model = f"MODEL_APPVER-{STAMP}"
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "app version"})
+    admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []}],
+        params={"process_id": pid},
+    )
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {
+            "product_model": model,
+            "process_id": pid,
+            "target_fw_version": "V3.20",
+            "target_app_version": "V1.0.0",
+            "app_match_rule": "min",
+        },
+    )
+    check(resp.status_code == 201, f"create model: {resp.text}")
+    check(resp.json()["app_match_rule"] == "min", f"rule must persist: {resp.text}")
+    check(resp.json()["target_app_version"] == "V1.0.0", f"baseline must persist: {resp.text}")
+
+    def try_app(payload_extra, tag):
+        # 每次换机台 + 换 SN，避免工位锁互相干扰
+        cid = new_client_id("CAL")
+        admin("POST", "/api/admin/clients", {"client_id": cid, "bound_stations": ["CAL-PARAM"]})
+        body = {"client_id": cid, "sn": new_sn(f"APP-{tag}"), "product_model": model, "firmware": "V3.20"}
+        body.update(payload_extra)
+        return v1("check-in", body)
+
+    resp = try_app({"app_version": "V1.0.0"}, "EQ")
+    check(resp.status_code == 200, f"equal must pass under min: {resp.text}")
+    resp = try_app({"app_version": "V1.0.1"}, "HI")
+    check(resp.status_code == 200, f"higher must pass under min: {resp.text}")
+    resp = try_app({"app_version": "V0.9.9"}, "LOW")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "app_version_mismatch",
+        f"V0.9.9 is below V1.0.0 and must be blocked: {resp.text}",
+    )
+    resp = try_app({}, "MISSING")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "app_version_mismatch",
+        f"missing app_version must be blocked when baseline set: {resp.text}",
+    )
+    resp = try_app({"app_version": "unknown"}, "UNKNOWN")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "app_version_mismatch",
+        f"unknown app_version must be blocked when baseline set: {resp.text}",
+    )
+
+    resp = admin("PUT", f"/api/admin/product-models/{model}", {"app_match_rule": "exact"})
+    check(resp.status_code == 200 and resp.json()["app_match_rule"] == "exact", f"switch rule: {resp.text}")
+    resp = try_app({"app_version": "V1.0.1"}, "EXACT")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "app_version_mismatch",
+        f"exact must reject higher version: {resp.text}",
+    )
+
+    # 清空基线 = 不卡控：缺失 app_version 也放行
+    resp = admin("PUT", f"/api/admin/product-models/{model}", {"target_app_version": ""})
+    check(resp.status_code == 200, f"clear baseline: {resp.text}")
+    resp = try_app({}, "NOCHECK")
+    check(resp.status_code == 200, f"empty baseline must not enforce: {resp.text}")
+
 def test_process_status():
     """流程停用后不再接受新机型绑定，重新启用后恢复。"""
     pid = f"PROC-TEST-VER-{STAMP}"
@@ -1526,6 +1598,7 @@ TESTS = [
     test_sweeper_releases_orphan_lock,
     test_client_app_version_tracked,
     test_firmware_match_rule,
+    test_app_version_baseline,
     test_process_status,
     test_client_release_lock,
     test_id_format_enforced,

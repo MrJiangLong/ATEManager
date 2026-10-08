@@ -327,6 +327,8 @@ class ProductModelOut(ORMModel):
     process_id: str
     target_fw_version: str
     fw_match_rule: str = FW_RULE_EXACT
+    target_app_version: Optional[str] = None
+    app_match_rule: str = FW_RULE_EXACT
     created_at: Optional[datetime] = None
 
 class ProductModelCreateIn(BaseModel):
@@ -334,11 +336,16 @@ class ProductModelCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     target_fw_version: TrimmedRequired = Field(max_length=32)
     fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
+    # 测试软件基线：空 = 不卡控
+    target_app_version: Trimmed = Field(default=None, max_length=32)
+    app_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
 
 class ProductModelUpdateIn(BaseModel):
     process_id: Trimmed = Field(default=None, max_length=64)
     target_fw_version: Trimmed = Field(default=None, max_length=32)
     fw_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
+    target_app_version: Trimmed = Field(default=None, max_length=32)
+    app_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
 
 class StationOut(ORMModel):
     station_id: str

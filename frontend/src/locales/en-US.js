@@ -511,6 +511,8 @@ export default {
     modelProcess: 'Process',
     targetFw: 'FW Baseline',
     fwRule: 'FW Match Rule',
+    targetApp: 'ATE Baseline',
+    appRule: 'ATE Rule',
     fwRuleExact: 'Exact match',
     fwRuleMin: 'At or above baseline',
     newModel: 'New Model',

@@ -1,9 +1,11 @@
-"""固件基线匹配。
+"""版本基线匹配：固件基线与测试软件基线共用。
 
-上位机 *IDN? 直读的固件版本形如 ``V3.20``。直接按字符串比较会踩字典序的坑
-（``"V3.9" > "V3.10"``），因此解析成数字元组再比较。
+上位机 *IDN? 直读的固件版本形如 ``V3.20``；测试软件版本来自 config.toml 的
+``[system].version``。直接按字符串比较会踩字典序的坑（``"V3.9" > "V3.10"``），
+因此解析成数字元组再比较。
 
-进站闸门（gate）与在制品视图（views.fw_match）共用本模块，避免两处口径漂移。
+进站闸门（gate）、在制品视图（views.fw_match）与测试软件基线校验共用本模块，
+避免两处口径漂移。
 """
 
 import re
@@ -11,9 +13,9 @@ from typing import Optional, Tuple
 
 from ..models import FW_RULE_MIN
 
-_DIGITS = re.compile(r"\d+")
-
 Version = Tuple[int, ...]
+
+_DIGITS = re.compile(r"\d+")
 
 
 def parse_version(value: Optional[str]) -> Optional[Version]:
@@ -29,8 +31,8 @@ def parse_version(value: Optional[str]) -> Optional[Version]:
     return tuple(parts) if parts else None
 
 
-def fw_matches(actual: Optional[str], expected: Optional[str], rule: Optional[str]) -> bool:
-    """实际固件版本是否满足机型基线。
+def version_matches(actual: Optional[str], expected: Optional[str], rule: Optional[str]) -> bool:
+    """版本基线比较：实际版本是否满足基线（固件基线 / 测试软件基线共用）。
 
     rule=exact  必须与基线完全一致（默认，向后兼容既有产线）
     rule=min    不低于基线即可

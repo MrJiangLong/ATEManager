@@ -319,6 +319,7 @@ NULL ─────────────→ IDLE ─────────
 | 403 | `missing_prereq` | **跳站拦截**：前置工位未完成 | 弹告警、pytest 终止、治具不开电 |
 | 403 | `model_mismatch` | SN 已登记为其他机型 | 贴错机型/换线未清线 |
 | 403 | `firmware_mismatch` | 固件不满足基线（口径见机型 `fw_match_rule`） | 提示刷写基线固件 |
+| 403 | `app_version_mismatch` | 测试软件版本不满足基线（口径见机型 `app_match_rule`；版本缺失/unknown 视为不满足） | 升级上位机测试程序 |
 | 403 | `product_scrapped` | 已报废 | 禁止流转 |
 | 403 | `product_locked` | 连续失败达上限，已工程锁定 | 提示送修 |
 | 404 | `process_not_found` / `session_not_found` | 流程/会话不存在 | 检查参数 |
@@ -344,6 +345,19 @@ NULL ─────────────→ IDLE ─────────
 
 `firmware_mismatch` 的 `data` 回传 `expected` / `actual` / `rule`，客户端可直接提示"需刷写到 V3.20 或更高"。
 若产线尚未强制固件，服务端可用 `ENFORCE_FW=false` 关闭该拦截（仅记录不阻断）。
+
+**测试软件基线口径（`app_match_rule`）**
+
+与固件基线同构：由机型的 `app_match_rule` 决定，在 Web 管理端「工艺配置 → 机型」中维护（`target_app_version`，留空 = 不卡控）。
+
+| 取值 | 判定 | 适用场景 |
+|---|---|---|
+| `exact` | `app_version == target_app_version` | 严格锁定测试程序版本，任何偏差都拦截 |
+| `min` | `app_version >= target_app_version`（数字段比较） | 允许升级，只要不低于基线 |
+
+`app_version` 缺失或为 `unknown` 且基线已配置时视为不满足（版本不明不得上线）。
+`app_version_mismatch` 的 `data` 回传 `expected` / `actual` / `rule`，客户端可直接提示"需升级测试程序到指定版本或更高"。
+若暂不强制，服务端可用 `ENFORCE_APP_SW=false` 关闭该拦截（仅记录不阻断）。
 
 ---
 
@@ -542,6 +556,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 403 | `missing_prereq` | 10 | check-in | 跳站拦截 |
 | 403 | `model_mismatch` | 10 | check-in | 机型与建档不符 |
 | 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
+| 403 | `app_version_mismatch` | 10 | check-in | 测试软件版本不满足基线（口径见机型 `app_match_rule`） |
 | 403 | `product_scrapped` | 10 | check-in | 已报废 |
 | 403 | `product_locked` | 16 | check-in | 已工程锁定 |
 | 403 | `lock_invalid` | 14 | check-out / checkpoint / release | 锁被接管或失效 |
@@ -803,6 +818,7 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `STRICT_LOCK_TOKEN` | false | true 时"未携带 token"也拒绝（老上位机需先升级）；**token 不匹配始终拒绝** |
 | `FAIL_LIMIT` | 3 | 连续失败达阈值 → 工程锁定 |
 | `ENFORCE_FW` | true | 固件基线校验 |
+| `ENFORCE_APP_SW` | true | 测试软件版本基线校验（机型基线留空则不卡控） |
 | `ENFORCE_CASE_IDS` | true | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | 90 | 机台在线判定窗口 |
 

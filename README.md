@@ -117,7 +117,7 @@ routers  ──▶  services  ──▶  models
 |---|---|
 | `services/routing.py` | 静态拓扑：流程装载、依赖闸门、用例ID清单、DAG 校验 |
 | `services/gate.py` | 运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修处置 |
-| `services/firmware.py` | 固件基线匹配（`exact` 精确 / `min` 不低于基线），进站卡控与展示共用 |
+| `services/version.py` | 版本基线匹配（固件基线 + 测试软件基线共用；`exact` 精确 / `min` 不低于基线），进站卡控与展示共用 |
 | `services/sweeper.py` | 孤儿锁回收后台任务（失联 / 硬超时） |
 | `services/metrics.py` | 仪表盘聚合（流程缓存 / 在制品 / 日趋势 / TOP 失效 / 窗口良率） |
 | `services/views.py` | ORM 实体 → 展示模型的派生与组装 |
@@ -260,7 +260,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，44 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，45 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -307,7 +307,7 @@ ATEManager/
 │   │   ├── services/
 │   │   │   ├── routing.py    静态拓扑：流程装载、依赖闸门、用例ID清单、DAG 校验
 │   │   │   ├── gate.py       运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修
-│   │   │   ├── firmware.py   固件基线匹配（exact / min 口径）
+│   │   │   ├── version.py    版本基线匹配：固件基线 + 测试软件基线（exact / min 口径）
 │   │   │   ├── sweeper.py    孤儿锁回收后台任务（失联 / 硬超时）
 │   │   │   ├── metrics.py    仪表盘聚合（在制品 / 日趋势 / 窗口良率 / TOP 失效）
 │   │   │   ├── views.py      ORM → 展示模型的派生与组装
@@ -335,7 +335,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（44 项）
+│   │   └── test_backend.py   端到端回归测试（45 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
@@ -580,6 +580,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 进站放行 | 200 | `ok.checkin` | 0 | 治具上电，开始执行 |
 | **跳站拦截（需求 2）** | **403** | `missing_prereq` | 10 | 弹告警、pytest 终止、治具不开电 |
 | 固件不符 | 403 | `firmware_mismatch` | 10 | 提示刷写基线固件 |
+| 测试软件版本不符 | 403 | `app_version_mismatch` | 10 | 升级上位机测试程序至基线版本 |
 | 机型不符 / 未注册 | 403 | `model_mismatch` / `model_not_registered` | 10 | 检查贴标与工艺配置 |
 | 已工程锁定 | 403 | `product_locked` | 16 | 提示送修 |
 | 已报废 | 403 | `product_scrapped` | 10 | 禁止流转 |
@@ -711,6 +712,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 |---|---|---|
 | `FAIL_LIMIT` | `3` | 连续失败达阈值 → 工程锁定 |
 | `ENFORCE_FW` | `true` | 固件基线校验，`false` 时仅记录不拦截 |
+| `ENFORCE_APP_SW` | `true` | 测试软件版本基线校验（机型基线留空则不卡控），`false` 时仅记录不拦截 |
 | `ENFORCE_CASE_IDS` | `true` | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | `90` | 机台在线判定窗口 |
 | `METRICS_WINDOW_DAYS` | `14` | 仪表盘统计窗口 |
@@ -766,7 +768,7 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 44 项，覆盖全部卡控场景
+python tests/test_backend.py      # 45 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 
@@ -814,6 +816,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 进站 `403 missing_prereq` | 前工序未完成 | 按提示补齐前置工位；确认 SN 未被贴错 |
 | 进站 `409 station_already_passed` | 该工位已盖章 | 禁止复测；确认是否推错车，必要时走 RETEST 处置 |
 | 进站 `403 firmware_mismatch` | 固件非基线 | 刷写基线固件；调试期可临时 `ENFORCE_FW=false` |
+| 进站 `403 app_version_mismatch` | 测试软件版本低于基线 | 升级机台测试程序；调试期可临时 `ENFORCE_APP_SW=false` |
 | 出站 `403 lock_invalid` | 锁已被其他机台接管 | 停机，重新进站；旧数据作废 |
 | 出站 `400 missing_mandatory` | 必测用例未执行或被报为 SKIP | 补齐用例；检查脚本与服务端清单是否同步 |
 | 崩溃后从头重测 | 未上报断点或未持久化 session | 确认每用例调用 `checkpoint`，且断点文件写入成功 |

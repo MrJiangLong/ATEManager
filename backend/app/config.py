@@ -75,6 +75,8 @@ class Settings:
     # ---- 防呆规则 ----
     FAIL_LIMIT: int = _as_int(os.getenv("FAIL_LIMIT"), 3)
     ENFORCE_FW: bool = _as_bool(os.getenv("ENFORCE_FW"), True)
+    # 测试软件版本基线全局开关（机型未配基线时不卡控）
+    ENFORCE_APP_SW: bool = _as_bool(os.getenv("ENFORCE_APP_SW"), True)
     # 进站时是否强制比对用例ID清单（防漏测前置校验）
     ENFORCE_CASE_IDS: bool = _as_bool(os.getenv("ENFORCE_CASE_IDS"), True)
     CLIENT_ONLINE_WINDOW_SECONDS: int = _as_int(os.getenv("CLIENT_ONLINE_WINDOW_SECONDS"), 90)

@@ -107,7 +107,7 @@ FATAL_LOCK_CODES = ("lock_invalid", "lock_expired")
 GATE_CODES = (
     "missing_prereq", "station_already_passed", "station_not_in_process",
     "station_ambiguous", "case_id_mismatch", "missing_mandatory",
-    "model_mismatch", "model_not_registered", "firmware_mismatch",
+    "model_mismatch", "model_not_registered", "firmware_mismatch", "app_version_mismatch",
     "product_locked", "product_scrapped", "client_not_bound", "client_not_registered",
 )
 

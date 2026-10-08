@@ -128,7 +128,7 @@ class Process(Base):
     steps = relationship("ProcessStation", back_populates="process", cascade="all, delete-orphan")
 
 class ProductModel(Base):
-    """机型主数据：绑定专属流程 + 强制固件基线。"""
+    """机型主数据：绑定专属流程 + 固件基线与测试软件基线。"""
 
     __tablename__ = "product_models"
     __table_args__ = (Index("idx_pm_process", "process_id"),)
@@ -140,6 +140,11 @@ class ProductModel(Base):
     target_fw_version: Mapped[str] = mapped_column(String(32), nullable=False)
     # 基线匹配口径：exact 要求完全一致；min 只要求不低于基线（兼容小版本升级）
     fw_match_rule: Mapped[str] = mapped_column(
+        String(16), default=FW_RULE_EXACT, server_default=FW_RULE_EXACT
+    )
+    # 测试软件基线：空 = 不卡控；匹配口径与固件基线同款（exact/min）
+    target_app_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    app_match_rule: Mapped[str] = mapped_column(
         String(16), default=FW_RULE_EXACT, server_default=FW_RULE_EXACT
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

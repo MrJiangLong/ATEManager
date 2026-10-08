@@ -513,6 +513,8 @@ export default {
     modelProcess: '所属流程',
     targetFw: '固件基线',
     fwRule: '固件匹配规则',
+    targetApp: 'ATE软件基线',
+    appRule: 'ATE匹配规则',
     fwRuleExact: '必须完全一致',
     fwRuleMin: '不低于基线',
     newModel: '新增机型',
