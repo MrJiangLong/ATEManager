@@ -7,6 +7,7 @@
     run = ate.AteRun(ate.create_client())     # ATE_URL 留空 → 未对接，全部方法自动旁路
     run.start(request.session.items, sn, model, fw)   # 会话夹具 yield 前：进站 + 续测跳过标记
     run.collect(item, rep)                    # 现有 pytest_runtest_makereport 里调用（逐用例收集）
+    run.upload_artifact(item.nodeid, "shot.png")  # 可选：上传产物文件（磁盘路径） run.upload_artifact(item.nodeid, content=png_bytes, filename="shot.png") # 直接上传内存内容（截图/日志不落盘）
     run.gate()                                # 每用例收尾：checkpoint + 失锁自检
     run.finish()                              # 会话夹具 yield 后：必测判定 + 出站（幂等重试）
 
@@ -37,7 +38,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 """ ═══════════════════════════ 1. 配置 ═════════════════════════════════════ """
 
@@ -226,6 +227,57 @@ class HttpClient:
     def data(self, method: str, path: str, **kw) -> dict:
         """取响应包的 data 段；服务层保证 ok=true 时 data 必然存在。"""
         return self.request(method, path, **kw).get("data") or {}
+
+    def request_multipart(self, path: str, fields: Dict[str, str],
+                          filename: str, content: bytes) -> dict:
+        """multipart/form-data 上传（用例产物归档）。重试语义与 request() 一致：
+        同 case_id + filename 重复上传即服务端覆盖，重试不会产生重复对象。"""
+        boundary = uuid.uuid4().hex
+        parts: List[bytes] = []
+        for name, value in fields.items():
+            if value is None:
+                continue
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
+            )
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename.replace(chr(34), '_')}\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n".encode()
+        )
+        parts.append(content + f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+
+        last_error: Optional[ApiError] = None
+        for attempt in range(self.retries + 1):
+            req = urllib.request.Request(f"{self.base_url}{path}", data=body, method="POST")
+            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            req.add_header("Accept", "application/json")
+            if self.api_key:
+                req.add_header("X-API-Key", self.api_key)
+
+            try:
+                with _OPENER.open(req, timeout=self.timeout) as resp:
+                    return _decode_json(resp.read())
+            except urllib.error.HTTPError as exc:
+                payload = _safe_decode(exc.read())
+                error = ApiError(exc.code, payload.get("code", "http_error"),
+                                 payload.get("message", str(exc)),
+                                 payload.get("exit_code", 0), payload.get("data"))
+                if not error.is_retryable or attempt == self.retries:
+                    raise error
+                last_error = error
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+                error = ApiError.network(exc)
+                if attempt == self.retries:
+                    raise error
+                last_error = error
+
+            backoff = min(0.2 * (2 ** attempt), 2.0)
+            LOGGER.warning("POST %s 失败（%s），%.1fs 后重试", path, last_error, backoff)
+            time.sleep(backoff)
+
+        raise last_error or ApiError(0, "unknown_error", "request failed")
 
 
 def map_outcome(outcome: str) -> str:
@@ -480,6 +532,44 @@ class AteClient:
         self._persist()
         return int(data.get("merged_count") or 0)
 
+    def upload_artifact(
+        self,
+        case_id: str,
+        path: Union[str, Path] = None,
+        *,
+        filename: str = "",
+        content: bytes = b"",
+    ) -> dict:
+        """上传当前用例的产物文件（结果文件/日志/截图），返回 {object_key, filename, size}。
+
+        - 引用由服务端暂存进会话断点，出站时自动并入对应 case_id 的 item.files
+          落库；返回的 ref 仅供客户端记录，落库由服务端自动完成
+        - 同 case_id + filename 重复上传 = 覆盖；网络/5xx 由 SDK 自动退避重试
+        - 锁失效（lock_invalid）会抛出——结果作废，宿主应据此停机
+        """
+        if not self.state:
+            raise RuntimeError("upload_artifact before check_in")
+        if path is not None:
+            p = Path(path)
+            content = p.read_bytes()
+            filename = filename or p.name
+        filename = (filename or "artifact.bin").replace('"', "_")
+        if not content:
+            raise ValueError("upload_artifact: empty content")
+        envelope = self.http.request_multipart(
+            "/api/v1/client/artifact",
+            fields={
+                "client_id": self.client_id,
+                "sn": self.state.sn,
+                "session_id": self.state.session_id,
+                "case_id": case_id,
+                "lock_token": self.state.lock_token,
+            },
+            filename=filename,
+            content=content,
+        )
+        return envelope.get("data") or {}
+
     def check_out(self, items: Sequence[dict], duration_ms: int = 0, reason: str = "") -> dict:
         """出站落库并返回 ACK（须校验 acknowledged 才允许拔线流转）。
 
@@ -702,6 +792,31 @@ class AteRun:
                 "exception": str(rep.longrepr) if rep.failed else "",
             })
             self.results[item.nodeid] = rep.outcome
+
+    def upload_artifact(
+        self,
+        case_id: str,
+        path=None,
+        filename: str = "",
+        content: bytes = b"",
+    ) -> Optional[dict]:
+        """上传当前用例的产物文件。未对接（client=None）时旁路返回 None。
+
+        两种传参（二选一）：
+            path           从磁盘文件读取（filename 缺省取文件名）
+            content+filename  直接上传内存内容（截图/日志等不落盘的场景）
+        产物缺失不应卡测试主流程：网络/5xx 已由 SDK 自动重试，其余错误记日志后
+        继续测试；仅 lock_invalid 转为 AteExit 让宿主停机（结果作废）。
+        """
+        if self.client is None:
+            return None
+        try:
+            return self.client.upload_artifact(case_id, path, filename=filename, content=content)
+        except ApiError as exc:
+            if exc.is_lock_invalid:
+                raise AteExit("ATE 锁已失效：会话被运维中止", returncode=3)
+            LOGGER.warning("产物上传失败（%s），跳过（不影响测试判定）", exc.code)
+            return None
 
     def gate(self) -> None:
         """每用例收尾：checkpoint + 失锁自检。"""

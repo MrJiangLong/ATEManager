@@ -183,6 +183,19 @@
                     </template>
                   </el-table-column>
                   <el-table-column prop="message" :label="$t('repairs.tableReason')" min-width="160" show-overflow-tooltip />
+                  <el-table-column :label="$t('records.artifacts')" min-width="160">
+                    <template #default="{ row: it, $index: ii }">
+                      <template v-if="(it.files || []).length">
+                        <button
+                          v-for="(f, fi) in it.files"
+                          :key="f.object_key"
+                          class="dl-chip"
+                          @click="downloadArtifact(row, ii, fi, t)"
+                        >{{ f.filename }}</button>
+                      </template>
+                      <span v-else class="muted">—</span>
+                    </template>
+                  </el-table-column>
                 </el-table>
               </div>
             </template>
@@ -283,6 +296,7 @@ import PageToolbar from '../components/PageToolbar.vue'
 import StatTile from '../components/StatTile.vue'
 import CaseIdText from '../components/CaseIdText.vue'
 import { attemptTipText, fmtDateTime, fmtDurationMs, repairTagType, resultTagType, sessionTagType } from '../utils/format'
+import { downloadArtifact } from '../utils/artifacts'
 
 const { t } = useI18n()
 const route = useRoute()

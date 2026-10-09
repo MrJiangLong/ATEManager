@@ -1606,6 +1606,143 @@ def test_role_permissions():
     resp = admin("PUT", f"/api/admin/users/{_user_id('admin2')}", {"is_active": False})
     check(resp.status_code == 200, f"disable second admin: {resp.text}")
 
+# ================= I. 测试产物 =================
+def _artifact_upload(
+    station,
+    sn,
+    session_id,
+    case_id,
+    content=b"cal-data",
+    filename="amp.cal",
+    lock_token=None,
+    client_id=None,
+):
+    data = {
+        "client_id": client_id or CLIENTS[station],
+        "sn": sn,
+        "session_id": session_id,
+        "case_id": case_id,
+    }
+    if lock_token:
+        data["lock_token"] = lock_token
+    return client.post(
+        "/api/v1/client/artifact",
+        data=data,
+        files={"file": (filename, content, "application/octet-stream")},
+        headers={"X-API-Key": API_KEY},
+    )
+
+def test_artifacts():
+    """测试产物全链路（真连 MinIO，复用 .env 的 MINIO_* 配置）：
+    上传 → 出站并入 files → 管理端预签名 URL → 实际 GET 下载比对 → 清理测试对象。
+    """
+    import urllib.request
+
+    from app.services import artifacts as artifact_store
+    from app.services.reports import store as minio_store
+
+    check(artifact_store.enabled(), "MinIO 未配置（.env 缺 MINIO_ENDPOINT/ACCESS_KEY），产物全链路无法执行")
+
+    # 绕过系统代理直连（预签名 URL 的签名含 host，代理会破坏签名校验）
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    uploaded_keys = []
+    sn = new_sn("artifact")
+    try:
+        resp = checkin("CAL-PARAM", sn)
+        check(resp.status_code == 200, f"check-in: {resp.status_code} {resp.text}")
+        data = resp.json()["data"]
+        session_id, lock_token = data["session_id"], data["lock_token"]
+
+        # ① 上传成功：对象键按 artifacts/{model}/{sn}/{case_hash}/ 归档，文件名消毒
+        case_hash = artifact_store.case_hash("test_amp_cal")
+        resp = _artifact_upload("CAL-PARAM", sn, session_id, "test_amp_cal", b"amp-v1", "amp.cal", lock_token)
+        check(resp.status_code == 200, f"artifact upload: {resp.status_code} {resp.text}")
+        ref = resp.json()["data"]
+        check(ref["filename"] == "amp.cal" and ref["size"] == 6, f"ref: {ref}")
+        check(
+            ref["object_key"].startswith(f"artifacts/{M_DPO}/{sn}/{case_hash}/amp.cal"),
+            f"object_key: {ref['object_key']}",
+        )
+        key_amp = ref["object_key"]
+        uploaded_keys.append(key_amp)
+
+        # ② 路径穿越文件名被消毒
+        resp = _artifact_upload("CAL-PARAM", sn, session_id, "test_amp_cal", b"x", "../../evil.txt", lock_token)
+        check(resp.status_code == 200 and ".." not in resp.json()["data"]["object_key"], f"traversal: {resp.text}")
+        uploaded_keys.append(resp.json()["data"]["object_key"])
+
+        # ③ 同 case_id + 文件名重复上传 = 覆盖（对象键不变）
+        resp = _artifact_upload("CAL-PARAM", sn, session_id, "test_amp_cal", b"amp-v2-longer", "amp.cal", lock_token)
+        check(resp.status_code == 200 and resp.json()["data"]["object_key"] == key_amp, f"overwrite: {resp.text}")
+
+        # ④ 空文件拒绝
+        resp = _artifact_upload("CAL-PARAM", sn, session_id, "test_amp_cal", b"", "empty.cal", lock_token)
+        check(resp.status_code == 400 and resp.json()["code"] == "artifact_empty", f"empty: {resp.text}")
+
+        # ⑤ fencing：错误 lock_token → 403 lock_invalid
+        resp = _artifact_upload("CAL-PARAM", sn, session_id, "test_amp_cal", b"x", "bad.cal", lock_token="wrong-token")
+        check(resp.status_code == 403 and resp.json()["code"] == "lock_invalid", f"fencing: {resp.text}")
+
+        # ⑥ 会话归属：他人机台的 session_id → 400 session_mismatch
+        resp = _artifact_upload(
+            "CAL-PARAM", sn, session_id, "test_amp_cal", b"x", "x.cal", client_id=CLIENTS["CAL-IFACE"]
+        )
+        check(resp.status_code == 400 and resp.json()["code"] == "session_mismatch", f"owner: {resp.text}")
+
+        # ⑦ 普通断点上报（不含 files）→ 出站时服务端暂存引用自动并入
+        resp = v1(
+            "checkpoint",
+            {
+                "client_id": CLIENTS["CAL-PARAM"],
+                "sn": sn,
+                "session_id": session_id,
+                "lock_token": lock_token,
+                "items": [
+                    {"case_id": "test_amp_cal", "result": "PASS",
+                     "values": {"gain": 1.02}, "duration_ms": 800},
+                ],
+            },
+        )
+        check(resp.status_code == 200, f"checkpoint: {resp.text}")
+
+        resp = _artifact_upload(
+            "CAL-PARAM", sn, session_id, "test_phase_cal", b"phase-result", "phase.cal", lock_token
+        )
+        check(resp.status_code == 200, f"phase artifact: {resp.text}")
+        uploaded_keys.append(resp.json()["data"]["object_key"])
+
+        resp = checkout("CAL-PARAM", sn, ITEMS["CAL-PARAM"], lock_token=lock_token)
+        check(resp.status_code == 201, f"check-out: {resp.status_code} {resp.text}")
+        record_id = resp.json()["data"]["record_id"]
+
+        resp = admin("GET", f"/api/admin/records/{record_id}")
+        items = {it["case_id"]: it for it in resp.json()["executed_items"]["items"]}
+        check(items["test_amp_cal"]["files"][0]["object_key"] == key_amp, f"staged files: {items['test_amp_cal']}")
+        phase_files = items["test_phase_cal"].get("files") or []
+        check(
+            len(phase_files) == 1 and phase_files[0]["filename"] == "phase.cal" and phase_files[0]["size"] == 12,
+            f"staged merged: {phase_files}",
+        )
+
+        # ⑧ 下载端点返回预签名 URL，实际 GET 内容 = 最后一次覆盖上传
+        resp = admin("GET", f"/api/admin/records/{record_id}/files/0")
+        check(resp.status_code == 200, f"download: {resp.status_code} {resp.text}")
+        dl = resp.json()
+        check(dl["filename"] == "amp.cal" and dl["url"], f"download: {dl}")
+        with opener.open(dl["url"], timeout=30) as r:
+            check(r.status == 200 and r.read() == b"amp-v2-longer", "presigned GET content mismatch")
+        resp = admin("GET", f"/api/admin/records/{record_id}/files/9")
+        check(resp.status_code == 404, f"index oob: {resp.status_code}")
+        resp = api("GET", f"/api/admin/records/{record_id}/files/0")
+        check(resp.status_code == 401, f"anonymous download: {resp.status_code}")
+    finally:
+        # 清理测试对象，不在共享桶留垃圾
+        for key in uploaded_keys:
+            try:
+                minio_store.remove(key)
+            except Exception:  # noqa: BLE001 清理失败不影响测试结论
+                pass
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1653,6 +1790,7 @@ TESTS = [
     test_process_export_import,
     test_model_app_fields_roundtrip,
     test_role_permissions,
+    test_artifacts,
 ]
 
 if __name__ == "__main__":

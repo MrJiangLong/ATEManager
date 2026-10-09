@@ -434,6 +434,7 @@ export default {
     invalid: '已作废',
     checkoutId: '出站幂等键',
     durationMs: '耗时(ms)',
+    artifacts: '产物',
   },
 
   repairs: {

@@ -6,6 +6,8 @@
     ATE_TEST_CLIENT                              机台编号（默认电脑名）
     ATE_FAIL=nodeid子串[,子串...]                 命中的用例判 FAIL（验证必测失败不出站）
     ATE_SKIP=nodeid子串[,子串...]                 命中的用例 SKIP（验证漏测拦截）
+    ATE_ARTIFACTS=1                              每个用例上传一个演示产物文件（验证产物归档链路；
+                                                 真实工程替换为仪器截图/波形数据，见 ate_case_gate）
 """
 import os
 import time
@@ -67,11 +69,25 @@ def ate_session(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def ate_case_gate():
-    """每个用例收尾：上报断点 + 失锁自检。"""
+def ate_case_gate(request):
+    """每个用例收尾：产物上传（可选）+ 上报断点 + 失锁自检。
+
+    产物上传示例（ATE_ARTIFACTS=1 时生效）——真实工程里的典型形态：
+        磁盘文件：run.upload_artifact(request.node.nodeid, f"dumps/{short}.csv")
+        内存内容：run.upload_artifact(request.node.nodeid, content=png_bytes, filename="shot.png")
+    上传失败不阻断测试（ATE 锁失效除外，自动转停机）；产物引用由服务端
+    暂存，出站时自动并入 executed_items.items[].files，Web 台账可下载。
+    """
     yield
     if _ate_run is not None:
         try:
+            if os.environ.get("ATE_ARTIFACTS") == "1":
+                short = request.node.nodeid.split("::")[-1]
+                _ate_run.upload_artifact(
+                    request.node.nodeid,
+                    content=f"selftest artifact | {request.node.nodeid}".encode("utf-8"),
+                    filename=f"artifact_{short}.log",
+                )
             _ate_run.gate()
         except ate.AteExit as e:
             pytest.exit(e.message, returncode=e.returncode)

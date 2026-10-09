@@ -10,9 +10,9 @@
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| 后端 API | `2.0.0` | `backend/app/config.py::APP_VERSION` |
+| 后端 API | `2.0.1` | `backend/app/config.py::APP_VERSION` |
 | 上位机接口文档 | `v1.0` | `doc/API.md` |
-| 前端 | `2.0.0` | `frontend/package.json` |
+| 前端 | `2.0.1` | `frontend/package.json` |
 
 ---
 
@@ -306,8 +306,9 @@ ATEManager/
 │   │   ├── seed.py           静态工艺规则 + 随机在制品 + 租约锁/会话场景数据
 │   │   ├── services/
 │   │   │   ├── routing.py    静态拓扑：流程装载、依赖闸门、用例ID清单、DAG 校验
-│   │   │   ├── gate.py       运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修
+│   │   │   ├── gate.py       运行时状态机：进站 / 保活 / 断点 / 出站 ACK / 锁释放 / 维修 / 产物暂存
 │   │   │   ├── version.py    版本基线匹配：固件基线 + 测试软件基线（exact / min 口径）
+│   │   │   ├── artifacts.py  测试产物归档：对象键（artifacts/{model}/{sn}/{case_hash}/）/ 上传 / 预签名
 │   │   │   ├── sweeper.py    孤儿锁回收后台任务（失联 / 硬超时）
 │   │   │   ├── metrics.py    仪表盘聚合（在制品 / 日趋势 / 窗口良率 / TOP 失效）
 │   │   │   ├── views.py      ORM → 展示模型的派生与组装
@@ -324,11 +325,11 @@ ATEManager/
 │   │   └── routers/
 │   │       ├── auth.py       登录 / 当前用户 / 改密
 │   │       ├── v1.py         通道一：resolve / check-in / heartbeat / checkpoint
-│   │       │                            / check-out / release / ack
+│   │       │                            / artifact / check-out / release / ack
 │   │       ├── masters.py    主数据：流程 / 机型 / 工位
 │   │       ├── routing.py    拓扑编排 / 用例ID测试项 / 校验 / 克隆
 │   │       ├── products.py   在制品清单 / 详情 / 维修处置 / 强制解锁
-│   │       ├── records.py    事件台账 / SN 全生命周期追溯
+│   │       ├── records.py    事件台账 / SN 全生命周期追溯 / 测试产物下载
 │   │       ├── repairs.py    维修处置履历
 │   │       ├── sessions.py   测试会话：续测断点 / 僵尸锁 / 强制终止
 │   │       ├── clients.py    机台档案与工位绑定
@@ -614,7 +615,8 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁 | 200 |
 | POST | `/client/heartbeat` | 心跳保活（只刷新失联时间，不续硬超时） | 200 |
 | POST | `/client/checkpoint` | 续测断点：增量上报已完成用例（幂等覆盖） | 200 |
-| POST | `/client/check-out` | 出站：断点补齐 + 漏测拦截 + 落库返回 ACK | **201** |
+| POST | `/client/artifact` | 测试产物上传（multipart，按 case_id 归档 MinIO；同键覆盖） | 200 |
+| POST | `/client/check-out` | 出站：断点补齐 + 漏测拦截 + 产物并入 + 落库返回 ACK | **201** |
 | POST | `/client/release` | 主动放弃工位锁（不计失败） | 200 |
 | GET | `/client/ack` | 上传闭环校验：确认服务端已落库 | 200 |
 
@@ -630,7 +632,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 工位 | view / admin 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
 | 工艺拓扑 | view / admin 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
-| 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}` |
+| 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs` |
 | 测试会话 | view / op 写 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
 | 机台 | view / op 写 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
@@ -734,6 +736,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 空 | MinIO 归档（报告成品/模板/脚本共用一个桶）；未配置时本地产物即归档 |
 | `MINIO_BUCKET` / `MINIO_SECURE` | `share` / `false` | 桶名与 TLS 开关 |
 | `MINIO_REPORT_PREFIX` / `MINIO_TEMPLATE_PREFIX` / `MINIO_SCRIPT_PREFIX` | `reports` / `report-templates` / `report-scripts` | 对象键前缀 |
+| `MINIO_ARTIFACT_PREFIX` / `ARTIFACT_MAX_BYTES` | `artifacts` / `209715200` | 测试产物归档（结果文件/日志等按 `artifacts/{model}/{sn}/{case_hash}/` 归档，`case_hash` = sha1(case_id) 前 12 位；任何机台客户端通用）：对象键前缀 / 单文件上限（字节）。产物**永久保留**（不随报告保留期清理）；MinIO 未配置时产物上传/下载整体拒绝 |
 | `REPORT_PDF_MODE` | `off` | PDF 转换：`off` 仅 Excel / `libreoffice` 服务端 headless（`SOFFICE_CMD`）/ `external` 外部 WPS Worker（`tools/reports/pdf_worker/`，部署在装有 WPS/Office 的 Windows 测试机） |
 | `REPORT_MES_URL` | MES 校准接口 | 各产品族统一的校准数据上传地址（multipart：`sn` + 各 PDF，字段名由插件产物 `mes_field` 声明）；成功判定与 TekReport 同口径（2xx 且 JSON `success=true`/`"true"`） |
 | `REPORT_MAX_CONCURRENCY` | `2` | 报告生成并发上限 |
@@ -768,13 +771,15 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 46 项，覆盖全部卡控场景
+python tests/test_backend.py      # 47 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 
 覆盖范围：进站/出站全链路、跳站与复测拦截、固件与机型校验、用例ID漏测拦截、
 ACK 幂等回放、失败锁定、锁冲突与超时接管、心跳不延长硬超时、断点续测合并、
-孤儿锁回收、强制解锁、维修处置与守卫、SN 追溯、仪表盘统计、鉴权守卫。
+孤儿锁回收、强制解锁、维修处置与守卫、SN 追溯、仪表盘统计、鉴权守卫、
+测试产物全链路（真连 `.env` 的 MinIO：上传→出站并入→预签名下载→清理测试对象；
+MinIO 不可达时该项失败）。
 
 ---
 

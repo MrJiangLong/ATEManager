@@ -61,6 +61,19 @@
                   </template>
                 </el-table-column>
                 <el-table-column prop="message" :label="$t('repairs.tableReason')" min-width="160" show-overflow-tooltip />
+                <el-table-column :label="$t('records.artifacts')" min-width="160">
+                  <template #default="{ row: it, $index: ii }">
+                    <template v-if="(it.files || []).length">
+                      <button
+                        v-for="(f, fi) in it.files"
+                        :key="f.object_key"
+                        class="dl-chip"
+                        @click="downloadArtifact(row, ii, fi, t)"
+                      >{{ f.filename }}</button>
+                    </template>
+                    <span v-else class="muted">—</span>
+                  </template>
+                </el-table-column>
               </el-table>
             </div>
           </template>
@@ -134,6 +147,7 @@ import { useProcesses } from '../composables/useProcesses'
 import { TEST_RESULTS } from '../utils/constants'
 import CaseIdText from '../components/CaseIdText.vue'
 import { fmtDateTime, fmtDurationMs, resultTagType } from '../utils/format'
+import { downloadArtifact } from '../utils/artifacts'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -243,4 +257,21 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 测试产物下载 chip：与报告产物同款观感 */
+.dl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  line-height: 16px;
+  font-family: var(--app-mono, monospace);
+  border-radius: 4px;
+  border: 1px solid var(--el-color-primary-light-7, #d9ecff);
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  color: var(--el-color-primary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dl-chip:hover { border-color: var(--el-color-primary); background: var(--el-color-primary-light-8, #e1effe); }
 </style>

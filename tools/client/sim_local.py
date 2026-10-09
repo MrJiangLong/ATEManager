@@ -23,6 +23,9 @@ r"""本地测试库一键跑产线仿真（不改动 backend/.env）。
     SIM_PORT=8000       后端端口
     SIM_KEEP_DB=1       复用上次测试库
     SIM_ATTACH=1        同 --attach
+    SIM_ARTIFACT_RATE=0.3  产物场景：每个测试项后按概率上传模拟产物（真连 MinIO）；
+                        仅当 backend/.env 配置了 MinIO 才生效，未配置自动跳过并提示；
+                        传 --artifact-rate 参数时以参数为准
 
 原理
     config.py 用 load_dotenv(override=False)，进程环境变量优先级最高，
@@ -147,10 +150,21 @@ def main() -> int:
         print("[ERROR] backend\\.venv not found. Run scripts\\setup.bat first.")
         return 1
 
-    cfg = read_env_keys("V1_API_KEY", "DEFAULT_ADMIN_USERNAME", "DEFAULT_ADMIN_PASSWORD")
+    cfg = read_env_keys("V1_API_KEY", "DEFAULT_ADMIN_USERNAME", "DEFAULT_ADMIN_PASSWORD",
+                        "MINIO_ENDPOINT", "MINIO_ACCESS_KEY")
     if not cfg.get("V1_API_KEY"):
         print("[ERROR] cannot parse V1_API_KEY from backend\\.env")
         return 1
+
+    # 产物场景：.env 配置了 MinIO 才启用（SIM_ARTIFACT_RATE 可调；传 --artifact-rate 参数时以参数为准）
+    minio_ready = bool(cfg.get("MINIO_ENDPOINT") and cfg.get("MINIO_ACCESS_KEY"))
+    artifact_rate = os.environ.get("SIM_ARTIFACT_RATE", "0.3" if minio_ready else "0")
+    user_passed = any(a == "--artifact-rate" for a in extra)
+    if not user_passed and artifact_rate != "0" and minio_ready:
+        extra += ["--artifact-rate", artifact_rate]
+        print(f"[sim] artifact scenario enabled (rate={artifact_rate})")
+    elif not minio_ready:
+        print("[sim][notice] MinIO not configured in backend\\.env - artifact scenario skipped")
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

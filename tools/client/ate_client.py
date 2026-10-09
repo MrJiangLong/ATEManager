@@ -25,6 +25,8 @@
         if case_id in state.completed_case_ids:     # 崩溃续测：跳过已完成
             continue
         cli.checkpoint([run(case_id)])
+        cli.upload_artifact(case_id, "log.txt")     # 可选：上传该用例产物（日志/截图），
+                                                    # 服务端暂存后出站自动并入 executed_items
     ack = cli.check_out(items, duration_ms=...)     # 必须收到 ACK 才允许拔线
 
 运行演示
@@ -34,6 +36,7 @@
     python tools/client/ate_client.py --api-key <V1_API_KEY> resume      # 崩溃 → 断点续测
     python tools/client/ate_client.py --api-key <V1_API_KEY> takeover    # 崩溃 → 备用机台接管
     python tools/client/ate_client.py --api-key <V1_API_KEY> sweep       # 孤儿锁回收（留一把锁在服务端）
+    python tools/client/ate_client.py --api-key <V1_API_KEY> artifact    # 测试产物归档（真连 MinIO）
     python tools/client/ate_client.py --api-key <V1_API_KEY> resolve     # 只做机台身份上报
 """
 
@@ -52,7 +55,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 __all__ = [
     "ApiError",
@@ -248,6 +251,61 @@ class HttpClient:
     def data(self, method: str, path: str, **kw) -> dict:
         """取响应包的 data 段；服务层保证 ok=true 时 data 必然存在。"""
         return self.request(method, path, **kw).get("data") or {}
+
+    def request_multipart(self, path: str, fields: Dict[str, str],
+                          filename: str, content: bytes) -> dict:
+        """multipart/form-data 上传（用例产物归档）。重试语义与 request() 一致：
+        同 case_id + filename 重复上传即服务端覆盖，重试不会产生重复对象。"""
+        boundary = uuid.uuid4().hex
+        parts: List[bytes] = []
+        for name, value in fields.items():
+            if value is None:
+                continue
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
+            )
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename.replace(chr(34), '_')}\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n".encode()
+        )
+        parts.append(content + f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+
+        last_error: Optional[ApiError] = None
+        for attempt in range(self.retries + 1):
+            req = urllib.request.Request(f"{self.base_url}{path}", data=body, method="POST")
+            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            req.add_header("Accept", "application/json")
+            if self.api_key:
+                req.add_header("X-API-Key", self.api_key)
+
+            try:
+                with _OPENER.open(req, timeout=self.timeout) as resp:
+                    return _decode_json(resp.read())
+            except urllib.error.HTTPError as exc:
+                payload = _safe_decode(exc.read())
+                error = ApiError(
+                    exc.code,
+                    payload.get("code", "http_error"),
+                    payload.get("message", str(exc)),
+                    payload.get("exit_code", 0),
+                    payload.get("data"),
+                )
+                if not error.is_retryable or attempt == self.retries:
+                    raise error
+                last_error = error
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+                error = ApiError.network(exc)
+                if attempt == self.retries:
+                    raise error
+                last_error = error
+
+            backoff = min(0.2 * (2 ** attempt), 2.0)
+            LOGGER.warning("POST %s 失败（%s），%.1fs 后重试", path, last_error, backoff)
+            time.sleep(backoff)
+
+        raise last_error or ApiError(0, "unknown_error", "request failed")
 
 def _decode_json(raw: bytes) -> dict:
     try:
@@ -576,6 +634,44 @@ class AteClient:
         self._persist()
         return int(data.get("merged_count") or 0)
 
+    def upload_artifact(
+        self,
+        case_id: str,
+        path: Union[str, Path] = None,
+        *,
+        filename: str = "",
+        content: bytes = b"",
+    ) -> dict:
+        """上传当前用例的产物文件（结果文件/日志/截图），返回 {object_key, filename, size}。
+
+        - 引用由服务端暂存进会话断点，出站时自动并入对应 case_id 的 item.files
+          落库；返回的 ref 仅供客户端记录，落库由服务端自动完成
+        - 同 case_id + filename 重复上传 = 覆盖；网络/5xx 由 SDK 自动退避重试
+        - 锁失效（lock_invalid）会抛出——结果作废，宿主应据此停机
+        """
+        if not self.state:
+            raise RuntimeError("upload_artifact before check_in")
+        if path is not None:
+            p = Path(path)
+            content = p.read_bytes()
+            filename = filename or p.name
+        filename = (filename or "artifact.bin").replace('"', "_")
+        if not content:
+            raise ValueError("upload_artifact: empty content")
+        envelope = self.http.request_multipart(
+            "/api/v1/client/artifact",
+            fields={
+                "client_id": self.client_id,
+                "sn": self.state.sn,
+                "session_id": self.state.session_id,
+                "case_id": case_id,
+                "lock_token": self.state.lock_token,
+            },
+            filename=filename,
+            content=content,
+        )
+        return envelope.get("data") or {}
+
     def check_out(
         self,
         items: Sequence[dict],
@@ -712,8 +808,9 @@ def run_station(
     firmware: str,
     case_ids: Sequence[str],
     crash_after: Optional[int] = None,
+    upload_artifacts: bool = False,
 ) -> dict:
-    """跑完一个工位：进站 → 逐用例上报断点 → 出站。返回 ACK。"""
+    """跑完一个工位：进站 → 逐用例上报断点（可选上传产物）→ 出站。返回 ACK。"""
     state = cli.check_in(sn, model, firmware, case_ids=case_ids)
     done = list(state.completed_case_ids)
     executed: List[str] = []
@@ -725,6 +822,13 @@ def run_station(
             done.append(case_id)
             executed.append(case_id)
             print(f"  · 上报断点 {case_id.split('::')[-1]} ({len(done)}/{len(case_ids)})", flush=True)
+            if upload_artifacts:
+                ref = cli.upload_artifact(
+                    case_id,
+                    content=f"demo artifact | {sn} | {case_id}".encode("utf-8"),
+                    filename=f"sim_{case_id.split('::')[-1]}.log",
+                )
+                print(f"    ↳ 产物已归档 {ref['object_key']}", flush=True)
             if crash_after is not None and len(done) >= crash_after:
                 raise SimulatedCrash("模拟上位机崩溃")
     except SimulatedCrash:
@@ -843,6 +947,14 @@ def demo_sweep(cli: AteClient, sn: str, model: str, firmware: str) -> None:
     print("  可在 Web 端「测试会话 → 僵尸锁」观察，或查询 GET /api/admin/sessions/zombie-locks", flush=True)
     cli.stop_heartbeat()
 
+def demo_artifact(cli: AteClient, sn: str, model: str, firmware: str) -> None:
+    """测试产物归档：逐用例 multipart 上传产物文件，出站自动并入 executed_items。"""
+    print(f"\n=== 场景 6：测试产物归档（SN={sn}）===", flush=True)
+    ack = run_station(cli, sn=sn, model=model, firmware=firmware,
+                      case_ids=CAL_PARAM_CASES, upload_artifacts=True)
+    print(f"  OK 出站成功（record={ack.get('record_id')}），产物引用已随 executed_items 落库", flush=True)
+    print("  → Web 端「事件台账/追溯」展开该记录可见产物文件列，点击经预签名 URL 下载", flush=True)
+
 # ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
 def _force_utf8_console() -> None:
@@ -876,7 +988,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "scenario",
         nargs="?",
         default="demo",
-        choices=["demo", "normal", "gate", "resume", "takeover", "sweep", "resolve"],
+        choices=["demo", "normal", "gate", "resume", "takeover", "sweep", "artifact", "resolve"],
         help="演示场景（默认 demo）",
     )
     return parser
@@ -924,6 +1036,8 @@ def main() -> int:
             demo_takeover(cli, f"C079{stamp}", args.model, args.firmware, args.backup_client_id)
         if args.scenario == "sweep":
             demo_sweep(cli, f"C080{stamp}", args.model, args.firmware)
+        if args.scenario in ("demo", "artifact"):
+            demo_artifact(cli, f"C081{stamp}", args.model, args.firmware)
     except ApiError as exc:
         print(f"\n[ERROR] {exc}", flush=True)
         return 1

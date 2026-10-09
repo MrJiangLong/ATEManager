@@ -18,6 +18,7 @@ from .gate import (
     heartbeat,
     release_lock,
     save_checkpoint,
+    stage_artifact,
     touch_client,
 )
 from .metrics import build_overview
@@ -32,6 +33,7 @@ __all__ = [
     "heartbeat",
     "release_lock",
     "save_checkpoint",
+    "stage_artifact",
     "sweeper",
     "touch_client",
 ]

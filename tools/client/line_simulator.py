@@ -42,6 +42,8 @@ v2：补齐产线状态
     --jump-rate 0.05       跳站比例（→ missing_prereq）
     --abandon-rate 0.05    中途停机比例（→ 停在半途）
     --stop-rate 0.25       过站后停止推进比例（→ 完成一半）
+    --artifact-rate 0.3    每个测试项之后按概率上传一个模拟产物文件
+                           （真连 MinIO 归档，走 /client/artifact；服务端需已配置）
 
 输出
     逐台机台日志 + 结果分布 + 完成度分布 + 服务端侧校验
@@ -216,7 +218,7 @@ class Station:
     def __init__(self, *, client_id: str, station_id: str, base_url: str, api_key: str,
                  sim: Sim, admin: Admin, model: str, base_fw: str, crash_rate: float,
                  resume: bool, state_dir: Path, rng: random.Random, max_retry: int = 9,
-                 handoff: bool = False):
+                 handoff: bool = False, artifact_rate: float = 0.0):
         self.client_id = client_id
         self.station_id = station_id
         self.sim = sim
@@ -226,6 +228,7 @@ class Station:
         self.crash_rate = crash_rate
         self.resume = resume
         self.handoff = handoff  # 崩溃后直接交同工位其他机台（稳定触发接管）
+        self.artifact_rate = artifact_rate  # 每个测试项之后上传模拟产物的概率
         self.rng = rng
         self.max_retry = max_retry
         self.cli = AteClient(
@@ -278,6 +281,13 @@ class Station:
                 cursor={"step": len(executed) + 1},
             )
             executed.append(case_id)
+            if self.artifact_rate and self.rng.random() < self.artifact_rate:
+                try:
+                    self._upload_artifact(job.sn, case_id)
+                    self.sim.bump("artifacts")
+                except Exception as exc:  # 产物上传失败不阻断测试（与产线语义一致）
+                    self.sim.bump("artifact_failed")
+                    self.log(f"{job.sn} 产物上传失败（继续测试）：{exc}")
             if self.rng.random() < self.crash_rate:
                 raise SimulatedCrash(f"{case_id} 之后进程崩溃")
 
@@ -290,6 +300,18 @@ class Station:
         self.log(f"{job.sn} 出库 record={ack.get('record_id')} result={overall or 'PASS'} "
                  f"attempt={state.attempt} 补齐={ack.get('checkpoint_merged_count')}")
         return "fail" if overall == "FAIL" else "pass"
+
+    def _upload_artifact(self, sn: str, case_id: str) -> None:
+        """上传一个模拟产物（复用 AteClient.upload_artifact，重试语义与 SDK 一致）。
+
+        引用无需随 checkpoint 回传：服务端暂存进会话断点，出站时自动并入
+        executed_items.items[].files。file 内容为一段合成文本（sim 演示数据）。
+        """
+        self.cli.upload_artifact(
+            case_id,
+            content=f"simulated artifact | sn={sn} | case={case_id} | t={time.time():.0f}".encode("utf-8"),
+            filename=f"sim_{case_id.split('::')[-1]}.log",
+        )
 
     # ---------------- 终态之后的流转 ----------------
     def advance(self, job: Job) -> None:
@@ -465,6 +487,8 @@ def main() -> int:
     parser.add_argument("--jump-rate", type=float, default=0.05, help="跳站比例")
     parser.add_argument("--abandon-rate", type=float, default=0.05, help="中途停机比例")
     parser.add_argument("--stop-rate", type=float, default=0.25, help="过站后停止推进比例")
+    parser.add_argument("--artifact-rate", type=float, default=0.0,
+                        help="每测试项后上传模拟产物的概率（需服务端已配置 MinIO）")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -522,7 +546,7 @@ def main() -> int:
                 sim=sim, admin=admin, model=args.model, base_fw=base_fw,
                 crash_rate=crash_rate, resume=not args.no_chaos_resume,
                 state_dir=state_dir, rng=random.Random(rng.random()),
-                handoff=args.crash_handoff,
+                handoff=args.crash_handoff, artifact_rate=args.artifact_rate,
             ))
     print(f"[setup] 已就绪 {len(workers)} 台机台\n")
 
@@ -549,6 +573,8 @@ def main() -> int:
           f"（固件 {c['gated_firmware_mismatch']} / 跳站 {c['gated_missing_prereq']}"
           f" / 漏测 {c['gated_missing_mandatory']}）")
     print(f"  中途停机 {c['abandoned']} · 过站停线 {c['stopped']} · 全流程完工 {c['completed']}")
+    if args.artifact_rate:
+        print(f"  产物上传 {c['artifacts']} · 上传失败 {c['artifact_failed']}（失败不阻断测试）")
     print(f"  崩溃 {c['crashed']} · 续测 {c['resumed']} · 接管 {c['takeover']} · "
           f"放弃 {c['gave_up']} · 跳过 {c['skipped']}")
     print(f"  未预期失败 {c['unexpected']}")

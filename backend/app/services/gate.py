@@ -23,7 +23,7 @@
 """
 
 import uuid
-from typing import Any, List, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from sqlalchemy import CursorResult, update
 from sqlalchemy.exc import IntegrityError
@@ -43,6 +43,7 @@ from ..errors import (
     not_found,
 )
 from ..logging import get_logger
+from . import artifacts
 from .version import version_matches
 from .routing import (
     _as_list,
@@ -232,6 +233,91 @@ def _merge_into_checkpoint(session: models.TestSession, items: List[dict]) -> in
 
     flag_modified(session, "checkpoint")
     return len(merged)
+
+def _staged_files(session: Optional[models.TestSession]) -> Dict[str, List[dict]]:
+    """会话断点里暂存的产物引用：{case_id: [{object_key, filename, size}, ...]}。"""
+    if session is None:
+        return {}
+    payload = session.checkpoint if isinstance(session.checkpoint, dict) else {}
+    staged = payload.get("staged")
+    if not isinstance(staged, dict):
+        return {}
+    result: Dict[str, List[dict]] = {}
+    for case_id, bucket in staged.items():
+        if not isinstance(bucket, dict):
+            continue
+        refs = [r for r in bucket.values() if isinstance(r, dict) and r.get("object_key")]
+        if refs:
+            result[str(case_id)] = refs
+    return result
+
+def stage_artifact(
+    db: Session,
+    *,
+    client: models.StationClient,
+    sn: str,
+    session_id: str,
+    case_id: str,
+    filename: str,
+    size: int,
+    lock_token: Optional[str] = None,
+    commit: bool = True,
+) -> str:
+    """测试产物登记：对象由 artifacts 服务落盘，此处把引用暂存进会话断点。
+
+    通用机制：任何机台客户端均可按 case_id 上传产物（结果文件/日志等）。
+    同 case_id + filename 重复上传即覆盖（与对象存储同键覆盖语义一致）；
+    出站时服务端把暂存引用自动并入对应 case_id 的 item.files 落库。
+    commit=False 时由调用方在文件落盘成功后统一提交，保证"登记↔落盘"原子。
+    """
+    session = db.get(models.TestSession, session_id)
+    if session is None:
+        raise not_found("session_not_found", f"session_not_found: {session_id}")
+    if session.sn != sn or session.client_id != client.client_id:
+        raise bad_request(
+            "session_mismatch",
+            f"session_mismatch: {session_id} does not belong to {sn}@{client.client_id}",
+        )
+    if session.status == models.SESSION_COMPLETED:
+        raise conflict_error("session_completed", f"session_completed: {session_id}")
+    if session.status == models.SESSION_ABORTED:
+        raise conflict_error(
+            "session_aborted",
+            f"session_aborted: {session_id} terminated by operator, stop uploading now",
+            exit_code=EXIT_LOCK_EXPIRED,
+            data={"session_id": session_id},
+        )
+    product = db.get(models.ProductStatus, sn)
+    if product is None:
+        raise not_found("product_not_found", f"product_not_found: {sn}")
+    if product.lock_token and _token_mismatch(product, lock_token):
+        raise forbidden(
+            "lock_invalid",
+            f"lock_invalid: {sn} lock has been taken over, artifact rejected",
+            exit_code=EXIT_LOCK_EXPIRED,
+            data={"session_id": session_id},
+        )
+
+    key = artifacts.object_key(product.product_model, sn, case_id, filename)
+    payload = session.checkpoint if isinstance(session.checkpoint, dict) else {}
+    staged = payload.get("staged")
+    if not isinstance(staged, dict):
+        staged = {}
+    bucket = staged.get(case_id)
+    if not isinstance(bucket, dict):
+        bucket = {}
+    safe_name = key.rsplit("/", 1)[-1]
+    bucket[safe_name] = {"object_key": key, "filename": safe_name, "size": int(size or 0)}
+    staged[case_id] = bucket
+    payload["staged"] = staged
+    session.checkpoint = payload
+    # JSONB 原地修改需显式标记，否则 SQLAlchemy 不会 flush
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(session, "checkpoint")
+    if commit:
+        db.commit()
+    return key
 
 def _close_session(
     session: models.TestSession,
@@ -953,6 +1039,15 @@ def check_out(
             merged_items.append(snapshot)
             submitted_ids.add(case_id)
             checkpoint_merged_count += 1
+
+    # 产物并入：/client/artifact 暂存在会话断点里的文件引用，
+    # 自动挂到对应 case_id 的 item.files（暂存即权威来源，无客户端回传通道）
+    staged = _staged_files(session)
+    if staged:
+        for item in merged_items:
+            refs = staged.get(item.get("case_id"))
+            if refs:
+                item["files"] = refs
 
     # 5) 漏测拦截：必测用例ID必须被实际执行
     #    已执行但判定 FAIL → 真实失败；必测 FAIL 计入 overall_result（见步骤 6）

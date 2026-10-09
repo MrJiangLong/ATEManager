@@ -206,7 +206,7 @@ NULL ─────────────→ IDLE ─────────
 
 ## 5. 接口详解
 
-调用顺序：`resolve` → `check-in` → (`heartbeat` ∥ `checkpoint`) → `check-out` → 必要时 `ack` / `release`。
+调用顺序：`resolve` → `check-in` → (`heartbeat` ∥ `checkpoint` ∥ `artifact`) → `check-out` → 必要时 `ack` / `release`。
 
 ---
 
@@ -516,7 +516,46 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.6 `POST /api/v1/client/release` — 主动放弃锁
+### 5.6 `POST /api/v1/client/artifact` — 测试产物上传（结果文件/日志等）
+
+**通用产物归档机制**：任何机台客户端（pytest 上位机、独立工控机程序等）均按此上传产物。
+文件落 MinIO（与出厂报告共用同一桶配置，仅前缀不同；MinIO 未配置时上传直接拒绝），
+引用暂存进会话断点，出站时自动并入对应 `case_id` 的 `executed_items.items[].files` 落库。
+
+**请求（multipart/form-data）**
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `client_id` | string(64) | 是 | 机台 ID |
+| `sn` | string(64) | 是 | 序列号 |
+| `session_id` | string(36) | 是 | 当前会话 ID |
+| `case_id` | string(256) | 是 | 产物归属的用例 ID |
+| `lock_token` | string(64) | 否 | **fencing 凭证**；锁被接管后旧 token 一律拒绝 |
+| `file` | binary | 是 | 文件内容；空文件拒绝，默认上限 200MB（`ARTIFACT_MAX_BYTES`） |
+
+**响应 `data`（200）**
+
+```jsonc
+{"object_key": "artifacts/DPO4054B/C020001/3f9a1c2b7e40/amp.cal", "filename": "amp.cal", "size": 1024}
+```
+
+要点：
+
+- 对象键布局 `artifacts/{model}/{sn}/{case_hash}/{filename}`，其中
+  `case_hash` = `sha1(case_id)` 前 12 位十六进制——case_id（如 pytest nodeid
+  含 `/` 与 `::`）不进路径；case_id 本身在 `executed_items.items[].case_id` 留档
+- **同 case_id + 文件名重复上传 = 覆盖**（同 case_id 恒定同哈希）
+- 时序约定：每完成一个流程 → 上传产物 → checkpoint 上报该流程结果；
+  引用由服务端自动并入出站记录（客户端无需在 checkpoint/check-out 里回传 files）
+- 文件永久保留；追溯入口 = 台账/追溯页记录详情的产物文件列（登录用户下载，见 §11）
+
+**状态码**：200 `ok.artifact`；400 `artifact_empty` / `artifact_too_large` / `session_mismatch`；
+403 `lock_invalid`；404 `session_not_found` / `product_not_found`；409 `session_completed` / `session_aborted`；
+503 `artifact_storage_unavailable`（服务端 MinIO 未配置）。
+
+---
+
+### 5.7 `POST /api/v1/client/release` — 主动放弃锁
 
 ```jsonc
 {"client_id": "SZ-L1-CAL-01", "sn": "C020001", "lock_token": "b1c9...", "reason": "操作员取消"}
@@ -527,7 +566,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.7 `GET /api/v1/client/ack` — 上传闭环校验
+### 5.8 `GET /api/v1/client/ack` — 上传闭环校验
 
 ```
 GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
@@ -549,8 +588,10 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID |
 | 400 | `station_ambiguous` | 10 | 管理端保存绑定 / check-in | 同一流程内命中多个绑定工位（配置层拒绝或拓扑漂移兜底） |
 | 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP） |
-| 400 | `session_mismatch` | 10 | check-in / checkpoint | 会话与 SN/工位不匹配 |
+| 400 | `session_mismatch` | 10 | check-in / checkpoint / artifact | 会话与 SN/机台不匹配 |
 | 400 | `station_mismatch` | 10 | checkpoint | 会话属于其他工位 |
+| 400 | `artifact_empty` | 10 | artifact | 产物文件内容为空 |
+| 400 | `artifact_too_large` | 10 | artifact | 产物文件超过 `ARTIFACT_MAX_BYTES` 上限 |
 | 403 | `client_not_bound` | 10 | 全部 | 机台未绑定工位 |
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
 | 403 | `missing_prereq` | 10 | check-in | 跳站拦截 |
@@ -559,17 +600,18 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 403 | `app_version_mismatch` | 10 | check-in | 测试软件版本不满足基线（口径见机型 `app_match_rule`） |
 | 403 | `product_scrapped` | 10 | check-in | 已报废 |
 | 403 | `product_locked` | 16 | check-in | 已工程锁定 |
-| 403 | `lock_invalid` | 14 | check-out / checkpoint / release | 锁被接管或失效 |
+| 403 | `lock_invalid` | 14 | check-out / checkpoint / artifact / release | 锁被接管或失效 |
 | 403 | `lock_expired` | 14 | check-out | 锁超过硬超时 |
 | 404 | `client_not_registered` | 10 | 全部 | 机台未注册 |
-| 404 | `product_not_found` | 10 | check-out / 管理端 | SN 不存在 |
+| 404 | `product_not_found` | 10 | check-out / artifact / 管理端 | SN 不存在 |
 | 404 | `process_not_found` | 10 | check-in | 流程不存在 |
-| 404 | `session_not_found` | 10 | check-in / checkpoint | 会话不存在 |
+| 404 | `session_not_found` | 10 | check-in / checkpoint / artifact | 会话不存在 |
 | 404 | `ack_not_found` | 10 | ack | 无对应落库记录 |
+| 503 | `artifact_storage_unavailable` | 10 | artifact / 管理端产物下载 | 服务端 MinIO 未配置 |
 | 409 | `station_already_passed` | 10 | check-in | 复测拦截 |
 | 409 | `lock_conflict` | 11 | check-in / 管理端 | 锁被他人持有 |
-| 409 | `session_completed` | 10 | check-in / checkpoint | 会话已出站 |
-| 409 | `session_aborted` | 14 | checkpoint | 会话已被运维中止（换测试用例清单前），须立即停机 |
+| 409 | `session_completed` | 10 | check-in / checkpoint / artifact | 会话已出站 |
+| 409 | `session_aborted` | 14 | checkpoint / artifact | 会话已被运维中止（换测试用例清单前），须立即停机 |
 | 409 | `product_holding_lock` | 11 | 管理端 | 在制品被持锁，禁止处置 |
 
 ### 6.2 处理决策
@@ -766,8 +808,8 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 ### 10.5 宿主职责分工与接入指引
 
 SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传输层全部职责（重试退避、
-断点队列、幂等重传、失锁感知），宿主只负责四件事：执行测试、调 `checkpoint`、
-失锁停机、出站重试。完整 conftest.py 骨架见**附录 A**。
+断点队列、幂等重传、失锁感知、产物上传 `upload_artifact`），宿主只负责四件事：执行测试、
+调 `checkpoint`、失锁停机、出站重试。完整 conftest.py 骨架见**附录 A**。
 
 **断网重传各场景的分工**（宿主无需自己实现队列）：
 
@@ -801,6 +843,7 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `GET /api/admin/metrics/overview` | 运行概况，含 `locks: {active, zombie, sessions_running, sessions_abnormal}` |
 | `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN） |
 | `POST /api/admin/clients` | 注册机台并绑定工位 |
+| `GET /api/admin/records/{record_id}/files/{index}` | 测试产物下载（结果文件/日志等；返回 MinIO 预签名 URL JSON；MinIO 未配置时 503） |
 
 ---
 
@@ -847,6 +890,7 @@ python tools/client/ate_client.py --base-url http://127.0.0.1:8000 --api-key <KE
 | 崩溃续测 | `resume` | `attempt=2`，跳过 1 个用例，`checkpoint_merged_count=1` |
 | 备用机台接管 | `takeover` | 强制解锁后接管成功；旧 token 出站 → `403 lock_invalid` |
 | 孤儿锁回收 | `sweep` | 留一把锁在服务端，Web 端「测试会话 → 僵尸锁」可见 |
+| 测试产物归档 | `artifact` | 逐用例 multipart 上传产物（`/client/artifact`），出站并入 `executed_items.items[].files`；Web 台账展开该记录点击产物 chip 经预签名 URL 下载（需服务端已配置 MinIO） |
 
 单场景调试可加 `-v` 输出 SDK 调试日志。
 
@@ -872,6 +916,7 @@ python tools\client\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 
 | `--jump-rate` | 0.05 | 跳站比例 → 403 missing_prereq |
 | `--abandon-rate` | 0.05 | 中途主动放弃比例 → 停在半途 |
 | `--stop-rate` | 0.25 | 过站后停线比例 → 停在半途（下班/待处理） |
+| `--artifact-rate` | 0 | 每个测试项后按概率 multipart 上传一个模拟产物（`/client/artifact` 真连 MinIO 归档，出站自动并入 `executed_items.items[].files`，Web 台账/追溯可下载）；上传失败不阻断测试。`sim_local.py` 检测到 `.env` 配置了 MinIO 时默认 0.3（`SIM_ARTIFACT_RATE` 可调） |
 | `--crash-handoff` | 关 | 崩溃后由备用机台接管（而不是原机台续测） |
 | `--repair-locked` | 关 | 结束后对工程锁定件自动送修回流（有印章 RETEST 重测该工位 / 一件未过 RESET 重来）并重新投产复测 |
 | `--no-chaos-resume` | 关 | 崩溃后不续测，直接换件 |

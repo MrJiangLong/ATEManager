@@ -136,6 +136,9 @@ export const sessionApi = {
 export const recordApi = {
   list: (params) => api.get('/admin/records', { params }),
   trace: (sn) => api.get(`/admin/records/trace/${enc(sn)}`),
+  /** 测试产物下载（结果文件/日志等附件）：返回 {filename, url}（MinIO 预签名） */
+  artifactFile: (recordId, index) =>
+    api.get(`/admin/records/${recordId}/files/${index}`, { responseType: 'blob' }),
 }
 
 /** 维修处置履历 */

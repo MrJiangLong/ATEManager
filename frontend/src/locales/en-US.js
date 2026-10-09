@@ -432,6 +432,7 @@ export default {
     invalid: 'Invalidated',
     checkoutId: 'Checkout Key',
     durationMs: 'Duration (ms)',
+    artifacts: 'Artifacts',
   },
 
   repairs: {

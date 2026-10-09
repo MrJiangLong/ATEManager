@@ -44,7 +44,7 @@ def _tz_info() -> tzinfo:
 class Settings:
     # ---- 应用 ----
     APP_NAME: str = "ATE Manager API"
-    APP_VERSION: str = "2.0.0"
+    APP_VERSION: str = "2.0.1"
     APP_DEBUG: bool = _as_bool(os.getenv("APP_DEBUG"), True)
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if APP_DEBUG else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
@@ -122,6 +122,10 @@ class Settings:
     MINIO_REPORT_PREFIX: str = os.getenv("MINIO_REPORT_PREFIX", "reports")
     MINIO_TEMPLATE_PREFIX: str = os.getenv("MINIO_TEMPLATE_PREFIX", "report-templates")
     MINIO_SCRIPT_PREFIX: str = os.getenv("MINIO_SCRIPT_PREFIX", "report-scripts")
+    # ---- 测试产物归档（任何机台客户端按 case_id 上传；仅 MinIO 一种归档方式）----
+    MINIO_ARTIFACT_PREFIX: str = os.getenv("MINIO_ARTIFACT_PREFIX", "artifacts")
+    # 单文件大小上限（字节），默认 200MB；超限拒绝上传
+    ARTIFACT_MAX_BYTES: int = _as_int(os.getenv("ARTIFACT_MAX_BYTES"), 200 * 1024 * 1024)
     # 上传式插件：模板物化缓存目录 + 脚本执行超时
     REPORT_TEMPLATE_DIR: str = os.getenv("REPORT_TEMPLATE_DIR", "report_templates")
     REPORT_SCRIPT_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_SCRIPT_TIMEOUT_SEC"), 300)

@@ -6,9 +6,10 @@
                    返回 session_id / lock_token；失联或硬超时的锁可被接管（takeover=true）
     3. heartbeat   保活：只刷新 lock_last_seen_at，硬超时不续期
     4. checkpoint  续测断点：增量上报已完成用例（按 case_id 幂等覆盖）
-    5. check-out   出站：checkpoint 补齐 + 漏测拦截 + 落库并返回 ACK（需求 1）
-    6. ack         上传闭环校验：网络抖动后确认服务端已落库
-    7. release     主动放弃锁（优雅退出 / 放弃本次测试）
+    5. artifact    测试产物上传：结果文件/日志按 case_id 归档 MinIO，引用暂存进会话断点
+    6. check-out   出站：checkpoint 补齐 + 漏测拦截 + 落库并返回 ACK（需求 1）
+    7. ack         上传闭环校验：网络抖动后确认服务端已落库
+    8. release     主动放弃锁（优雅退出 / 放弃本次测试）
 
 崩溃续测
     上位机重启后 check-in 携带 resume_session_id（同机台亦可自动续），
@@ -22,12 +23,13 @@
     409 复测拦截、锁冲突
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..config import settings
 from ..database import get_db
-from ..errors import EXIT_FAIL, EXIT_OK, not_found
+from ..errors import EXIT_FAIL, EXIT_OK, AppError, bad_request, not_found
 from ..security import api_caller
 from ..services import (
     check_in,
@@ -36,8 +38,10 @@ from ..services import (
     heartbeat,
     release_lock,
     save_checkpoint,
+    stage_artifact,
     touch_client,
 )
+from ..services import artifacts as artifact_store
 from ..services.timeutil import as_utc, utcnow
 
 router = APIRouter(prefix="/api/v1", tags=["v1-上位机"])
@@ -47,6 +51,7 @@ MESSAGES = {
     "ok.checkout": "Check-out acknowledged",
     "ok.heartbeat": "Heartbeat accepted",
     "ok.checkpoint": "Checkpoint accepted",
+    "ok.artifact": "Artifact accepted",
     "ok.release": "Lock released",
     "ok.resolve": "Client resolved",
 }
@@ -150,6 +155,67 @@ def checkpoint_endpoint(
         lock_token=payload.lock_token or None,
     )
     return _ok("ok.checkpoint", data.model_dump())
+
+
+@router.post(
+    "/client/artifact",
+    response_model=schemas.EnvelopeOut,
+    summary="测试产物上传：结果文件/日志等按 case_id 归档（同 case_id + 文件名重复上传即覆盖）",
+)
+async def artifact_endpoint(
+    client_id: str = Form(..., min_length=1, max_length=64),
+    sn: str = Form(..., min_length=1, max_length=64),
+    session_id: str = Form(..., min_length=1, max_length=36),
+    case_id: str = Form(..., min_length=1, max_length=256),
+    lock_token: str = Form(default=None, max_length=64),
+    file: UploadFile = File(...),
+    _: str = Depends(api_caller),
+    db: Session = Depends(get_db),
+):
+    """测试产物归档：文件落 MinIO，引用暂存进会话断点。
+
+    通用机制：任何机台客户端均按此上传产物（结果文件/日志等）。
+    时序约定：每完成一个用例 → 上传该用例的产物文件 → checkpoint 上报结果；
+    引用随后由服务端在出站时自动并入 executed_items。
+    """
+    if not artifact_store.enabled():
+        raise AppError(
+            503,
+            "artifact_storage_unavailable",
+            "artifact_storage_unavailable: MinIO is not configured on the server",
+        )
+    client = get_client(db, client_id)
+    if client is None:
+        raise not_found("client_not_registered", f"client_not_registered: {client_id}")
+
+    content = await file.read()
+    if not content:
+        raise bad_request("artifact_empty", "artifact_empty: file content is empty")
+    if len(content) > settings.ARTIFACT_MAX_BYTES:
+        raise bad_request(
+            "artifact_too_large",
+            f"artifact_too_large: {len(content)} bytes exceeds limit "
+            f"{settings.ARTIFACT_MAX_BYTES}",
+        )
+
+    # 先登记引用（flush 不提交）→ 文件落盘 → 统一提交；落盘失败则登记一并回滚
+    key = stage_artifact(
+        db,
+        client=client,
+        sn=sn,
+        session_id=session_id,
+        case_id=case_id,
+        filename=file.filename or "artifact.bin",
+        size=len(content),
+        lock_token=lock_token or None,
+        commit=False,
+    )
+    artifact_store.save(content, key)
+    db.commit()
+    return _ok(
+        "ok.artifact",
+        {"object_key": key, "filename": key.rsplit("/", 1)[-1], "size": len(content)},
+    )
 
 
 @router.post("/client/release", response_model=schemas.EnvelopeOut, summary="主动放弃工位锁")

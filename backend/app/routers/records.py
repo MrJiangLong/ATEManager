@@ -1,15 +1,16 @@
 """通道二：事件台账与 SN 全生命周期追溯（/api/admin/records）。"""
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import bad_request, get_or_404
+from ..errors import AppError, bad_request, get_or_404, not_found
 from ..security import current_user
+from ..services import artifacts as artifact_store
 from ..services.routing import _as_list, load_process
 from ..services.timeutil import local_day_start_of_date, sql_time
 from ..services.views import build_product_out
@@ -82,6 +83,46 @@ def list_records(
 @router.get("/{record_id}", response_model=schemas.RecordOut, summary="记录详情(含用例ID执行快照)")
 def get_record(record_id: int, db: Session = Depends(get_db), user=Depends(current_user)):
     return get_or_404(db, models.TestRecord, record_id, "record")
+
+def _record_files(record: models.TestRecord) -> List[dict]:
+    """拉平 executed_items.items[].files 为有序清单（下载索引用）。"""
+    payload = record.executed_items if isinstance(record.executed_items, dict) else {}
+    files: List[dict] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        for ref in item.get("files") or []:
+            if isinstance(ref, dict) and ref.get("object_key"):
+                files.append(ref)
+    return files
+
+@router.get(
+    "/{record_id}/files/{index}",
+    response_model=schemas.ReportDownloadOut,
+    summary="测试产物下载(结果文件/日志等；返回 MinIO 预签名 URL)",
+)
+def download_artifact(
+    record_id: int,
+    index: int,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    record = get_or_404(db, models.TestRecord, record_id, "record")
+    files = _record_files(record)
+    if index < 0 or index >= len(files):
+        raise not_found(
+            "artifact_not_found", f"artifact_not_found: record {record_id} has no file #{index}"
+        )
+    ref = files[index]
+    key = ref["object_key"]
+    filename = ref.get("filename") or key.rsplit("/", 1)[-1]
+    if not artifact_store.enabled():
+        raise AppError(
+            503,
+            "artifact_storage_unavailable",
+            "artifact_storage_unavailable: MinIO is not configured on the server",
+        )
+    return schemas.ReportDownloadOut(filename=filename, url=artifact_store.presigned_url(key))
 
 @router.get("/trace/{sn}", response_model=schemas.TraceOut, summary="SN 全生命周期追溯")
 def trace_sn(sn: str, db: Session = Depends(get_db), user=Depends(current_user)):
