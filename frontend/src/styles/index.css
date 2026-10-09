@@ -60,6 +60,8 @@
   /* 等宽：SN/case_id/版本号等代码字面值——需等宽保证纵向对齐与 O/0、I/1 区分，
      故 Windows 自带的 Consolas 优先，雅黑仅作无等宽字体环境时的兜底 */
   --app-font-mono: 'JetBrains Mono', 'Consolas', 'SF Mono', Menlo, 'Microsoft YaHei', 'Courier New', monospace;
+  /* Element Plus 组件（按钮/表格/弹窗/表单）字体对齐应用字体栈，避免组件与正文两套观感 */
+  --el-font-family: var(--app-font-sans), var(--app-font-sans-zh);
 }
 
 /* ---------- 2. 基础重置 ---------- */

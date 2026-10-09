@@ -39,7 +39,7 @@
               <span v-else>{{ i + 1 }}</span>
             </div>
             <div class="step-body">
-              <div class="step-name">{{ step.station_id }}</div>
+              <div class="step-name code">{{ step.station_id }}</div>
               <div class="step-sub muted">{{ step.station_name }}</div>
               <div class="step-deps muted" v-if="step.depends_on?.length">
                 {{ $t('trace.dependsOn') }}: {{ step.depends_on.join(', ') }}
@@ -60,7 +60,9 @@
 
       <DataCard v-if="data.repairs.length" :title="$t('trace.repairs')">
         <el-table :data="data.repairs" stripe size="small">
-          <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90" />
+          <el-table-column prop="repair_id" :label="$t('repairs.tableId')" width="90">
+            <template #default="{ row }"><span class="code">{{ row.repair_id }}</span></template>
+          </el-table-column>
           <el-table-column :label="$t('repairs.tableAction')" width="130" align="center">
             <template #default="{ row }">
               <el-tag :type="repairTagType(row.repair_action)" size="small">{{ $t(`repair.${row.repair_action}`) }}</el-tag>
@@ -185,7 +187,9 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="record_id" :label="$t('records.tableId')" width="110" sortable />
+          <el-table-column prop="record_id" :label="$t('records.tableId')" width="110" sortable>
+            <template #default="{ row }"><span class="code">{{ row.record_id }}</span></template>
+          </el-table-column>
           <el-table-column prop="station_id" :label="$t('records.tableStation')" width="160">
             <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
           </el-table-column>

@@ -65,7 +65,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="record_id" :label="$t('records.tableId')" min-width="100" />
+        <el-table-column prop="record_id" :label="$t('records.tableId')" min-width="100">
+          <template #default="{ row }"><span class="code">{{ row.record_id }}</span></template>
+        </el-table-column>
         <el-table-column prop="sn" :label="$t('records.tableSn')" min-width="150">
           <template #default="{ row }">
             <el-button link type="primary" @click="goTrace(row.sn)"><span class="code">{{ row.sn }}</span></el-button>
@@ -74,7 +76,9 @@
         <el-table-column prop="station_id" :label="$t('records.tableStation')" min-width="160">
           <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
         </el-table-column>
-        <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150" />
+        <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150">
+          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+        </el-table-column>
         <el-table-column :label="$t('records.tableItems')" min-width="100" align="right">
           <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
         </el-table-column>

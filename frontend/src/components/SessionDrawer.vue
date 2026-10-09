@@ -12,7 +12,7 @@
           {{ $t(`sessionStatus.${session.status}`) }}
         </el-tag>
         <span class="summary-sn code">{{ session.sn }}</span>
-        <span class="muted">{{ session.station_id }} · {{ session.client_id }}</span>
+        <span class="muted"><span class="code">{{ session.station_id }}</span> · <span class="code">{{ session.client_id }}</span></span>
       </div>
 
       <div class="block">
@@ -36,7 +36,7 @@
             <span class="code">{{ session.session_id }}</span>
           </el-descriptions-item>
           <el-descriptions-item :label="$t('sessions.tableStation')">
-            {{ session.station_id }}
+            <span class="code">{{ session.station_id }}</span>
           </el-descriptions-item>
           <el-descriptions-item :label="$t('sessions.tableClient')">
             <span class="code">{{ session.client_id }}</span>

@@ -87,7 +87,9 @@
       </template>
 
       <el-table v-loading="loading" :data="items" stripe size="small">
-        <el-table-column prop="repair_id" :label="t('repairs.tableId')" width="80" />
+        <el-table-column prop="repair_id" :label="t('repairs.tableId')" width="80">
+          <template #default="{ row }"><span class="code">{{ row.repair_id }}</span></template>
+        </el-table-column>
         <el-table-column prop="sn" :label="t('repairs.tableSn')" width="150">
           <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
         </el-table-column>
