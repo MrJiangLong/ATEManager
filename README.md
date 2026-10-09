@@ -260,7 +260,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，45 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，46 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -335,7 +335,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（45 项）
+│   │   └── test_backend.py   端到端回归测试（46 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
@@ -768,7 +768,7 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 45 项，覆盖全部卡控场景
+python tests/test_backend.py      # 46 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

@@ -495,6 +495,8 @@ class ExportModel(BaseModel):
     product_model: str
     target_fw_version: str
     fw_match_rule: str = FW_RULE_EXACT
+    target_app_version: Optional[str] = None
+    app_match_rule: str = FW_RULE_EXACT
 
 class ExportStep(BaseModel):
     station_id: str
@@ -548,7 +550,9 @@ class ImportStation(BaseModel):
 class ImportModel(BaseModel):
     product_model: TrimmedRequired = Field(max_length=64)
     target_fw_version: TrimmedRequired = Field(max_length=32)
-    fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
+    fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)  
+    target_app_version: Trimmed = Field(default=None, max_length=32)
+    app_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
 
 class ImportStep(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)

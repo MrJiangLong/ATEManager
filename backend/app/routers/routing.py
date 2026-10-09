@@ -435,6 +435,8 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
                 product_model=m.product_model,
                 target_fw_version=m.target_fw_version,
                 fw_match_rule=m.fw_match_rule,
+                target_app_version=m.target_app_version,
+                app_match_rule=m.app_match_rule,
             )
             for m in models_rows
         ],
@@ -542,6 +544,8 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 process_id=proc_in.process_id,
                 target_fw_version=m.target_fw_version,
                 fw_match_rule=m.fw_match_rule,
+                target_app_version=m.target_app_version,
+                app_match_rule=m.app_match_rule,
             )
         )
         models_created += 1

@@ -1486,6 +1486,52 @@ def test_process_export_import():
     resp = admin("DELETE", f"/api/admin/processes/{imp}")
     check(resp.status_code in (200, 204), f"cleanup: {resp.status_code} {resp.text}")
 
+def test_model_app_fields_roundtrip():
+    """ATE 基线/规则随流程导出→导入完整往返：字段不丢、口径不变。"""
+    pid = f"PROC-TEST-EXP-{STAMP}"
+    model = f"MODEL_EXP-{STAMP}"
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "exp app fields"})
+    admin(
+        "POST",
+        "/api/admin/product-models",
+        {
+            "product_model": model,
+            "process_id": pid,
+            "target_fw_version": "V3.20",
+            "target_app_version": "V2.0.0",
+            "app_match_rule": "min",
+        },
+    )
+    admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []}],
+        params={"process_id": pid},
+    )
+    admin(
+        "POST",
+        "/api/admin/routing/items",
+        {"process_id": pid, "station_id": "CAL-PARAM", "case_id": "cal/CAL-PARAM",
+         "item_name": "ATE 基线往返用例", "is_mandatory": True},
+    )
+
+    doc = admin("GET", f"/api/admin/routing/processes/{pid}/export").json()
+    exported = doc["models"][0]
+    check(exported["target_app_version"] == "V2.0.0", f"export baseline: {exported}")
+    check(exported["app_match_rule"] == "min", f"export rule: {exported}")
+
+    imp = f"PROC-EXP-IMP-{STAMP}"
+    doc["process"]["process_id"] = imp
+    doc["process"]["process_name"] = "exp app fields import"
+    doc["models"][0]["product_model"] = f"MODEL-EXP-IMP-{STAMP}"
+    resp = admin("POST", "/api/admin/routing/processes/import", doc)
+    check(resp.status_code == 201 and resp.json()["models_created"] == 1, f"import: {resp.text}")
+
+    rows = admin("GET", "/api/admin/product-models").json()
+    imported = next(m for m in rows if m["product_model"] == f"MODEL-EXP-IMP-{STAMP}")
+    check(imported["target_app_version"] == "V2.0.0", f"import baseline: {imported}")
+    check(imported["app_match_rule"] == "min", f"import rule: {imported}")
+
 def _login(username: str, password: str):
     return api("POST", "/api/auth/login", body={"username": username, "password": password})
 
@@ -1605,6 +1651,7 @@ TESTS = [
     test_force_release_and_sessions_api,
     test_import_blocks_running_session,
     test_process_export_import,
+    test_model_app_fields_roundtrip,
     test_role_permissions,
 ]
 
