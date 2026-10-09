@@ -13,6 +13,7 @@
       <template #extra>
         <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
         <el-button :icon="Download" :loading="exporting" @click="exportBindings">{{ $t('clients.exportBindings') }}</el-button>
+        <el-button v-if="canOperate" :icon="Upload" :loading="importing" @click="importInput?.click()">{{ $t('clients.importBindings') }}</el-button>
         <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openCreate">{{ $t('clients.newClient') }}</el-button>
       </template>
     </PageToolbar>
@@ -160,6 +161,8 @@
         <el-button type="primary" :loading="saving" @click="submit">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
+
+    <input ref="importInput" type="file" accept=".csv" style="display: none" @change="onImportFile" />
   </div>
 </template>
 
@@ -168,7 +171,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Plus, Refresh } from '@element-plus/icons-vue'
+import { Download, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { clientApi, productApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -232,6 +235,96 @@ async function exportBindings() {
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
     exporting.value = false
+  }
+}
+
+/* 导入绑定清单：与导出同构（client_id,client_name,bound_stations），已有机台走更新、新机台走新建 */
+const importing = ref(false)
+const importInput = ref(null)
+
+function parseCsv(text) {
+  const s = String(text || '').replace(/^\ufeff/, '')
+  const rows = []
+  let row = []
+  let field = ''
+  let inQuotes = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') { field += '"'; i++ }
+        else inQuotes = false
+      } else field += ch
+    } else if (ch === '"') inQuotes = true
+    else if (ch === ',') { row.push(field); field = '' }
+    else if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = [] }
+    else if (ch !== '\r') field += ch
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row) }
+  return rows
+}
+
+async function onImportFile(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file) return
+  try {
+    const rows = parseCsv(await file.text())
+    const header = (rows.shift() || []).map((h) => h.trim())
+    const idIdx = header.indexOf('client_id')
+    if (idIdx < 0) return ElMessage.error(t('clients.importBadHeader'))
+    const nameIdx = header.indexOf('client_name')
+    const stationsIdx = header.indexOf('bound_stations')
+    const records = rows
+      .filter((r) => String(r[idIdx] || '').trim())
+      .map((r) => ({
+        client_id: String(r[idIdx]).trim(),
+        client_name: String(r[nameIdx] || '').trim(),
+        bound_stations: String(r[stationsIdx] || '')
+          .split(';')
+          .map((v) => v.trim())
+          .filter(Boolean),
+      }))
+    if (!records.length) return ElMessage.warning(t('clients.importEmpty'))
+
+    // 先取最新全量清单判定更新/新建；更新只传名称与绑定，IP 等运行时字段保持不修改
+    const existing = new Set(((await clientApi.list({})).data || []).map((c) => c.client_id))
+    importing.value = true
+    let created = 0, updated = 0
+    const failedIds = []
+    for (const rec of records) {
+      try {
+        if (existing.has(rec.client_id)) {
+          await clientApi.update(rec.client_id, {
+            bound_stations: rec.bound_stations,
+            client_name: rec.client_name,
+          })
+          updated++
+        } else {
+          await clientApi.create({
+            client_id: rec.client_id,
+            bound_stations: rec.bound_stations,
+            client_name: rec.client_name,
+          })
+          created++
+        }
+      } catch {
+        failedIds.push(rec.client_id)
+      }
+    }
+    // 失败行要能定位：直接列出编号（机台量级小，不做截断/预检）
+    if (failedIds.length) {
+      ElMessage.warning(
+        t('clients.importDoneFailed', { created, updated, failed: failedIds.length, ids: failedIds.join(', ') })
+      )
+    } else {
+      ElMessage.success(t('clients.importDone', { created, updated }))
+    }
+    load()
+  } catch (e) {
+    ElMessage.error(e.message || t('errors.loadFailed'))
+  } finally {
+    importing.value = false
   }
 }
 
