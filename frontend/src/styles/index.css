@@ -53,12 +53,13 @@
   --el-border-radius-small: 6px;
 
   /* 字体栈（集中管理，全站统一引用） */
-  /* 西文优先：Inter（开箱即用的无衬线英文 UI 字体）→ Segoe UI → Roboto → Helvetica → Arial */
-  --app-font-sans: 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  /* 中文优先：PingFang SC（macOS）→ 苹方/冬青黑 → 微软雅黑（Windows）→ 宋体兜底 */
-  --app-font-sans-zh: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', SimSun, sans-serif;
-  /* 等宽：用于 SN/case_id/版本号等代码字面值 */
-  --app-font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+  /* 正文：微软雅黑优先（中英文数字观感统一）→ Inter/Segoe UI 兜底 */
+  --app-font-sans: 'Microsoft YaHei', 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* 中文：微软雅黑优先 → 苹方（macOS）→ 宋体兜底 */
+  --app-font-sans-zh: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', SimSun, sans-serif;
+  /* 等宽：SN/case_id/版本号等代码字面值——需等宽保证纵向对齐与 O/0、I/1 区分，
+     故 Windows 自带的 Consolas 优先，雅黑仅作无等宽字体环境时的兜底 */
+  --app-font-mono: 'JetBrains Mono', 'Consolas', 'SF Mono', Menlo, 'Microsoft YaHei', 'Courier New', monospace;
 }
 
 /* ---------- 2. 基础重置 ---------- */
@@ -250,7 +251,7 @@ body {
 
 .code {
   font-family: var(--app-font-mono);
-  font-size: 12.5px;
+  font-size: 14px;
   color: #47546e;
 }
 
