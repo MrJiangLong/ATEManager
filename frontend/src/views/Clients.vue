@@ -162,7 +162,7 @@
       </template>
     </el-dialog>
 
-    <input ref="importInput" type="file" accept=".csv" style="display: none" @change="onImportFile" />
+    <input ref="importInput" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
   </div>
 </template>
 
@@ -208,27 +208,24 @@ async function load() {
   }
 }
 
-/* 导出绑定清单：仅 client_id ↔ 绑定工位映射（IP/在线等运行时字段导出即失真，不入档） */
+/* 导出绑定清单：仅 client_id ↔ 绑定工位映射（IP/在线等运行时字段导出即失真，不入档）；JSON 与工艺流程导出同风格 */
 const exporting = ref(false)
 async function exportBindings() {
   exporting.value = true
   try {
     const res = await clientApi.list({})
-    const rows = res.data || []
-    const esc = (v) => {
-      const s = String(v ?? '')
-      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    const doc = {
+      exported_at: new Date().toISOString(),
+      clients: (res.data || []).map((c) => ({
+        client_id: c.client_id,
+        client_name: c.client_name || '',
+        bound_stations: [...(c.bound_stations || [])],
+      })),
     }
-    const lines = [
-      'client_id,client_name,bound_stations',
-      ...rows.map((c) =>
-        [esc(c.client_id), esc(c.client_name || ''), esc((c.bound_stations || []).join('; '))].join(',')
-      ),
-    ]
-    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `clients-bindings-${new Date().toISOString().slice(0, 10)}.csv`
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }))
+    a.download = `clients-bindings-${stamp}.json`
     a.click()
     URL.revokeObjectURL(a.href)
   } catch (e) {
@@ -238,52 +235,25 @@ async function exportBindings() {
   }
 }
 
-/* 导入绑定清单：与导出同构（client_id,client_name,bound_stations），已有机台走更新、新机台走新建 */
+/* 导入绑定清单：与导出同构（clients[].client_id/client_name/bound_stations），已有机台走更新、新机台走新建 */
 const importing = ref(false)
 const importInput = ref(null)
-
-function parseCsv(text) {
-  const s = String(text || '').replace(/^\ufeff/, '')
-  const rows = []
-  let row = []
-  let field = ''
-  let inQuotes = false
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (s[i + 1] === '"') { field += '"'; i++ }
-        else inQuotes = false
-      } else field += ch
-    } else if (ch === '"') inQuotes = true
-    else if (ch === ',') { row.push(field); field = '' }
-    else if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = [] }
-    else if (ch !== '\r') field += ch
-  }
-  if (field !== '' || row.length) { row.push(field); rows.push(row) }
-  return rows
-}
 
 async function onImportFile(ev) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
   if (!file) return
   try {
-    const rows = parseCsv(await file.text())
-    const header = (rows.shift() || []).map((h) => h.trim())
-    const idIdx = header.indexOf('client_id')
-    if (idIdx < 0) return ElMessage.error(t('clients.importBadHeader'))
-    const nameIdx = header.indexOf('client_name')
-    const stationsIdx = header.indexOf('bound_stations')
-    const records = rows
-      .filter((r) => String(r[idIdx] || '').trim())
-      .map((r) => ({
-        client_id: String(r[idIdx]).trim(),
-        client_name: String(r[nameIdx] || '').trim(),
-        bound_stations: String(r[stationsIdx] || '')
-          .split(';')
-          .map((v) => v.trim())
-          .filter(Boolean),
+    const doc = JSON.parse(await file.text())
+    if (!doc || !Array.isArray(doc.clients)) return ElMessage.error(t('clients.importBadDoc'))
+    const records = doc.clients
+      .filter((c) => c && String(c.client_id || '').trim())
+      .map((c) => ({
+        client_id: String(c.client_id).trim(),
+        client_name: String(c.client_name || '').trim(),
+        bound_stations: Array.isArray(c.bound_stations)
+          ? c.bound_stations.map((v) => String(v).trim()).filter(Boolean)
+          : [],
       }))
     if (!records.length) return ElMessage.warning(t('clients.importEmpty'))
 

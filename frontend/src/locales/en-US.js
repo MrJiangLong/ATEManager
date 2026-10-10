@@ -463,7 +463,7 @@ export default {
     subtitle: 'Test PCs and their station bindings',
     exportBindings: 'Export',
     importBindings: 'Import',
-    importBadHeader: 'CSV header must contain a client_id column; use the exported file format',
+    importBadDoc: 'JSON must contain a clients array; use the exported file format',
     importEmpty: 'No importable client rows found',
     importDone: 'Import done: {created} created, {updated} updated',
     importDoneFailed: 'Import done: {created} created, {updated} updated, {failed} failed: {ids}',

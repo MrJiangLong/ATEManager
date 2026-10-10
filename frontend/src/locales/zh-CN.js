@@ -465,7 +465,7 @@ export default {
     subtitle: '物理工控机档案与逻辑工位绑定',
     exportBindings: '导出',
     importBindings: '导入',
-    importBadHeader: 'CSV 表头缺少 client_id 列，请使用导出的文件格式',
+    importBadDoc: 'JSON 需包含 clients 数组，请使用导出的文件格式',
     importEmpty: '未读取到可导入的机台记录',
     importDone: '导入完成：新建 {created}，更新 {updated}',
     importDoneFailed: '导入完成：新建 {created}，更新 {updated}，失败 {failed}：{ids}',
