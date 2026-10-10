@@ -19,9 +19,8 @@
 
     <div v-if="shownRows.length" class="yield-head" :style="gridStyle">
       <span class="th-name">{{ columnLabel }}</span>
-      <span class="th-rate" :title="$t('dashboard.colRateTip')">{{ $t('dashboard.colRate') }}</span>
-      <span v-if="showFirstPass" class="th-fpy" :title="$t('dashboard.colFpyTip')">{{ firstPassLabel || $t('dashboard.colFirstPass') }}</span>
-      <span v-if="showFirstPass" class="th-fpy" :title="$t('dashboard.colFinalPassTip')">{{ $t('dashboard.colFinalPass') }}</span>
+      <span class="th-rate" :title="rateTip">{{ $t('dashboard.colRate') }}</span>
+      <span v-if="showFirstPass" class="th-fpy" :title="fpyTip">{{ firstPassLabel || $t('dashboard.colFirstPass') }}</span>
     </div>
 
     <div class="yield-scroll">
@@ -36,18 +35,13 @@
         <span
           class="yield-rate"
           :class="rateClass(row.pass_rate)"
-          :title="`${$t('dashboard.colRateTip')}：${row.passed} / ${row.total}`"
+          :title="`${rateTip}：${row.passed} / ${row.total}`"
         >{{ row.pass_rate }}%</span>
         <span
           v-if="showFirstPass"
           class="yield-fpy"
-          :title="`${$t('dashboard.colFpyTip')}：${row.first_pass} / ${row.fpy_total || row.total}`"
+          :title="`${fpyTip}：${row.first_pass} / ${row.fpy_total || row.total}`"
         >{{ row.first_pass_rate }}%</span>
-        <span
-          v-if="showFirstPass"
-          class="yield-fpy"
-          :title="`${$t('dashboard.colFinalPassTip')}：${row.final_pass} / ${row.fpy_total || row.total}`"
-        >{{ row.final_pass_rate }}%</span>
       </div>
       <EmptyState v-if="!shownRows.length" :text="emptyText" />
     </div>
@@ -71,6 +65,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import EmptyState from './EmptyState.vue'
 
 const props = defineProps({
@@ -78,9 +73,12 @@ const props = defineProps({
   emptyText: { type: String, default: '' },
   columnLabel: { type: String, default: '' },
   searchPh: { type: String, default: '' },
-  /** 启用直通率（FPY）列；同时主良率列切换为件级"最终通过"口径（有过任一 PASS 即算过） */
+  /** 启用直通率（FPY）列 */
   showFirstPass: { type: Boolean, default: false },
   firstPassLabel: { type: String, default: '' },
+  /** 列说明按表定制（工位/流程口径不同），缺省回落到通用文案 */
+  rateTip: { type: String, default: '' },
+  fpyTip: { type: String, default: '' },
 })
 
 /** 概览页默认只渲染前 N 项，避免上千项一次性进 DOM */
@@ -93,10 +91,14 @@ const expanded = ref(false)
 
 const hasData = computed(() => (props.rows?.length || 0) > 0)
 
-/** 多两列（直通率 + 通过率）时压缩列宽，保持整卡宽度不变 */
+const { t } = useI18n()
+const rateTip = computed(() => props.rateTip || t('dashboard.colRateTip'))
+const fpyTip = computed(() => props.fpyTip || t('dashboard.colFpyTip'))
+
+/** 直通率列启用时压缩列宽，保持整卡宽度不变 */
 const gridStyle = computed(() =>
   props.showFirstPass
-    ? { gridTemplateColumns: '1fr 72px 78px 78px' }
+    ? { gridTemplateColumns: '1fr 72px 78px' }
     : { gridTemplateColumns: '1fr 84px' }
 )
 

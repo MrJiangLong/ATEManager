@@ -100,6 +100,8 @@
           :empty-text="$t('dashboard.noData')"
           show-first-pass
           :first-pass-label="$t('dashboard.colFirstPass')"
+          :rate-tip="$t('dashboard.processRateTip')"
+          :fpy-tip="$t('dashboard.processFpyTip')"
         />
       </DataCard>
     </div>

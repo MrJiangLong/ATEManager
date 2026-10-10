@@ -811,8 +811,6 @@ class YieldRow(BaseModel):
     first_pass: int = 0
     first_pass_rate: float = 0.0
     fpy_total: int = 0
-    final_pass: int = 0
-    final_pass_rate: float = 0.0
 
 class YieldPoint(BaseModel):
     date: str
