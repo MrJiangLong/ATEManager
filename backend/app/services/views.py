@@ -43,10 +43,15 @@ def build_product_out(
 
     if graph:
         view.process_id = graph.process_id
-        view.total_steps = len(graph.stations)
+        # 进度只数必跑工位：选检工位（QA 抽查）不进分母，盖章后也不进分子，
+        # 避免"未抽查 4/5、抽查 5/5"的口径漂移
+        view.total_steps = len(graph.stations) - len(graph.optional)
         view.is_completed = (
             row.current_status != models.STATUS_SCRAPPED and is_completed(graph, passed)
         )
+        # 展示路径按工步顺序排列（passed_stations 集合本身按字母序存储）
+        view.passed_path = [s for s in graph.stations if s in passed]
+        view.optional_stations = sorted(graph.optional)
     if model_row:
         view.target_fw_version = model_row.target_fw_version
         view.fw_match = version_matches(
@@ -55,7 +60,7 @@ def build_product_out(
             model_row.fw_match_rule or models.FW_RULE_EXACT,
         )
 
-    view.passed_count = len(passed)
+    view.passed_count = len(passed - graph.optional) if graph else len(passed)
 
     if include_lock:
         if row.current_status == models.STATUS_TESTING:

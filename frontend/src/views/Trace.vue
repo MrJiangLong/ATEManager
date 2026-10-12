@@ -45,6 +45,9 @@
                 {{ $t('trace.dependsOn') }}: {{ step.depends_on.join(', ') }}
               </div>
               <div class="step-meta">
+                <el-tag v-if="step.is_optional" size="small" type="info" effect="plain">
+                  {{ $t('trace.optional') }}
+                </el-tag>
                 <el-tag size="small" :type="step.passed ? 'success' : 'info'" effect="plain">
                   {{ step.passed ? $t('trace.passed') : $t('trace.pending') }}
                 </el-tag>

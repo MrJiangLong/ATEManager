@@ -158,6 +158,7 @@ def trace_sn(sn: str, db: Session = Depends(get_db), user=Depends(current_user))
                     station_name=graph.name_of.get(station_id, station_id),
                     step_order=graph.step_of.get(station_id, 0),
                     depends_on=graph.deps_of.get(station_id, []),
+                    is_optional=station_id in graph.optional,
                     passed=station_id in passed,
                     last_result=rec.overall_result if rec else None,
                     last_record_id=rec.record_id if rec else None,

@@ -39,7 +39,7 @@ def _assert_station_in_process(db: Session, process_id: str, station_id: str) ->
         )
 
 # "没测试项不让存拓扑 → 没拓扑不让加测试项"的死锁。
-_BLOCKING_SAVE_CODES = frozenset({"config_cycle", "station_undefined"})
+_BLOCKING_SAVE_CODES = frozenset({"config_cycle", "station_undefined", "mandatory_dep_on_optional"})
 
 # ==================== 工步拓扑 ====================
 @router.get("/topology", response_model=schemas.TopologyOut, summary="流程拓扑视图(工步 + 测试项)")
@@ -95,6 +95,7 @@ def save_steps(
                 station_id=step.station_id,
                 step_order=step.step_order,
                 depends_on=list(step.depends_on or []),
+                is_optional=step.is_optional,
             )
         )
     # 先落库再校验，以便直接复用 validate_process 的完整规则；不通过则整体回滚
@@ -377,6 +378,7 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
                 station_id=step.station_id,
                 step_order=step.step_order,
                 depends_on=list(step.depends_on or []),
+                is_optional=step.is_optional,
             )
         )
     for item in items:
@@ -445,6 +447,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
                 station_id=s.station_id,
                 step_order=s.step_order,
                 depends_on=list(s.depends_on or []),
+                is_optional=bool(s.is_optional),
             )
             for s in topo.steps
         ],
@@ -557,6 +560,7 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 station_id=s.station_id,
                 step_order=s.step_order,
                 depends_on=list(s.depends_on or []),
+                is_optional=bool(s.is_optional),
             )
         )
     items_created = 0

@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -164,7 +165,11 @@ class Station(Base):
     clients = relationship("StationClient", back_populates="station")
 
 class ProcessStation(Base):
-    """流程工步拓扑：step_order 决定顺序，depends_on 决定防跳站闸门。"""
+    """流程工步拓扑：step_order 决定顺序，depends_on 决定防跳站闸门。
+
+    is_optional = 选检工位（如 QA 抽查）：不要求全部产品通过——不参与完工判定，
+    也不得被必跑工位依赖（否则变相必跑）；被抽中的件照常进站出站、照常卡前置。
+    """
 
     __tablename__ = "process_stations"
 
@@ -176,6 +181,7 @@ class ProcessStation(Base):
     )
     step_order: Mapped[int] = mapped_column(Integer, nullable=False)
     depends_on: Mapped[List[str]] = _array_column()
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     process = relationship("Process", back_populates="steps")
     station = relationship("Station")

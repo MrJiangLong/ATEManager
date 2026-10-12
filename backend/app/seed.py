@@ -14,7 +14,7 @@
 
 静态规则严格按方案预置：
     PROC-SCOPE-MSO-AWG  带 AWG 选件，6 站完整流程
-    PROC-SCOPE-DPO-BASE  无 AWG 标准，4 站流程（物理剔除所有 AWG 工步）
+    PROC-SCOPE-DPO-BASE  无 AWG 标准，5 站流程（物理剔除所有 AWG 工步；末位 QA-CHECK 选检）
 """
 
 import argparse
@@ -62,6 +62,7 @@ STATIONS = [
     ("TST-PARAM", "测试-指标测试站位", 1800),
     ("TST-IFACE", "测试-接口测试站位", 900),
     ("TST-AWG", "测试-AWG站位", 600),
+    ("QA-CHECK", "QA抽检站位", 600),
 ]
 
 MODELS = [
@@ -80,6 +81,8 @@ TOPOLOGY = [
     ("PROC-SCOPE-DPO-BASE", "CAL-IFACE", 20, ["CAL-PARAM"]),
     ("PROC-SCOPE-DPO-BASE", "TST-PARAM", 30, ["CAL-PARAM", "CAL-IFACE"]),
     ("PROC-SCOPE-DPO-BASE", "TST-IFACE", 40, ["TST-PARAM"]),
+    # 选检工位（QA 抽查）：演示"不卡完工、抽查件才走"的形态
+    ("PROC-SCOPE-DPO-BASE", "QA-CHECK", 50, ["TST-IFACE"], True),
 ]
 
 ITEMS = [
@@ -104,6 +107,7 @@ ITEMS = [
     ("TST-AWG",   "tests/test_tst_awg.py::TestAfgDc::test_afg_dc_ut8806", "AFG DC校验功能1通道测试(UT8806)"),
     ("TST-AWG",   "tests/test_tst_awg.py::TestAfgSine::test_afg_sine_osc", "AFG 通道1正弦波测试(OSC)"),
     ("TST-AWG",   "tests/test_tst_awg.py::TestAfgSquare::test_afg_square_osc", "AFG 通道1方波测试(OSC)"),
+    ("QA-CHECK",  "tests/test_qa.py::TestSample::test_qa_sample", "QA抽检复核"),
 ]
 
 DPO_EXCLUDED = {"CAL-AWG", "TST-AWG"}
@@ -120,6 +124,7 @@ CLIENTS = [
     # 备用机台：与主机台同工位，用于演示"崩溃后被接管"
     ("SZ-L1-CAL-09", "CAL-PARAM", "10.1.60.19", None),
     ("SZ-L1-TST-09", "TST-PARAM", "10.1.61.19", None),
+    ("SZ-L1-QA-01", "QA-CHECK", "10.1.60.21", "V1.4.2"),
 ]
 
 STATION_CLIENT = {c[1]: c[0] for c in CLIENTS}
@@ -253,11 +258,15 @@ def _simulate_product(db, rng, *, sn, product_model, firmware, now) -> None:
     cursor = 0
     plan = []
 
-    stop_at = len(graph.stations)
-    if rng.random() < 0.25 and len(graph.stations) > 1:
-        stop_at = rng.randint(1, len(graph.stations) - 1)
+    # 选检工位（QA 抽查）：约 30% 的件被抽中走 QA，其余直接跳过（不卡完工）
+    sampled = rng.random() < 0.3
+    visit = [s for s in graph.stations if s not in graph.optional or sampled]
 
-    for index, station_id in enumerate(graph.stations):
+    stop_at = len(visit)
+    if rng.random() < 0.25 and len(visit) > 1:
+        stop_at = rng.randint(1, len(visit) - 1)
+
+    for index, station_id in enumerate(visit):
         if index >= stop_at:
             break
 
@@ -419,7 +428,7 @@ def _seed_static_rules(db) -> None:
         (row[0], row[1])
         for row in db.query(ProcessStation.process_id, ProcessStation.station_id).all()
     }
-    for process_id, station_id, order, deps in TOPOLOGY:
+    for process_id, station_id, order, deps, *extra in TOPOLOGY:
         if (process_id, station_id) not in existing_steps:
             db.add(
                 ProcessStation(
@@ -427,6 +436,7 @@ def _seed_static_rules(db) -> None:
                     station_id=station_id,
                     step_order=order,
                     depends_on=list(deps),
+                    is_optional=bool(extra[0]) if extra else False,
                 )
             )
 

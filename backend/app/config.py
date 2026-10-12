@@ -44,7 +44,7 @@ def _tz_info() -> tzinfo:
 class Settings:
     # ---- 应用 ----
     APP_NAME: str = "ATE Manager API"
-    APP_VERSION: str = "2.0.1"
+    APP_VERSION: str = "2.0.2"
     APP_DEBUG: bool = _as_bool(os.getenv("APP_DEBUG"), True)
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if APP_DEBUG else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")

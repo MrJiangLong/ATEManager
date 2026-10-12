@@ -400,6 +400,7 @@ class ProcessStationOut(ORMModel):
     station_name: Optional[str] = None
     step_order: int
     depends_on: List[str] = []
+    is_optional: bool = False
     item_count: int = 0
     timeout_sec: int = 1800
 
@@ -407,6 +408,7 @@ class ProcessStationIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     step_order: int = Field(ge=1)
     depends_on: List[str] = Field(default_factory=list)
+    is_optional: bool = False
 
 class StationItemOut(ORMModel):
     item_id: int
@@ -502,6 +504,7 @@ class ExportStep(BaseModel):
     station_id: str
     step_order: int
     depends_on: List[str] = []
+    is_optional: bool = False
 
 class ExportItem(BaseModel):
     station_id: str
@@ -558,6 +561,7 @@ class ImportStep(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     step_order: int = Field(ge=1)
     depends_on: List[str] = []
+    is_optional: bool = False
 
 class ImportItem(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
@@ -601,6 +605,10 @@ class ProductOut(ORMModel):
     current_fw_version: str = ""
     current_status: str
     passed_stations: List[str] = []
+    # 按工步顺序排列的已盖章路径（passed_stations 是按字母序稳定存储的集合，不能当路径展示）
+    passed_path: List[str] = []
+    # 选检工位清单（QA 抽查），前端据此在路径/目标工位上打标
+    optional_stations: List[str] = []
     fail_count: int = 0
     current_client: Optional[str] = None
     testing_started_at: Optional[datetime] = None
@@ -764,6 +772,7 @@ class TraceStep(UTCSchema):
     station_name: str
     step_order: int
     depends_on: List[str] = []
+    is_optional: bool = False
     passed: bool
     last_result: Optional[str] = None
     last_record_id: Optional[int] = None

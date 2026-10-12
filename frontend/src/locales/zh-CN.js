@@ -401,6 +401,7 @@ export default {
     dependsOn: '前置依赖',
     passed: '已盖章',
     pending: '待执行',
+    optional: '选检',
     ledger: '事件台账',
     repairs: '维修履历',
     reportTitle: '出厂报告',
@@ -537,6 +538,8 @@ export default {
 
     stepOrder: '工步序号',
     dependsOn: '前置工步',
+    optionalStep: '选检',
+    optionalStepTip: '选检工位（如 QA 抽查）不要求全部产品通过，不参与完工判定；必跑工位不得依赖选检工位',
     itemCount: '测试项',
     addStep: '添加工步',
     saveTopology: '保存拓扑',

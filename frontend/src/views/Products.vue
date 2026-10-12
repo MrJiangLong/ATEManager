@@ -105,6 +105,7 @@
       v-model="repairVisible"
       :preset-sn="repairSn"
       :station-options="repairStations"
+      :optional-stations="repairOptional"
       @saved="onRepairSaved"
     />
 
@@ -151,6 +152,7 @@ const zombieOnly = ref(false)
 const repairVisible = ref(false)
 const repairSn = ref('')
 const repairStations = ref([])
+const repairOptional = ref([])
 
 const drawerVisible = ref(false)
 const current = ref(null)
@@ -194,7 +196,10 @@ function progressPct(row) {
   return Math.round((row.passed_count / row.total_steps) * 100)
 }
 function stageTip(row) {
-  const path = (row.passed_stations || []).join(' → ')
+  const optional = new Set(row.optional_stations || [])
+  const path = (row.passed_path || row.passed_stations || [])
+    .map((s) => (optional.has(s) ? `${s}（${t('configs.optionalStep')}）` : s))
+    .join(' → ')
   return path ? `${row.passed_count}/${row.total_steps} · ${path}` : `${row.passed_count}/${row.total_steps}`
 }
 function goTrace(sn) {
@@ -208,6 +213,7 @@ function openDrawer(row) {
 function openRepair(row) {
   repairSn.value = row.sn
   repairStations.value = row.passed_stations || []
+  repairOptional.value = row.optional_stations || []
   repairVisible.value = true
 }
 

@@ -29,6 +29,7 @@ class ProcessGraph(NamedTuple):
     timeout_of: Dict[str, int]
     name_of: Dict[str, str]
     items_of: Dict[str, List[models.StationItem]]
+    optional: Set[str] = frozenset()  # 选检工位（QA 抽查），不参与完工判定
 
 def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
     """装载流程拓扑。流程不存在或无任何工步时返回 None。"""
@@ -80,6 +81,7 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
             for s in steps
         },
         items_of=items_of,
+        optional={s.station_id for s in steps if s.is_optional},
     )
 
 def missing_prereq(graph: ProcessGraph, station_id: str, passed: Set[str]) -> List[str]:
@@ -118,7 +120,9 @@ def station_rules(graph: ProcessGraph, station_id: str) -> List[schemas.StationR
     ]
 
 def is_completed(graph: ProcessGraph, passed: Set[str]) -> bool:
-    return bool(graph.stations) and set(graph.stations).issubset(passed)
+    """完工 = 全部必跑工位盖章；选检工位（QA 抽查）缺席不卡完工。"""
+    required = set(graph.stations) - graph.optional
+    return bool(required) and required.issubset(passed)
 
 # ---------------------------------------------------------------------
 def _find_cycle(deps_of: Dict[str, List[str]]) -> Optional[List[str]]:
@@ -216,6 +220,21 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
         issues.append(
             schemas.ValidateIssue(level="error", code="config_cycle", detail=" -> ".join(cycle))
         )
+
+    # 选检工位不得被必跑工位依赖：一旦被依赖，它就变相成了必跑，抽查语义失效
+    optional = {s.station_id for s in steps if s.is_optional}
+    for s in sorted(steps, key=lambda x: (x.step_order, x.station_id)):
+        if s.station_id in optional:
+            continue
+        dep_on_optional = [d for d in deps_of.get(s.station_id, []) if d in optional]
+        if dep_on_optional:
+            issues.append(
+                schemas.ValidateIssue(
+                    level="error",
+                    code="mandatory_dep_on_optional",
+                    detail=f"{s.station_id} -> {', '.join(sorted(dep_on_optional))}",
+                )
+            )
 
     known = {
         st.station_id
@@ -338,6 +357,7 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
                 station_name=station_names.get(s.station_id),
                 step_order=s.step_order,
                 depends_on=_as_list(s.depends_on),
+                is_optional=bool(s.is_optional),
                 item_count=item_count.get(s.station_id, 0),
                 timeout_sec=timeouts.get(s.station_id, 1800),
             )

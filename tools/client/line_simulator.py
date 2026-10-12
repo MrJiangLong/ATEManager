@@ -133,6 +133,7 @@ class ProcessPlan:
         self.process_id = topo["process_id"]
         self.steps = sorted(topo.get("steps") or [], key=lambda s: s.get("step_order") or 0)
         self.stations: List[str] = [s["station_id"] for s in self.steps]
+        self.optional: set = {s["station_id"] for s in self.steps if s.get("is_optional")}
         self.items: Dict[str, List[str]] = {}
         for it in topo.get("items") or []:
             if not it.get("is_active", True):
@@ -143,12 +144,23 @@ class ProcessPlan:
         ids = self.items.get(station_id) or []
         return ids[:limit] if limit and limit < len(ids) else ids
 
-    def next_station(self, station_id: str, jump: bool = False) -> Optional[str]:
-        """下一工位；jump=True 时跳过一站（用于触发 missing_prereq）。"""
+    def next_station(self, station_id: str, jump: bool = False,
+                     visit_optional: bool = True) -> Optional[str]:
+        """下一工位；未抽中的件跳过选检工位，jump=True 再额外跳一站（触发 missing_prereq）。"""
         if station_id not in self.stations:
             return None
-        idx = self.stations.index(station_id) + (2 if jump else 1)
-        return self.stations[idx] if idx < len(self.stations) else None
+        idx = self.stations.index(station_id) + 1
+        jumped = False
+        while idx < len(self.stations):
+            sid = self.stations[idx]
+            idx += 1
+            if sid in self.optional and not visit_optional:
+                continue
+            if jump and not jumped:
+                jumped = True
+                continue
+            return sid
+        return None
 
 # ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
@@ -163,6 +175,7 @@ class Job:
     abandon: bool = False
     attempts: int = 0
     retried: bool = False
+    visit_optional: bool = True  # 是否被抽中去选检工位（QA 抽查）
 
 # ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
@@ -177,6 +190,7 @@ class Sim:
         self.queues: Dict[str, "queue.Queue[Job]"] = {sid: queue.Queue() for sid in plan.stations}
         self.counters: "collections.Counter" = collections.Counter()
         self.progress: Dict[str, set] = {}
+        self.expected: Dict[str, int] = {}  # sn → 该件应经过的工位数（含抽检加站）
         self.pending = 0
         self._lock = threading.Lock()
 
@@ -191,9 +205,13 @@ class Sim:
 
     # ---- 队列 ----
     def submit(self, job: Job, station_id: Optional[str] = None) -> None:
-        """新任务进入产线：pending +1。"""
+        """新任务进入产线：pending +1，并记下该件的期望必跑工位数。"""
         with self._lock:
             self.pending += 1
+            mandatory = len(self.plan.stations) - len(self.plan.optional)
+            self.expected.setdefault(
+                job.sn, mandatory + (1 if job.visit_optional else 0)
+            )
         self.queues[station_id or job.station_id].put(job)
 
     def requeue(self, job: Job, station_id: str) -> None:
@@ -245,6 +263,8 @@ class Station:
 
     # ---------------- 单个被测件在某个工位的完整流程 ----------------
     def process(self, job: Job) -> str:
+        if job.station_id in self.sim.plan.optional:
+            self.sim.bump("qa_visited")
         cases = self.sim.plan.cases(job.station_id, self.sim.items_limit)
         if not cases:
             self.log(f"{job.sn} 工位无必测用例，跳过")
@@ -323,10 +343,12 @@ class Station:
             self.log(f"{job.sn} 过站后停止推进（完成度停在 {job.station_id}）")
             return
         jump = self.rng.random() < self.sim.rates["jump"]
-        nxt = self.sim.plan.next_station(job.station_id, jump=jump)
+        nxt = self.sim.plan.next_station(job.station_id, jump=jump,
+                                         visit_optional=job.visit_optional)
         if nxt is None:
             self.sim.bump("completed")
-            self.log(f"{job.sn} 全流程完工")
+            self.log(f"{job.sn} 全流程完工" +
+                     ("（含 QA 抽检）" if job.visit_optional and self.sim.plan.optional else ""))
             return
         job.station_id = nxt
         self.sim.submit(job, nxt)
@@ -487,6 +509,8 @@ def main() -> int:
     parser.add_argument("--jump-rate", type=float, default=0.05, help="跳站比例")
     parser.add_argument("--abandon-rate", type=float, default=0.05, help="中途停机比例")
     parser.add_argument("--stop-rate", type=float, default=0.25, help="过站后停止推进比例")
+    parser.add_argument("--qa-rate", type=float, default=0.3,
+                        help="选检工位（QA 抽查）抽中比例；流程无选检工位时无效")
     parser.add_argument("--artifact-rate", type=float, default=0.0,
                         help="每测试项后上传模拟产物的概率（需服务端已配置 MinIO）")
     parser.add_argument("--seed", type=int, default=0)
@@ -527,7 +551,8 @@ def main() -> int:
     sim = Sim(plan, rates, single_station=bool(args.station), items_limit=args.items)
     print("=" * 70)
     print(f"产线模拟器 v2：机型 {args.model}（{process_id}，基线固件 {base_fw}）")
-    print(f"  流程 {' → '.join(plan.stations)}")
+    flow = " → ".join(s + ("(选检)" if s in plan.optional else "") for s in plan.stations)
+    print(f"  流程 {flow}")
     print(f"  机台 {args.clients}/工位 × {len(stations)} 工位 · 投产 {args.units} 件 · mode={args.mode}")
     print("=" * 70)
 
@@ -553,6 +578,7 @@ def main() -> int:
     stamp = int(time.time()) % 100000
     for i in range(args.units):
         job = Job(sn=f"SIM{stamp}{i:03d}", station_id=stations[0],
+                  visit_optional=bool(plan.optional) and rng.random() < args.qa_rate,
                   **roll_injection(rng, rates))
         sim.submit(job, stations[0])
 
@@ -572,7 +598,8 @@ def main() -> int:
     print(f"  防呆拦截 {c['gated']}"
           f"（固件 {c['gated_firmware_mismatch']} / 跳站 {c['gated_missing_prereq']}"
           f" / 漏测 {c['gated_missing_mandatory']}）")
-    print(f"  中途停机 {c['abandoned']} · 过站停线 {c['stopped']} · 全流程完工 {c['completed']}")
+    print(f"  中途停机 {c['abandoned']} · 过站停线 {c['stopped']} · 全流程完工 {c['completed']}"
+          + (f" · QA 抽检 {c['qa_visited']}" if plan.optional else ""))
     if args.artifact_rate:
         print(f"  产物上传 {c['artifacts']} · 上传失败 {c['artifact_failed']}（失败不阻断测试）")
     print(f"  崩溃 {c['crashed']} · 续测 {c['resumed']} · 接管 {c['takeover']} · "
@@ -581,11 +608,16 @@ def main() -> int:
 
     dist = collections.Counter(len(v) for v in sim.progress.values())
     total_stations = len(plan.stations)
+    mandatory_total = total_stations - len(plan.optional)
+    # 完工口径 = 该件经过的工位数达到自己的期望（抽检件多一站）
+    completed = sum(
+        1 for sn, v in sim.progress.items() if len(v) >= sim.expected.get(sn, mandatory_total)
+    )
     unfinished = args.units - sum(dist.values())
     print("\n完成度分布（已过工位数 / 件数）：")
-    for n in range(total_stations + 1):
-        label = "完工" if n == total_stations else f"{n} 站"
-        print(f"  {label}: {dist.get(n, 0)}")
+    for n in sorted(dist):
+        print(f"  {n} 站: {dist.get(n, 0)}")
+    print(f"  完工（必跑 {mandatory_total} 站，抽检件加 QA 站）: {completed}")
     print(f"  一件未过: {unfinished}")
     print(f"\n耗时 {elapsed:.1f}s")
 

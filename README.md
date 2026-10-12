@@ -10,9 +10,9 @@
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| 后端 API | `2.0.1` | `backend/app/config.py::APP_VERSION` |
+| 后端 API | `2.0.2` | `backend/app/config.py::APP_VERSION` |
 | 上位机接口文档 | `v1.0` | `doc/API.md` |
-| 前端 | `2.0.1` | `frontend/package.json` |
+| 前端 | `2.0.2` | `frontend/package.json` |
 
 ---
 
@@ -151,7 +151,9 @@ routers  ──▶  services  ──▶  models
 | 流程 | 机型 | 工步数 | 说明 |
 |---|---|---|---|
 | `PROC-SCOPE-MSO-AWG` | `MSO4054B` | 6 | 带 AWG 选件，含 `CAL-AWG` / `TST-AWG` |
-| `PROC-SCOPE-DPO-BASE` | `DPO4054B` | 4 | 无 AWG 标准流程，物理剔除所有 AWG 工步 |
+| `PROC-SCOPE-DPO-BASE` | `DPO4054B` | 5 | 无 AWG 标准流程，物理剔除所有 AWG 工步；末位 `QA-CHECK` 为**选检工位** |
+
+**选检工位**（`process_stations.is_optional`，v2.0.2）：不要求全部产品通过（如 QA 抽查）——不参与完工判定与进度口径，被抽中的件照常进站出站、照常卡前置；必跑工位不得依赖选检工位（保存即 409）。
 
 机型只需绑定 `process_id`，上位机按用例ID清单执行，服务端按拓扑判定 —— 运行期零分支。
 
@@ -260,7 +262,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，46 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，49 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -277,8 +279,8 @@ python -m app.seed --backfill-completed   # 回填 is_completed 冗余列
 
 预置静态规则：
 
-- 2 条流程（MSO 6 站 / DPO 4 站）、6 个工位、2 个机型、**10 台机台**（含 4 台备用/演示台，部分预置 `app_version`）
-- 用例ID测试项 **37 条**（MSO 21 条 + DPO 16 条，如 `tests/test_cal_param.py::TestAmp::test_amp_cal`）
+- 2 条流程（MSO 6 站 / DPO 5 站，DPO 末位 `QA-CHECK` 为选检工位）、7 个工位、2 个机型、**11 台机台**（含备用/演示/QA 抽检台，部分预置 `app_version`）
+- 用例ID测试项 **38 条**（MSO 21 条 + DPO 17 条，如 `tests/test_cal_param.py::TestAmp::test_amp_cal`）
 - 随机数据：60 台在制品（含在制/锁定/报废/固件非基线场景）及其完整事件台账 + 5 条维修履历
 - **8 组租约锁/会话场景数据**（SN 前缀 `C0990xx`）：正常持锁 / 僵尸锁可接管 / 崩溃续测中（attempt=2）/
   硬超时 / 续测成功 / 被备用机台接管 / 连续失联计失败 / 超时终止
@@ -336,7 +338,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（46 项）
+│   │   └── test_backend.py   端到端回归测试（49 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
@@ -401,7 +403,7 @@ ATEManager/
 | `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定 |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门；整体覆盖式保存，保存前校验成环/缺工位等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
 | `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
@@ -540,7 +542,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 字段 | 说明 |
 |---|---|
 | `product_status.passed_stations` | 已盖章工位集合。**唯一写入口是 `gate._write_passed()`**，改它才能同步维护冗余列 |
-| `product_status.is_completed` | 冗余派生列：流程全工步是否已盖齐。用于列表页在 SQL 层精确过滤与分页 |
+| `product_status.is_completed` | 冗余派生列：全部必跑工步（选检工位除外）是否已盖齐。用于列表页在 SQL 层精确过滤与分页 |
 | `test_records.executed_items` | 执行快照 JSONB，内部携带 `checkout_id`（幂等键）、`session_id`、`attempt` |
 | `test_records.is_valid` | 维修处置作废标记；作废记录不参与追溯结论 |
 | `test_sessions.checkpoint` | 续测断点（按 `case_id` 去重覆盖）与客户端 `cursor` |
@@ -771,7 +773,7 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 47 项，覆盖全部卡控场景
+python tests/test_backend.py      # 49 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

@@ -1777,6 +1777,142 @@ def test_report_batch_requires_completed():
     check(resp.status_code == 200, f"batch done: {resp.text}")
     check(resp.json()["created"] == 1, f"完工件应正常入队: {resp.text}")
 
+def test_optional_station_sampling():
+    """选检工位（QA 抽查）：不卡完工、抽查件正常进站出站、必跑依赖选检被阻断。
+
+    场景：CAL-PARAM（必跑）→ QA-CHECK（选检）。未被抽到的件只过 CAL-PARAM
+    即完工；被抽中的件走完 QA 后 is_completed 不变；必跑工位依赖选检工位
+    保存即 409（否则选检变相必跑，抽查语义失效）。
+    """
+    p_opt = f"PROC-TEST-OPT-{STAMP}"
+    resp = admin("POST", "/api/admin/processes", {"process_id": p_opt, "process_name": "选检流程"})
+    check(resp.status_code == 201, f"create opt process: {resp.text}")
+    resp = admin("POST", "/api/admin/stations", {"station_id": "QA-CHECK", "station_name": "QA抽查站位", "timeout_sec": 600})
+    check(resp.status_code == 201, f"create qa station: {resp.text}")
+    m_opt = "DPO4054C"
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {"product_model": m_opt, "process_id": p_opt, "target_fw_version": FW},
+    )
+    check(resp.status_code == 201, f"create opt model: {resp.text}")
+
+    def put_topology(steps):
+        return admin("PUT", "/api/admin/routing/stations", steps, params={"process_id": p_opt})
+
+    # 必跑工位依赖选检工位 → 保存被阻断（结构性错误，同成环同级）
+    bad = [
+        {"station_id": "CAL-PARAM", "step_order": 10, "depends_on": ["QA-CHECK"], "is_optional": False},
+        {"station_id": "QA-CHECK", "step_order": 20, "depends_on": [], "is_optional": True},
+    ]
+    resp = put_topology(bad)
+    check(resp.status_code == 409 and resp.json()["code"] == "topology_invalid", f"dep guard: {resp.text}")
+    check(
+        any(i["code"] == "mandatory_dep_on_optional" for i in resp.json()["data"]["issues"]),
+        f"guard code missing: {resp.text}",
+    )
+
+    # 正确拓扑：QA-CHECK 选检，且其后还有必跑工位（CAL-XRAY 字母序 < QA-CHECK，
+    # 用于区分"字母序展示"与"工步序路径"）；保存后读回应带 is_optional
+    resp = admin("POST", "/api/admin/stations", {"station_id": "CAL-XRAY", "station_name": "X光检查站位", "timeout_sec": 600})
+    check(resp.status_code == 201, f"create xray station: {resp.text}")
+    CLIENTS["CAL-XRAY"] = "SZ-L9-QA-02"
+    resp = admin("POST", "/api/admin/clients", {"client_id": CLIENTS["CAL-XRAY"], "bound_stations": ["CAL-XRAY"]})
+    check(resp.status_code == 201, f"create xray client: {resp.text}")
+    good = [
+        {"station_id": "CAL-PARAM", "step_order": 10, "depends_on": [], "is_optional": False},
+        {"station_id": "QA-CHECK", "step_order": 20, "depends_on": ["CAL-PARAM"], "is_optional": True},
+        {"station_id": "CAL-XRAY", "step_order": 30, "depends_on": ["CAL-PARAM"], "is_optional": False},
+    ]
+    resp = put_topology(good)
+    check(resp.status_code == 200, f"save opt topology: {resp.text}")
+    optional_flags = {s["station_id"]: s["is_optional"] for s in resp.json()}
+    check(
+        optional_flags == {"CAL-PARAM": False, "QA-CHECK": True, "CAL-XRAY": False},
+        f"roundtrip flags: {resp.text}",
+    )
+
+    # 各站建 1 条必测项（否则 station_no_item）
+    for sid, case in (
+        ("CAL-PARAM", "test_opt_base"),
+        ("QA-CHECK", "test_qa_sample"),
+        ("CAL-XRAY", "test_xray_check"),
+    ):
+        resp = admin(
+            "POST",
+            "/api/admin/routing/items",
+            {"process_id": p_opt, "station_id": sid, "case_id": case, "item_name": case},
+        )
+        check(resp.status_code == 201, f"create item {sid}: {resp.text}")
+
+    # 导出契约携带选检标志
+    resp = admin("GET", f"/api/admin/routing/processes/{p_opt}/export")
+    steps = {s["station_id"]: s["is_optional"] for s in resp.json()["steps"]}
+    check(
+        steps == {"CAL-PARAM": False, "QA-CHECK": True, "CAL-XRAY": False},
+        f"export flags: {resp.text}",
+    )
+
+    # 未被抽查的件：过两个必跑工位即完工（QA 缺席不卡）
+    wip_sn = new_sn("OPTSKIP")
+    pass_station("CAL-PARAM", wip_sn, model=m_opt)
+    pass_station("CAL-XRAY", wip_sn, model=m_opt)
+    resp = admin("GET", f"/api/admin/products/{wip_sn}")
+    body = resp.json()
+    check(body["is_completed"] is True, f"未抽查件应完工: {body}")
+    check(body["total_steps"] == 2 and body["passed_count"] == 2, f"进度只数必跑: {body}")
+    check(body["passed_path"] == ["CAL-PARAM", "CAL-XRAY"], f"未抽查件路径: {body.get('passed_path')}")
+
+    # 被抽查的件：CAL-PARAM → QA-CHECK（抽检）→ CAL-XRAY，完工状态与进度口径不变
+    resp = admin("POST", "/api/admin/clients", {"client_id": "SZ-L9-QA-01", "bound_stations": ["QA-CHECK"]})
+    check(resp.status_code == 201, f"create qa client: {resp.text}")
+    sampled_sn = new_sn("OPTQA")
+    pass_station("CAL-PARAM", sampled_sn, model=m_opt)
+    qa_client = "SZ-L9-QA-01"
+    resp = v1(
+        "check-in",
+        {"client_id": qa_client, "sn": sampled_sn, "product_model": m_opt, "firmware": FW},
+    )
+    check(resp.status_code == 200, f"qa check-in: {resp.text}")
+    case_ids = rules_of(resp)
+    # QA 机不在 CLIENTS 夹具表，出站直接以 qa_client 构造
+    resp = v1(
+        "check-out",
+        {
+            "client_id": qa_client,
+            "sn": sampled_sn,
+            "checkout_id": uuid.uuid4().hex,
+            "items": items_for(case_ids),
+            "duration_ms": 60000,
+        },
+    )
+    check(resp.status_code == 201, f"qa check-out: {resp.status_code} {resp.text}")
+    resp = admin("GET", f"/api/admin/products/{sampled_sn}")
+    body = resp.json()
+    check(body["is_completed"] is False, f"QA 过后还差 CAL-XRAY: {body}")
+    # passed_path 按工步序排列；字母序会给出 ["CAL-PARAM", "CAL-XRAY", "QA-CHECK"]，两者可区分
+    check(
+        body["passed_path"] == ["CAL-PARAM", "QA-CHECK"],
+        f"抽查件盖章路径顺序: {body.get('passed_path')}",
+    )
+    pass_station("CAL-XRAY", sampled_sn, model=m_opt)
+    resp = admin("GET", f"/api/admin/products/{sampled_sn}")
+    body = resp.json()
+    check(body["is_completed"] is True, f"抽查件补完 CAL-XRAY 后完工: {body}")
+    check(body["passed_count"] == 2 and body["total_steps"] == 2, f"抽查件进度口径: {body}")
+    check(
+        body["passed_path"] == ["CAL-PARAM", "QA-CHECK", "CAL-XRAY"],
+        f"抽查件盖章路径顺序: {body.get('passed_path')}",
+    )
+    check(body["optional_stations"] == ["QA-CHECK"], f"选检清单: {body.get('optional_stations')}")
+    # 追溯工步透出选检标志（前端据此显示"选检"标签）
+    resp = admin("GET", f"/api/admin/records/trace/{sampled_sn}")
+    trace_flags = {s["station_id"]: s["is_optional"] for s in resp.json()["steps"]}
+    check(
+        trace_flags == {"CAL-PARAM": False, "QA-CHECK": True, "CAL-XRAY": False},
+        f"trace flags: {trace_flags}",
+    )
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1826,6 +1962,7 @@ TESTS = [
     test_role_permissions,
     test_artifacts,
     test_report_batch_requires_completed,
+    test_optional_station_sampling,
 ]
 
 if __name__ == "__main__":

@@ -27,7 +27,12 @@
         required
       >
         <el-select v-model="form.target_station" filterable style="width:100%" :placeholder="t('configs.selectStation')">
-            <el-option v-for="s in stationOptions" :key="s" :value="s" :label="s" />
+            <el-option
+              v-for="s in stationOptions"
+              :key="s"
+              :value="s"
+              :label="optionalStations.includes(s) ? `${s}（${t('configs.optionalStep')}）` : s"
+            />
           </el-select>
       </el-form-item>
 
@@ -55,6 +60,8 @@ const props = defineProps({
   presetSn: { type: String, default: '' },
   /** 可选目标工位（RETEST / ROLLBACK 使用）；传入则从在制品已盖章工位中挑选 */
   stationOptions: { type: Array, default: () => [] },
+  /** 其中的选检工位（QA 抽查），下拉里打标提示 */
+  optionalStations: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update:modelValue', 'saved'])
 

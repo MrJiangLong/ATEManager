@@ -67,6 +67,10 @@ _ADDED_COLUMNS = {
     "product_models": {
         "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",
     },
+    "process_stations": {
+        # 选检工位（QA 抽查）：存量行回填 false = 必跑，与旧版语义完全一致
+        "is_optional": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
+    },
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },

@@ -399,6 +399,7 @@ export default {
     dependsOn: 'Depends On',
     passed: 'Stamped',
     pending: 'Pending',
+    optional: 'Optional',
     ledger: 'Event Ledger',
     repairs: 'Repair History',
     reportTitle: 'Factory Reports',
@@ -535,6 +536,8 @@ export default {
 
     stepOrder: 'Step Order',
     dependsOn: 'Depends On',
+    optionalStep: 'Optional',
+    optionalStepTip: 'Optional station (e.g. QA sampling) is not required for every unit and does not gate completion; mandatory stations must not depend on it',
     itemCount: 'Items',
     addStep: 'Add Step',
     saveTopology: 'Save Topology',

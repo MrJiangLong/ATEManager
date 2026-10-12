@@ -51,6 +51,7 @@
           <span class="st-order">{{ idx + 1 }}</span>
           <span class="code st-id">{{ s.station_id }}</span>
           <span class="st-name">{{ s.station_name }}</span>
+          <el-tag v-if="s.is_optional" size="small" type="info" effect="plain">{{ t('configs.optionalStep') }}</el-tag>
           <span class="st-count">{{ stationItems[s.station_id]?.length || 0 }} {{ t('configs.caseUnit') }}</span>
         </div>
         <div class="st-meta">
