@@ -1743,6 +1743,40 @@ def test_artifacts():
             except Exception:  # noqa: BLE001 清理失败不影响测试结论
                 pass
 
+def test_report_batch_requires_completed():
+    """报告是入库凭据：手动批量入队收口在完工件，未盖满章的 SN 不得生成报告。
+
+    入库治理 = "打不出报告 = 未完工 = 拒收"，因此报告生成必须只可能发生在
+    全部盖章之后（自动扫描本来就按 is_completed 过滤，此处补手动入口的同款守卫）。
+    """
+    # 建一条 DPO 报告规则（脚本可空，仅用于通过 no_plugin 校验，聚焦完工守卫本身）
+    resp = admin(
+        "POST",
+        "/api/admin/report-rules",
+        {"rule": "DPO_DEFAULT", "models": [M_DPO], "auto_trigger": False},
+    )
+    check(resp.status_code == 201, f"create rule: {resp.text}")
+
+    # 未完工件（只过一站）→ 拒绝入队
+    wip_sn = new_sn("WIPRPT")
+    pass_station("CAL-PARAM", wip_sn)
+    resp = admin("POST", "/api/admin/report-jobs/batch", {"sns": [wip_sn]})
+    check(resp.status_code == 200, f"batch wip: {resp.text}")
+    body = resp.json()
+    check(body["created"] == 0, f"未完工不得入队: {body}")
+    check(
+        body["skipped"] == [{"sn": wip_sn, "reason": "not_completed"}],
+        f"skip 口径: {body['skipped']}",
+    )
+
+    # 完工件（走满 DPO 四站）→ 正常入队
+    done_sn = new_sn("DONEPRPT")
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM", "TST-IFACE"):
+        pass_station(station, done_sn)
+    resp = admin("POST", "/api/admin/report-jobs/batch", {"sns": [done_sn]})
+    check(resp.status_code == 200, f"batch done: {resp.text}")
+    check(resp.json()["created"] == 1, f"完工件应正常入队: {resp.text}")
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1791,6 +1825,7 @@ TESTS = [
     test_model_app_fields_roundtrip,
     test_role_permissions,
     test_artifacts,
+    test_report_batch_requires_completed,
 ]
 
 if __name__ == "__main__":

@@ -143,6 +143,9 @@ def batch_create(
         if product is None:
             skipped.append({"sn": sn, "reason": "product_not_found"})
             continue
+        if not product.is_completed:
+            skipped.append({"sn": sn, "reason": "not_completed"})
+            continue
         if sn in existing:
             skipped.append({"sn": sn, "reason": "job_exists"})
             continue
