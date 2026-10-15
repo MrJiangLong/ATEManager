@@ -5,8 +5,8 @@
 
 | 项 | 值 |
 |---|---|
-| 文档版本 | v1.1 |
-| 适用服务端 | ATE Manager API ≥ 1.0.0 |
+| 文档版本 | v1.2 |
+| 适用服务端 | ATE Manager API ≥ 2.1.0 |
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
@@ -280,6 +280,8 @@ NULL ─────────────→ IDLE ─────────
   "timeout_sec": 1800,                 // 硬超时上限（秒）
   "is_first_station": true,
   "created_on_checkin": true,          // 本次是否动态建档
+  "passthrough": false,                // true = 受控直通：station_id/rules/session_id 为空，
+                                       // 直接开始测试，跳过心跳/断点/出站（零写入）
   "rules": [                           // 服务端下发的执行规则
     {"case_id": "tests/test_cal_param.py::TestAmp::test_amp_cal",
      "item_name": "CHn幅度校准", "is_mandatory": true}
@@ -316,6 +318,8 @@ NULL ─────────────→ IDLE ─────────
 | 400 | `case_id_mismatch` | 待执行清单缺少必测用例ID | 脚本版本与服务端规则不符 |
 | 403 | `client_not_bound` | 机台未绑定工位 | 联系运维绑定 |
 | 403 | `model_not_registered` | 机型未注册 | 联系工艺工程师 |
+| 403 | `sn_is_test_device` | SN 已登记为试验设备，生产服（`SERVER_ROLE=production`）禁止进站 | 生产件走产线，试验设备送测试服 |
+| 403 | `sn_not_registered_test_device` | SN 未登记，研发服（`SERVER_ROLE=development`）白名单拒收 | 联系管理员在「测试登记」登记后重试 |
 | 403 | `missing_prereq` | **跳站拦截**：前置工位未完成 | 弹告警、pytest 终止、治具不开电 |
 | 403 | `model_mismatch` | SN 已登记为其他机型 | 贴错机型/换线未清线 |
 | 403 | `firmware_mismatch` | 固件不满足基线（口径见机型 `fw_match_rule`） | 提示刷写基线固件 |
@@ -594,6 +598,11 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 400 | `artifact_too_large` | 10 | artifact | 产物文件超过 `ARTIFACT_MAX_BYTES` 上限 |
 | 403 | `client_not_bound` | 10 | 全部 | 机台未绑定工位 |
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
+| 403 | `sn_is_test_device` | 10 | check-in | 生产服黑名单：登记的试验设备禁止进生产流程（建档前拦截，零痕迹） |
+| 403 | `sn_not_registered_test_device` | 10 | check-in | 测试服白名单：未登记 SN 拒收（服务端硬卡控，客户端无法绕过） |
+| 409 | `model_topology_missing` | 10 | 管理端 | 关直通被拒：机型流程无拓扑，切严格卡控会进站 404 |
+| 409 | `model_has_wip` | 10 | 管理端 | 开直通被拒：机型存在在制件，不允许旁路件与卡控件混合态 |
+| 409 | `drain_confirm_required` | 10 | 管理端 | 关直通缺清线确认位（`confirm_drain`），防止直连 API 绕过清线弹窗 |
 | 403 | `missing_prereq` | 10 | check-in | 跳站拦截 |
 | 403 | `model_mismatch` | 10 | check-in | 机型与建档不符 |
 | 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
@@ -844,6 +853,9 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN） |
 | `POST /api/admin/clients` | 注册机台并绑定工位 |
 | `GET /api/admin/records/{record_id}/files/{index}` | 测试产物下载（结果文件/日志等；返回 MinIO 预签名 URL JSON；MinIO 未配置时 503） |
+| `GET /api/admin/sn-registry` | 试验设备登记清单（按登记时间倒序） |
+| `POST /api/admin/sn-registry` | 登记试验设备（body: `{"sn", "note"?}`；重复登记 409 `sn_already_registered`；`registered_by` 记操作人） |
+| `DELETE /api/admin/sn-registry/{sn}` | 注销测试登记：仅删除登记行、恢复进站资格，**不触碰任何生产/测试记录**。"是否曾运行研发代码"只有实验室知道，重流线由工艺员显式走维修处置 RESET（清印章/作废报告/履历留痕）；被动过的设备回产线会被固件基线 403 与用例判定自动拦下，无静默出货路径 |
 
 ---
 
@@ -860,10 +872,25 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `MERGE_CHECKPOINT_ON_CHECKOUT` | true | 出站时用断点补齐未提交用例 |
 | `STRICT_LOCK_TOKEN` | false | true 时"未携带 token"也拒绝（老上位机需先升级）；**token 不匹配始终拒绝** |
 | `FAIL_LIMIT` | 3 | 连续失败达阈值 → 工程锁定 |
+| `SERVER_ROLE` | `production` | SN 准入极性：`production`（黑名单：登记的试验设备进站 403 `sn_is_test_device`）/ `development`（白名单：未登记 SN 进站 403 `sn_not_registered_test_device`）。归一化小写，除 `development` 外的一切值均按生产黑名单语义卡控（Fail-Safe） |
 | `ENFORCE_FW` | true | 固件基线校验 |
 | `ENFORCE_APP_SW` | true | 测试软件版本基线校验（机型基线留空则不卡控） |
 | `ENFORCE_CASE_IDS` | true | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | 90 | 机台在线判定窗口 |
+
+### 12.1 SN 准入极性与机型双态（SERVER_ROLE / passthrough）
+
+同一套代码部署生产/测试两台服务器，准入语义由 `.env` 的 `SERVER_ROLE` 决定，全部卡控收敛在服务端，SDK 零改动仅透传 403：
+
+| 角色 | 登记表（`sn_registry`）语义 | 进站行为 |
+|---|---|---|
+| `production`（默认，Fail-Safe） | **黑名单**：登记的试验设备 | 进站 403 `sn_is_test_device`，建档前拦截零痕迹 |
+| `development` | **白名单**：仅登记设备可测 | 未登记 SN 进站 403 `sn_not_registered_test_device` |
+
+- 极性校验在**建档之前**且**先于机型直通**（身份不受流程豁免）；登记/注销走 `/api/admin/sn-registry`（写操作 require_admin）。
+- **机型双态（passthrough）**：直通机型进站直接 ACK 零写入（响应 `passthrough=true`，`station_id`/`rules`/`session_id` 为空），SDK 跳过心跳/断点/出站；身份卡控不豁免。
+- **模式切换**：关直通需拓扑齐备（409 `model_topology_missing`）+ 清线确认位 `confirm_drain=true`（409 `drain_confirm_required`）；开直通需无在制（409 `model_has_wip`）。
+- **注销义务链**：注销仅解除登记，不触碰任何记录；若设备曾运行研发测试代码，重新入库前由工艺员走维修处置 RESET 重新流线（被动过的设备回产线会被固件基线 403 与用例判定自动拦下）。
 
 ---
 

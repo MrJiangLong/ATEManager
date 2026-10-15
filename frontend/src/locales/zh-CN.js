@@ -502,6 +502,7 @@ export default {
     tabStations: '工位字典',
     tabTopology: '工步拓扑',
     tabItems: '用例ID',
+    tabSnRegistry: '测试登记',
 
     processId: '流程 ID',
     processName: '流程名称',
@@ -528,6 +529,10 @@ export default {
     editModel: '编辑机型',
     yesDeleteModel: '确认删除机型「{name}」？',
     filterProcess: '按流程筛选',
+    passthroughMode: '直通放行',
+    passthroughModeTip: '开 = 进站直接 ACK 零写入（存量机型灰度）；关 = 严格卡控',
+    passthroughOn: '直通',
+    drainConfirmText: '请确认流水线上所有在制件均已下线出站，切卡控会导致既有在线未卡控件无法过站。确认切换为严格卡控？',
 
     stationId: '工位 ID',
     stationName: '工位名称',
@@ -606,6 +611,18 @@ export default {
     issueLevel: '级别',
     issueCode: '问题代码',
     issueDetail: '说明',
+  },
+
+  snRegistry: {
+    sn: '序列号 SN',
+    note: '备注',
+    notePlaceholder: '机型/用途/负责人等（可选）',
+    registeredBy: '登记人',
+    registeredAt: '登记时间',
+    filterSn: '按 SN 搜索',
+    newEntry: '登记试验设备',
+    unregister: '注销',
+    confirmUnregister: '确认注销「{name}」？注销仅恢复进站资格，不影响任何记录。若该设备曾运行研发测试代码，重新入库前须由工艺员走维修处置 RESET 重新流线。',
   },
 
   errors: {

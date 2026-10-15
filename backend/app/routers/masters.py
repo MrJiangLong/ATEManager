@@ -12,7 +12,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..errors import conflict_error, get_or_404
 from ..security import current_user, require_admin
-from ..services.routing import process_overview
+from ..services.routing import process_overview, load_process
 
 router = APIRouter()
 
@@ -104,7 +104,39 @@ def update_model(
     row = get_or_404(db, models.ProductModel, product_model, "model")
     if payload.process_id:
         _get_active_process(db, payload.process_id)
+    # 模式切换校验（直通 ⇄ 严格卡控）
+    new_mode = payload.passthrough
+    if new_mode is not None and new_mode != row.passthrough:
+        if not new_mode:
+            # 关直通 = 进入严格卡控：拓扑必须齐备，避免切完进站 404 process_not_found
+            if load_process(db, row.process_id) is None:
+                raise conflict_error(
+                    "model_topology_missing", f"model_topology_missing: {row.process_id} has no steps"
+                )
+            # 产线清线（Pipeline Drain）：直通件零痕迹，服务端无在制台账可查，
+            # 清线只能由工艺员线下确认——服务端强制要求显式确认位，防止直连 API 绕过前端弹窗。
+            if not payload.confirm_drain:
+                raise conflict_error(
+                    "drain_confirm_required",
+                    f"drain_confirm_required: {row.product_model} needs pipeline drain "
+                    "confirmation before switching to strict control",
+                )
+        else:
+            # 开直通 = 退出卡控：不允许在制件与旁路件混合态
+            wip = (
+                db.query(models.ProductStatus)
+                .filter(
+                    models.ProductStatus.product_model == row.product_model,
+                    models.ProductStatus.is_completed.is_(False),
+                    models.ProductStatus.current_status != models.STATUS_SCRAPPED,
+                )
+                .count()
+            )
+            if wip:
+                raise conflict_error("model_has_wip", f"model_has_wip: {wip} units in flight")
     for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
+        if key == "confirm_drain":  # 确认位仅消费不落库
+            continue
         setattr(row, key, value)
     db.commit()
     return row
@@ -164,7 +196,33 @@ def delete_station(station_id: str, db: Session = Depends(get_db), user=Depends(
     db.delete(db.get(models.Station, station_id))
     db.commit()
 
+# ==================== 试验设备登记 ====================
+sn_registry_router = APIRouter(prefix="/api/admin/sn-registry", tags=["admin-试验设备"])
+
+@sn_registry_router.get("", response_model=List[schemas.SnRegistryOut], summary="试验设备登记清单")
+def list_sn_registry(db: Session = Depends(get_db), user=Depends(current_user)):
+    return db.query(models.SnRegistry).order_by(models.SnRegistry.created_at.desc()).all()
+
+@sn_registry_router.post("", response_model=schemas.SnRegistryOut, status_code=201, summary="登记试验设备")
+def create_sn_registry(payload: schemas.SnRegistryIn, db: Session = Depends(get_db), user=Depends(require_admin)):
+    if db.get(models.SnRegistry, payload.sn):
+        raise conflict_error("sn_already_registered", f"sn_already_registered: {payload.sn}")
+    row = models.SnRegistry(sn=payload.sn, note=payload.note or None, registered_by=user.username)
+    db.add(row)
+    db.commit()
+    return row
+
+@sn_registry_router.delete("/{sn}", status_code=204, summary="注销测试登记(仅删除登记，不触碰生产/测试记录)")
+def delete_sn_registry(sn: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    # 注销只做一件事：恢复进站资格。不自动重置——"是否曾运行研发测试代码"
+    # 只有实验室知道，误判清零会摧毁真实产线历史；重流线由工艺员显式走
+    # 维修处置 RESET（清印章/作废报告/履历留痕），被动过的设备回产线会被
+    # 固件基线 403 与用例判定自动拦下，不存在静默出货路径。
+    db.delete(get_or_404(db, models.SnRegistry, sn, "sn_registry"))
+    db.commit()
+
 router.include_router(process_router)
 router.include_router(model_router)
 router.include_router(station_router)
+router.include_router(sn_registry_router)
 

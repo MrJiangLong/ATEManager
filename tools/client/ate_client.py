@@ -369,6 +369,8 @@ class SessionState:
     mandatory_case_ids: List[str] = field(default_factory=list)
     cursor: Dict[str, Any] = field(default_factory=dict)
     pending_items: List[dict] = field(default_factory=list)
+    # 受控直通：进站直接 ACK（零写入），不启动心跳，出站/断点由上层旁路
+    passthrough: bool = False
 
     def save(self, path: Path) -> None:
         """原子落盘。写入失败绝不能中断测试——续测只是优化，丢了大不了重跑。"""
@@ -564,7 +566,11 @@ class AteClient:
             cursor=dict(resume_info.get("cursor") or {}),
             pending_items=list(previous.pending_items) if previous and previous.sn == sn else [],
         )
+        self.state.passthrough = bool(data.get("passthrough"))
         self._persist()
+        if self.state.passthrough:
+            LOGGER.info("直通机型 %s：进站 ACK 零写入，跳过心跳/断点/出站", product_model)
+            return self.state  # 直通：不启动心跳线程
 
         if data.get("takeover"):
             LOGGER.warning("本次进站接管了 %s 持有的锁", data.get("takeover_from"))

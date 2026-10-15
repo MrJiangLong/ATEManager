@@ -500,6 +500,7 @@ export default {
     tabStations: 'Stations',
     tabTopology: 'Step Topology',
     tabItems: 'Cases ID',
+    tabSnRegistry: 'Test Devices',
 
     processId: 'Process ID',
     processName: 'Process Name',
@@ -526,6 +527,10 @@ export default {
     editModel: 'Edit Model',
     yesDeleteModel: 'Delete model "{name}"?',
     filterProcess: 'Filter by process',
+    passthroughMode: 'Passthrough',
+    passthroughModeTip: 'ON = check-in ACK with zero writes (legacy model rollout); OFF = strict gating',
+    passthroughOn: 'Pass',
+    drainConfirmText: 'Confirm all WIP units have left the line. Switching to strict control blocks any in-flight ungated units from further stations. Switch to strict control?',
 
     stationId: 'Station ID',
     stationName: 'Station Name',
@@ -604,6 +609,18 @@ export default {
     issueLevel: 'Level',
     issueCode: 'Code',
     issueDetail: 'Detail',
+  },
+
+  snRegistry: {
+    sn: 'Serial Number',
+    note: 'Note',
+    notePlaceholder: 'Model / purpose / owner (optional)',
+    registeredBy: 'Registered By',
+    registeredAt: 'Registered At',
+    filterSn: 'Search by SN',
+    newEntry: 'Register Test Device',
+    unregister: 'Unregister',
+    confirmUnregister: 'Unregister "{name}"? This only restores check-in eligibility and leaves all records untouched. If the unit ran dev test code, the process engineer must run the RESET disposition to re-flow it before it returns to stock.',
   },
 
   errors: {

@@ -769,6 +769,10 @@ class AteRun:
 
         self.mandatory = set(state.mandatory_case_ids)
         self.t0 = time.monotonic()
+        # 受控直通：进站 ACK 零写入（无会话/无锁），全部用例照跑但不做断点与出站
+        if state.passthrough:
+            self.passthrough = True
+            return set()  # 空 done：无续测跳过
 
         """ 续测跳过：只跳过"上次已 PASS"的；FAIL 的（重跑清单里）本轮重跑，
         通过后 checkpoint 按 case_id 覆盖，FAIL 被新结果顶掉 """
@@ -780,6 +784,8 @@ class AteRun:
     def collect(self, item, rep) -> None:
         """由 pytest_runtest_makereport 钩子调用（放在钩子末尾之前均可，内部自行过滤）。"""
         if self.client is None:
+            return
+        if getattr(self, "passthrough", False):
             return
 
         """ setup/teardown 失败也必须收集为 FAIL：异常用例若"凭空消失"，
@@ -822,6 +828,8 @@ class AteRun:
         """每用例收尾：checkpoint + 失锁自检。"""
         if self.client is None:
             return
+        if getattr(self, "passthrough", False):
+            return
         if self.rows:
             try:
                 """ 断网自动进待补传队列，勿自行包重试；lock_invalid 必须抛出
@@ -842,6 +850,9 @@ class AteRun:
         """收尾判定：必测有 FAIL → 不出站，写重跑清单退出；全绿 → 出站（幂等重试）。"""
         if self.client is None:
             return
+        if getattr(self, "passthrough", False):
+            self._retry_path().unlink(missing_ok=True)
+            return  # 直通：零写入，无出站
         failed_now = {nid for nid, res in self.results.items() if res != "passed"}
         if failed_now & self.mandatory:
             rp = self._retry_path()

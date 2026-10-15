@@ -51,6 +51,14 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
+      <el-table-column :label="t('configs.passthroughMode')" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.passthrough" size="small" type="warning" effect="plain">
+            {{ t('configs.passthroughOn') }}
+          </el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
           <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
@@ -111,6 +119,12 @@
             <el-option value="exact" :label="t('configs.fwRuleExact')" />
           </el-select>
         </el-form-item>
+        <el-form-item :label="t('configs.passthroughMode')">
+          <div>
+            <el-switch v-model="form.passthrough" @change="onPassthroughChange" />
+            <span class="muted" style="margin-left:8px">{{ t('configs.passthroughModeTip') }}</span>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
@@ -142,6 +156,8 @@ const processFilter = ref('')
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
+// 编辑起点是否为直通：关直通时触发清线确认，确认后才携带 confirm_drain
+const wasPassthrough = ref(false)
 const form = reactive({
   product_model: '',
   process_id: '',
@@ -149,6 +165,7 @@ const form = reactive({
   fw_match_rule: 'exact',
   target_app_version: '',
   app_match_rule: 'min',
+  passthrough: false,
 })
 
 const filtered = computed(() =>
@@ -175,6 +192,7 @@ async function loadModels() {
 
 function openCreate() {
   isEdit.value = false
+  wasPassthrough.value = false
   Object.assign(form, {
     product_model: '',
     process_id: processFilter.value || processes.value[0]?.process_id || '',
@@ -182,11 +200,13 @@ function openCreate() {
     fw_match_rule: 'exact',
     target_app_version: '',
     app_match_rule: 'min',
+    passthrough: false,
   })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
+  wasPassthrough.value = !!row.passthrough
   Object.assign(form, {
     product_model: row.product_model,
     process_id: row.process_id,
@@ -194,8 +214,27 @@ function openEdit(row) {
     fw_match_rule: row.fw_match_rule || 'exact',
     target_app_version: row.target_app_version || '',
     app_match_rule: row.app_match_rule || 'min',
+    passthrough: !!row.passthrough,
   })
   dialogVisible.value = true
+}
+
+// 关直通强制清线弹窗：取消则回滚 switch；确认后提交携带 confirm_drain
+async function onPassthroughChange(val) {
+  if (isEdit.value && wasPassthrough.value && !val) {
+    try {
+      await ElMessageBox.confirm(t('configs.drainConfirmText'), t('common.confirm'), {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+      })
+      form.confirm_drain = true
+    } catch {
+      form.passthrough = true // 取消：回滚 switch 状态
+    }
+  } else {
+    form.confirm_drain = false
+  }
 }
 
 async function submit() {
@@ -210,8 +249,10 @@ async function submit() {
       fw_match_rule: form.fw_match_rule,
       target_app_version: form.target_app_version.trim(),
       app_match_rule: form.app_match_rule,
+      passthrough: form.passthrough,
     }
     if (isEdit.value) {
+      if (wasPassthrough.value && !form.passthrough) payload.confirm_drain = true
       await modelApi.update(form.product_model, payload)
     } else {
       await modelApi.create({ product_model: form.product_model.trim(), ...payload })

@@ -1,4 +1,4 @@
-"""ORM 数据模型：10 张生产级表 + 1 张鉴权表（users）。
+"""ORM 数据模型：11 张生产级表 + 1 张鉴权表（users）。
 
     ┌─ 静态工艺与主数据（Web 低频维护）──────────────────────────┐
     │  processes ──┬── product_models (机型 → 专属流程 + 固件基线)  │
@@ -148,9 +148,27 @@ class ProductModel(Base):
     app_match_rule: Mapped[str] = mapped_column(
         String(16), default=FW_RULE_EXACT, server_default=FW_RULE_EXACT
     )
+    # 卡控开关：false（默认）= 严格卡控（现状）；true = 受控直通——进站直接 ACK，
+    # 不查拓扑、不校用例、不建档、不领锁、不进台账与统计（存量机型灰度用）。
+    passthrough: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     process = relationship("Process", back_populates="models")
+
+class SnRegistry(Base):
+    """试验设备登记：在表里 = 试验设备。
+
+    事实来源，语义由部署环境（SERVER_ROLE）解释：生产服务器当黑名单（登记设备
+    禁止进生产流程，check_in 403）；测试服务器当白名单（只测登记设备，
+    未登记服务端 403 拒收）。
+    """
+
+    __tablename__ = "sn_registry"
+
+    sn: Mapped[str] = mapped_column(String(64), primary_key=True)
+    note: Mapped[Optional[str]] = mapped_column(String(256))
+    registered_by: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Station(Base):
     """逻辑工位字典（对应产线物理站位）。"""

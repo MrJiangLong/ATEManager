@@ -66,6 +66,8 @@ _ADDED_COLUMNS = {
     },
     "product_models": {
         "fw_match_rule": "VARCHAR(16) DEFAULT 'exact'",
+        # 卡控开关：false（默认）= 严格卡控；true = 受控直通（存量机型灰度）
+        "passthrough": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
     },
     "process_stations": {
         # 选检工位（QA 抽查）：存量行回填 false = 必跑，与旧版语义完全一致

@@ -10,9 +10,9 @@
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| 后端 API | `2.0.2` | `backend/app/config.py::APP_VERSION` |
-| 上位机接口文档 | `v1.0` | `doc/API.md` |
-| 前端 | `2.0.2` | `frontend/package.json` |
+| 后端 API | `2.1.0` | `backend/app/config.py::APP_VERSION` |
+| 上位机接口文档 | `v1.2` | `doc/API.md` |
+| 前端 | `2.1.0` | `frontend/package.json` |
 
 ---
 
@@ -262,7 +262,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，49 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，51 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -338,7 +338,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（49 项）
+│   │   └── test_backend.py   端到端回归测试（51 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
@@ -585,6 +585,8 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 固件不符 | 403 | `firmware_mismatch` | 10 | 提示刷写基线固件 |
 | 测试软件版本不符 | 403 | `app_version_mismatch` | 10 | 升级上位机测试程序至基线版本 |
 | 机型不符 / 未注册 | 403 | `model_mismatch` / `model_not_registered` | 10 | 检查贴标与工艺配置 |
+| **SN 准入极性（生产服黑名单）** | **403** | `sn_is_test_device` | 10 | 登记的试验设备严禁进生产流程 |
+| **SN 准入极性（测试服白名单）** | **403** | `sn_not_registered_test_device` | 10 | 联系管理员登记试验设备后重试 |
 | 已工程锁定 | 403 | `product_locked` | 16 | 提示送修 |
 | 已报废 | 403 | `product_scrapped` | 10 | 禁止流转 |
 | 锁失效 / 超时 / 被接管 | 403 | `lock_invalid` / `lock_expired` | 14 | 停机，重新进站 |
@@ -614,7 +616,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 方法 | 路径 | 说明 | 成功码 |
 |---|---|---|---|
 | POST | `/client/resolve` | 机台身份上报与工位反查（首次自动注册） | 200 |
-| POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁 | 200 |
+| POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁；直通机型（`passthrough`）直接 ACK 零写入 | 200 |
 | POST | `/client/heartbeat` | 心跳保活（只刷新失联时间，不续硬超时） | 200 |
 | POST | `/client/checkpoint` | 续测断点：增量上报已完成用例（幂等覆盖） | 200 |
 | POST | `/client/artifact` | 测试产物上传（multipart，按 case_id 归档 MinIO；同键覆盖） | 200 |
@@ -630,7 +632,8 @@ URL、SCPI 指令、日志文件名里都无需转义。
 |---|---|---|
 | 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
 | 工艺流程 | view / admin 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
-| 机型 | view / admin 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}` |
+| 机型 | view / admin 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
+| 测试登记 | view / admin 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / admin 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
 | 工艺拓扑 | view / admin 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
@@ -719,6 +722,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `ENFORCE_APP_SW` | `true` | 测试软件版本基线校验（机型基线留空则不卡控），`false` 时仅记录不拦截 |
 | `ENFORCE_CASE_IDS` | `true` | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | `90` | 机台在线判定窗口 |
+| `SERVER_ROLE` | `production` | SN 准入极性（见 14.1 双服务器部署）：`production` 黑名单 / `development` 白名单，除 `development` 外的一切值均按生产黑名单卡控（Fail-Safe） |
 | `METRICS_WINDOW_DAYS` | `14` | 仪表盘统计窗口 |
 | `APP_TIMEZONE` | `Asia/Shanghai` | 统计日界时区（今日良率 / 日趋势按该时区自然日切分） |
 | `APP_TZ_OFFSET_HOURS` | `8` | 无 tzdata（Python 3.8 / Windows）时的回退固定偏移 |
@@ -773,7 +777,7 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 49 项，覆盖全部卡控场景
+python tests/test_backend.py      # 51 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 
@@ -799,6 +803,32 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 
 > 国内网络构建前端可加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`。
 
+### 14.1 双服务器部署（SN 准入极性）
+
+同一份代码部署生产/测试两台服务器，仅 `.env` 中 `SERVER_ROLE` 一行不同；试验设备 SN 由
+管理端「工艺配置 → 测试登记」Tab 维护（`/api/admin/sn-registry`，写操作 require_admin）。
+
+**存量机型渐进上线（passthrough）**：机型可设"直通放行"——进站直接 ACK，零写入
+（不建档/不领锁/不进台账与统计），用于存量机型灰度；身份卡控不受豁免（登记的试验
+设备在直通机型上同样被 403）。关直通需要产线清线：服务端强制 `confirm_drain` 确认位
+（否则 409 `drain_confirm_required`）+ 管理端强制清线弹窗；开直通要求机型无在制件
+（409 `model_has_wip`）。SDK 侧直通自动跳过心跳/断点/出站。
+
+| 项 | 生产服务器 | 测试服务器 |
+|---|---|---|
+| `SERVER_ROLE` | `production`（默认，Fail-Safe） | `development` |
+| 登记表语义 | **黑名单**：登记 SN 进站 403 `sn_is_test_device`（防试验设备混入生产台账，建档前拦截零痕迹） | **白名单**：未登记 SN 进站 403 `sn_not_registered_test_device`（服务端硬卡控，跳过 SDK 也绕不过） |
+| `DATABASE_URL` | 生产库 | 独立测试库（可随时重置） |
+| `V1_API_KEY` | 生产密钥（仅产线机台持有） | 测试密钥（研发持有） |
+
+隔离效果：生产件误连测试服在进站口即被 403 拒收（用例不会执行），试验设备误连生产服同样被
+403 拦截——数据与台账互不污染，全部卡控收敛在服务端，SDK 零改动仅透传 403。
+
+注销义务链：注销仅解除登记、恢复进站资格，**不触碰任何记录**（自动重置任何形态
+都会误杀——研发服记录虽必然来自登记后，但 dev 库本就可整体重置；生产服记录必然
+早于登记）。统一强制弹窗提示：若设备曾运行研发测试代码，重新入库前须由工艺员走
+维修处置 RESET 重新流线；被动过的设备回产线会被固件基线 403 与用例判定自动拦下。
+
 ---
 
 ## 15. 生产安全建议
@@ -823,6 +853,8 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 进站 `403 missing_prereq` | 前工序未完成 | 按提示补齐前置工位；确认 SN 未被贴错 |
 | 进站 `409 station_already_passed` | 该工位已盖章 | 禁止复测；确认是否推错车，必要时走 RETEST 处置 |
 | 进站 `403 firmware_mismatch` | 固件非基线 | 刷写基线固件；调试期可临时 `ENFORCE_FW=false` |
+| 进站 `403 sn_is_test_device` | 生产服（production）拒绝登记的试验设备 | 试验设备走测试服；误登记请联系管理员注销 |
+| 进站 `403 sn_not_registered_test_device` | 研发服（development）白名单拒收未登记 SN | 管理端「工艺配置 → 测试登记」登记后重试 |
 | 进站 `403 app_version_mismatch` | 测试软件版本低于基线 | 升级机台测试程序；调试期可临时 `ENFORCE_APP_SW=false` |
 | 出站 `403 lock_invalid` | 锁已被其他机台接管 | 停机，重新进站；旧数据作废 |
 | 出站 `400 missing_mandatory` | 必测用例未执行或被报为 SKIP | 补齐用例；检查脚本与服务端清单是否同步 |

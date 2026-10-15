@@ -36,6 +36,7 @@ if os.path.exists(_DB_PATH):
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import models  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.security import hash_password  # noqa: E402
@@ -1913,6 +1914,206 @@ def test_optional_station_sampling():
         f"trace flags: {trace_flags}",
     )
 
+# ================= I. SN 准入极性（SERVER_ROLE 双态） =================
+def test_sn_registry_polarity():
+    """SN 准入极性：SERVER_ROLE 环境变量切换，服务端硬卡控，SDK 零改动仅透传 403。
+
+    覆盖：未登记型号 403 回归（型号校验先于 SN 极性）/ 登记 CRUD 与重复 409 /
+    production 黑名单（登记 SN 进站 403，台账零痕迹）/ development 白名单（未登记 403、
+    登记后进站成功）/ 注销仅解除登记（不触碰设备记录，重流线由人显式走 RESET）/
+    注销后恢复 / 写操作 require_admin 收口。
+    """
+    sn = new_sn("REG")
+
+    # ① 未登记型号 403 保持（及时卡控回归）
+    resp = checkin("CAL-PARAM", sn, model="NO-SUCH-MODEL")
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "model_not_registered",
+        f"model_not_registered regression: {resp.status_code} {resp.text}",
+    )
+
+    # ② 登记 CRUD：201 + 登记人留痕 + 重复登记 409 + 清单可见
+    resp = admin("POST", "/api/admin/sn-registry", {"sn": sn, "note": "EVT 工程样机"})
+    check(
+        resp.status_code == 201 and resp.json()["registered_by"] == "admin",
+        f"register: {resp.status_code} {resp.text}",
+    )
+    resp = admin("POST", "/api/admin/sn-registry", {"sn": sn})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "sn_already_registered",
+        f"duplicate register: {resp.status_code} {resp.text}",
+    )
+    resp = admin("GET", "/api/admin/sn-registry")
+    check(
+        resp.status_code == 200 and any(r["sn"] == sn for r in resp.json()),
+        f"registry list: {resp.status_code} {resp.text}",
+    )
+
+    # ③ production 黑名单（默认角色）：登记 SN 进站 403，且不建档（台账零痕迹）
+    resp = checkin("CAL-PARAM", sn, model=M_DPO)
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "sn_is_test_device",
+        f"production blacklist: {resp.status_code} {resp.text}",
+    )
+    with SessionLocal() as db:
+        check(db.get(models.ProductStatus, sn) is None, "blacklisted check-in must leave no trace")
+
+    # ④ development 白名单：未登记 SN 服务端 403 拒收；登记 SN 进站成功
+    unregistered = new_sn("UNREG")
+    old_role = settings.SERVER_ROLE
+    try:
+        settings.SERVER_ROLE = "development"
+        resp = checkin("CAL-PARAM", unregistered, model=M_DPO)
+        check(
+            resp.status_code == 403 and resp.json()["code"] == "sn_not_registered_test_device",
+            f"development whitelist unregistered: {resp.status_code} {resp.text}",
+        )
+        resp = checkin("CAL-PARAM", sn, model=M_DPO)
+        check(
+            resp.status_code == 200 and resp.json()["ok"] is True,
+            f"development whitelist registered: {resp.status_code} {resp.text}",
+        )
+        lock_token = resp.json()["data"]["lock_token"]
+
+        # ⑤ 注销只解除登记：不自动重置，设备测试记录原样保留（持锁也可注销）；
+        #    重流线由工艺员显式走维修处置 RESET，系统不代劳
+        resp = admin("DELETE", f"/api/admin/sn-registry/{sn}")
+        check(resp.status_code == 204, f"unregister must not touch records: {resp.status_code} {resp.text}")
+        resp = admin("GET", f"/api/admin/products/{sn}")
+        body = resp.json()
+        check(
+            body["current_status"] == "TESTING",
+            f"unregister must leave records untouched: {body}",
+        )
+        resp = v1("release", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn, "lock_token": lock_token, "reason": "test"})
+        check(resp.status_code == 200, f"release: {resp.status_code} {resp.text}")
+    finally:
+        settings.SERVER_ROLE = old_role
+
+    # ⑥ 重新流线回归：注销后从首站正常进站（生产侧真实重流线走 RESET，此处回归准入恢复）
+    resp = checkin("CAL-PARAM", sn, model=M_DPO)
+    check(
+        resp.status_code == 200 and resp.json()["ok"] is True,
+        f"re-flow after unregister: {resp.status_code} {resp.text}",
+    )
+
+    # ⑦ 注销后恢复：无记录 SN 注销仅删登记，黑名单解除后正常进站（回归）
+    sn2 = new_sn("REG2")
+    resp = admin("POST", "/api/admin/sn-registry", {"sn": sn2, "note": "临时借测"})
+    check(resp.status_code == 201, f"register sn2: {resp.status_code} {resp.text}")
+    resp = checkin("CAL-PARAM", sn2, model=M_DPO)
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "sn_is_test_device",
+        f"sn2 blacklist: {resp.status_code} {resp.text}",
+    )
+    resp = admin("DELETE", f"/api/admin/sn-registry/{sn2}")
+    check(resp.status_code == 204, f"unregister sn2: {resp.status_code} {resp.text}")
+    resp = checkin("CAL-PARAM", sn2, model=M_DPO)
+    check(
+        resp.status_code == 200 and resp.json()["ok"] is True,
+        f"restored check-in: {resp.status_code} {resp.text}",
+    )
+
+    # ⑧ 权限：写操作 require_admin 收口（viewer 403；清单只读对全员开放）
+    admin("POST", "/api/admin/users",
+          {"username": "view_reg", "password": "view123456", "full_name": "只读", "role": "viewer"})
+    viewer_token = _login("view_reg", "view123456").json()["access_token"]
+    resp = api("POST", "/api/admin/sn-registry", {"sn": "SN-VIEWER-TRY"}, token=viewer_token)
+    check(resp.status_code == 403, f"viewer register denied: {resp.status_code} {resp.text}")
+    resp = api("GET", "/api/admin/sn-registry", token=viewer_token)
+    check(resp.status_code == 200, f"viewer list allowed: {resp.status_code} {resp.text}")
+
+# ================= J. 存量机型受控直通（passthrough 渐进上线） =================
+def test_passthrough_mode():
+    """直通机型进站 ACK 零写入 + 模式切换卡控。
+
+    覆盖：直通机型进站 200 passthrough=true 且零痕迹（不建档，豁免拓扑/绑定/用例）/
+    身份先于直通（登记试验 SN 在直通机型上仍 403）/ 切换 409 两向（关直通无拓扑
+    model_topology_missing、开直通有在制 model_has_wip）/ 清线确认（无 confirm_drain
+    → 409 drain_confirm_required，带确认位切换成功）。
+    """
+    sn = new_sn("PASS")
+    p_pass = f"PROC-TEST-PASS-{STAMP}"
+    m_pass = "MSO-PASS-01"
+
+    # ① 直通机型（建流程 + 机型，无需拓扑）：进站 ACK 零写入
+    resp = admin("POST", "/api/admin/processes", {"process_id": p_pass, "process_name": "直通验证"})
+    check(resp.status_code == 201, f"create process: {resp.text}")
+    resp = admin(
+        "POST",
+        "/api/admin/product-models",
+        {"product_model": m_pass, "process_id": p_pass, "target_fw_version": FW, "passthrough": True},
+    )
+    check(resp.status_code == 201 and resp.json()["passthrough"] is True, f"create passthrough model: {resp.text}")
+
+    # 直通豁免拓扑/机台绑定/用例清单：直接 ACK，station_id 为空
+    resp = checkin("CAL-PARAM", sn, model=m_pass)
+    body = resp.json()["data"]
+    check(
+        resp.status_code == 200 and body["passthrough"] is True and body["station_id"] == "",
+        f"passthrough check-in: {resp.status_code} {resp.text}",
+    )
+    # 零痕迹：不建档（GET products/{sn} → 404）
+    resp = admin("GET", f"/api/admin/products/{sn}")
+    check(resp.status_code == 404, f"passthrough must leave no trace: {resp.status_code} {resp.text}")
+
+    # ② 身份先于直通：登记试验 SN + 直通机型 → 仍 403（直通不豁免身份）
+    sn_reg = new_sn("PASS-REG")
+    resp = admin("POST", "/api/admin/sn-registry", {"sn": sn_reg})
+    check(resp.status_code == 201, f"register: {resp.text}")
+    resp = checkin("CAL-PARAM", sn_reg, model=m_pass)
+    check(
+        resp.status_code == 403 and resp.json()["code"] == "sn_is_test_device",
+        f"identity precedes passthrough: {resp.status_code} {resp.text}",
+    )
+    resp = admin("DELETE", f"/api/admin/sn-registry/{sn_reg}")
+    check(resp.status_code == 204, f"unregister: {resp.status_code} {resp.text}")
+
+    # ③ 关直通：无拓扑 → 409 model_topology_missing
+    resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": False, "confirm_drain": True})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "model_topology_missing",
+        f"topology required: {resp.status_code} {resp.text}",
+    )
+    # 补拓扑后：无清线确认位 → 409 drain_confirm_required
+    resp = admin(
+        "PUT",
+        "/api/admin/routing/stations",
+        [{"station_id": "CAL-PARAM", "step_order": 1, "depends_on": []}],
+        params={"process_id": p_pass},
+    )
+    check(resp.status_code == 200, f"add step: {resp.text}")
+    resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": False})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "drain_confirm_required",
+        f"drain confirm required: {resp.status_code} {resp.text}",
+    )
+    # 带确认位 → 切换成功（严格卡控）
+    resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": False, "confirm_drain": True})
+    check(resp.status_code == 200 and resp.json()["passthrough"] is False, f"switch to strict: {resp.text}")
+
+    # ④ 开直通：有在制 → 409 model_has_wip
+    wip_sn = new_sn("PASS-WIP")
+    with SessionLocal() as db:
+        db.add(
+            models.ProductStatus(
+                sn=wip_sn, product_model=m_pass, current_fw_version=FW,
+                current_status="IDLE", is_completed=False,
+            )
+        )
+        db.commit()
+    resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": True})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "model_has_wip",
+        f"wip blocks passthrough: {resp.status_code} {resp.text}",
+    )
+    # 清掉在制后开直通成功
+    with SessionLocal() as db:
+        db.delete(db.get(models.ProductStatus, wip_sn))
+        db.commit()
+    resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": True})
+    check(resp.status_code == 200 and resp.json()["passthrough"] is True, f"switch to passthrough: {resp.text}")
+
 TESTS = [
     test_health,
     test_masters_seed,
@@ -1963,6 +2164,8 @@ TESTS = [
     test_artifacts,
     test_report_batch_requires_completed,
     test_optional_station_sampling,
+    test_sn_registry_polarity,
+    test_passthrough_mode,
 ]
 
 if __name__ == "__main__":

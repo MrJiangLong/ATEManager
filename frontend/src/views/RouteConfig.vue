@@ -8,6 +8,7 @@
       <el-tab-pane :label="$t('configs.tabStations')" name="stations"><RouteStations /></el-tab-pane>
       <el-tab-pane :label="$t('configs.tabTopology')" name="topology"><RouteTopology /></el-tab-pane>
       <el-tab-pane :label="$t('configs.tabItems')" name="items"><RouteItems /></el-tab-pane>
+      <el-tab-pane :label="$t('configs.tabSnRegistry')" name="snRegistry"><RouteSnRegistry /></el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -20,6 +21,7 @@ import RouteModels from './route-config/RouteModels.vue'
 import RouteStations from './route-config/RouteStations.vue'
 import RouteTopology from './route-config/RouteTopology.vue'
 import RouteItems from './route-config/RouteItems.vue'
+import RouteSnRegistry from './route-config/RouteSnRegistry.vue'
 
 const activeTab = ref('processes')
 </script>

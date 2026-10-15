@@ -385,6 +385,45 @@ def check_in(
             "model_not_registered",
             f"model_not_registered: {product_model} is not registered",
         )
+
+    # SN 准入极性（SERVER_ROLE 切换，服务端硬卡控；建档之前拦截，生产台账零痕迹）。
+    # ⚠ 身份准入先于流程逻辑：置于机型直通/流程处理之前，试验设备身份不受流程豁免。
+    is_registered = db.get(models.SnRegistry, sn) is not None
+    if settings.SERVER_ROLE == "development":
+        # 测试服（白名单语义）：未登记的设备，服务端直接 403 拒收。
+        # 即使研发跳过 conftest/SDK，底层进站依然被服务端卡死，生产件在测试服绝不可能被跑通。
+        if not is_registered:
+            raise forbidden(
+                "sn_not_registered_test_device",
+                f"sn_not_registered_test_device: {sn} not registered in test lab",
+                data={"sn": sn},
+            )
+    else:
+        # 生产服（黑名单语义，默认 Fail-Safe）：登记过的试验机，严禁进入生产。
+        if is_registered:
+            raise forbidden(
+                "sn_is_test_device",
+                f"sn_is_test_device: {sn} is a registered test device, production check-in denied",
+                data={"sn": sn},
+            )
+
+    # 受控直通：存量机型灰度——进站直接 ACK，零写入（不建档/不领锁/不进台账）。
+    # 注意在 load_process 之前返回：直通不依赖流程，机台绑定也不校验。
+    # （能走到这里说明 SN 已通过身份准入，直通仅豁免流程逻辑，不豁免身份。）
+    if model_row.passthrough:
+        return schemas.CheckInData(
+            sn=sn,
+            product_model=product_model,
+            process_id=model_row.process_id,
+            station_id="",
+            station_name="",
+            overall_result="",
+            timeout_sec=0,
+            is_first_station=False,
+            passthrough=True,
+            server_time=utcnow().isoformat(),
+        )
+
     graph = load_process(db, model_row.process_id)
     if graph is None:
         raise not_found("process_not_found", f"process_not_found: {model_row.process_id}")

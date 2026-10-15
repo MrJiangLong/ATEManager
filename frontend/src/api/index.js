@@ -79,6 +79,13 @@ export const modelApi = {
   remove: (productModel) => api.delete(`/admin/product-models/${enc(productModel)}`),
 }
 
+/** 主数据：试验设备登记（SN 准入极性的事实来源，语义由部署环境解释） */
+export const snRegistryApi = {
+  list: () => api.get('/admin/sn-registry'),
+  create: (data) => api.post('/admin/sn-registry', data),
+  remove: (sn) => api.delete(`/admin/sn-registry/${enc(sn)}`),
+}
+
 /** 主数据：逻辑工位 */
 export const stationApi = {
   list: () => api.get('/admin/stations'),

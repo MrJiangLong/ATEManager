@@ -44,7 +44,7 @@ def _tz_info() -> tzinfo:
 class Settings:
     # ---- 应用 ----
     APP_NAME: str = "ATE Manager API"
-    APP_VERSION: str = "2.0.2"
+    APP_VERSION: str = "2.1.0"
     APP_DEBUG: bool = _as_bool(os.getenv("APP_DEBUG"), True)
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if APP_DEBUG else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
@@ -74,6 +74,9 @@ class Settings:
 
     # ---- 防呆规则 ----
     FAIL_LIMIT: int = _as_int(os.getenv("FAIL_LIMIT"), 3)
+    # SN 准入极性：production（默认，黑名单 Fail-Safe）/ testing（白名单）。
+    # 归一化小写；除 "development" 外的一切值（含未配置/拼错）均按生产黑名单语义卡控。
+    SERVER_ROLE: str = os.getenv("SERVER_ROLE", "production").strip().lower()
     ENFORCE_FW: bool = _as_bool(os.getenv("ENFORCE_FW"), True)
     # 测试软件版本基线全局开关（机型未配基线时不卡控）
     ENFORCE_APP_SW: bool = _as_bool(os.getenv("ENFORCE_APP_SW"), True)

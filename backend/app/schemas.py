@@ -243,6 +243,8 @@ class CheckInData(BaseModel):
     timeout_sec: int
     is_first_station: bool
     created_on_checkin: bool = False
+    # 受控直通：true = 进站直接 ACK（零写入），SDK 据此跳过心跳/断点/出站
+    passthrough: bool = False
     rules: List[StationRule] = []
     passed_stations: List[str] = []
     next_stations: List[NextStation] = []
@@ -329,6 +331,8 @@ class ProductModelOut(ORMModel):
     fw_match_rule: str = FW_RULE_EXACT
     target_app_version: Optional[str] = None
     app_match_rule: str = FW_RULE_EXACT
+    # 受控直通：true 时进站直接 ACK，不查拓扑/不建档/不进台账
+    passthrough: bool = False
     created_at: Optional[datetime] = None
 
 class ProductModelCreateIn(BaseModel):
@@ -339,6 +343,7 @@ class ProductModelCreateIn(BaseModel):
     # 测试软件基线：空 = 不卡控
     target_app_version: Trimmed = Field(default=None, max_length=32)
     app_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
+    passthrough: bool = False
 
 class ProductModelUpdateIn(BaseModel):
     process_id: Trimmed = Field(default=None, max_length=64)
@@ -346,6 +351,19 @@ class ProductModelUpdateIn(BaseModel):
     fw_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
     target_app_version: Trimmed = Field(default=None, max_length=32)
     app_match_rule: Optional[str] = Field(default=None, pattern=_FW_RULE_PATTERN)
+    passthrough: Optional[bool] = None
+    # 产线清线确认位：仅关直通（true→false）时消费，不落库
+    confirm_drain: bool = False
+
+class SnRegistryOut(ORMModel):
+    sn: str
+    note: Optional[str] = None
+    registered_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class SnRegistryIn(BaseModel):
+    sn: TrimmedRequired = Field(max_length=64)
+    note: Trimmed = Field(default="", max_length=256)
 
 class StationOut(ORMModel):
     station_id: str
@@ -499,6 +517,7 @@ class ExportModel(BaseModel):
     fw_match_rule: str = FW_RULE_EXACT
     target_app_version: Optional[str] = None
     app_match_rule: str = FW_RULE_EXACT
+    passthrough: bool = False
 
 class ExportStep(BaseModel):
     station_id: str
@@ -556,6 +575,7 @@ class ImportModel(BaseModel):
     fw_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)  
     target_app_version: Trimmed = Field(default=None, max_length=32)
     app_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
+    passthrough: bool = False  # 旧导出文件缺省 false 兼容
 
 class ImportStep(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
