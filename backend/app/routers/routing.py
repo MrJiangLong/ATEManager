@@ -39,7 +39,9 @@ def _assert_station_in_process(db: Session, process_id: str, station_id: str) ->
         )
 
 # "没测试项不让存拓扑 → 没拓扑不让加测试项"的死锁。
-_BLOCKING_SAVE_CODES = frozenset({"config_cycle", "station_undefined", "mandatory_dep_on_optional"})
+_BLOCKING_SAVE_CODES = frozenset(
+    {"config_cycle", "station_undefined", "mandatory_dep_on_optional", "reverse_step_dep"}
+)
 
 # ==================== 工步拓扑 ====================
 @router.get("/topology", response_model=schemas.TopologyOut, summary="流程拓扑视图(工步 + 测试项)")

@@ -143,6 +143,8 @@ def trace_sn(sn: str, db: Session = Depends(get_db), user=Depends(current_user))
 
     last_by_station = {}
     for rec in records:
+        if not rec.is_valid:
+            continue
         last_by_station[rec.station_id] = rec
 
     steps: list = []

@@ -201,14 +201,15 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
                 )
             )
 
-    # 依赖顺序倒置（前置工步的 step_order 大于自身）
+    # 依赖顺序倒置（前置工步的 step_order 大于自身）：error——回退深度按 step_order
+    # 计算、进站卡控按 deps，两者矛盾会导致回退深度与卡控边界不一致，保存即拦截
     order_of = {s.station_id: s.step_order for s in steps}
     for s in sorted(steps, key=lambda x: (x.step_order, x.station_id)):
         for dep in _as_list(s.depends_on):
             if dep in order_of and order_of[dep] > s.step_order:
                 issues.append(
                     schemas.ValidateIssue(
-                        level="warning",
+                        level="error",
                         code="reverse_step_dep",
                         detail=f"{s.station_id}({s.step_order}) -> {dep}({order_of[dep]})",
                     )

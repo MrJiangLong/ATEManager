@@ -52,10 +52,10 @@
         <el-table-column prop="repair_id" :label="t('repairs.tableId')" width="80">
           <template #default="{ row }"><span class="code">{{ row.repair_id }}</span></template>
         </el-table-column>
-        <el-table-column prop="sn" :label="t('repairs.tableSn')" width="150">
+        <el-table-column prop="sn" :label="t('repairs.tableSn')" width="160">
           <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
         </el-table-column>
-        <el-table-column :label="t('repairs.tableAction')" width="130" align="center">
+        <el-table-column :label="t('repairs.tableAction')" width="160" align="center">
           <template #default="{ row }">
             <el-tag :type="repairTagType(row.repair_action)" size="small">{{ t(`repair.${row.repair_action}`) }}</el-tag>
             <el-tag v-if="row.undone_at" size="small" type="info" effect="plain" style="margin-left:4px">

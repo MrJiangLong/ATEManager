@@ -286,6 +286,26 @@ def test_validate_ok_and_cycle():
     codes = [i["code"] for i in resp.json()["issues"]]
     check("config_cycle" in codes and "station_no_item" in codes, f"issue codes: {codes}")
 
+    # 依赖顺序倒置：step_order 与 deps 矛盾（CYCLE1 排 10 却依赖排 20 的 CYCLE2）
+    # → error 级，非 force 保存 409 拦截。回退深度按 step_order、进站卡控按 deps，
+    # 两者矛盾会导致回退边界与卡控不一致，保存即拦截。
+    reverse = [
+        {"station_id": "TST-CYCLE1", "step_order": 10, "depends_on": ["TST-CYCLE2"]},
+        {"station_id": "TST-CYCLE2", "step_order": 20, "depends_on": []},
+    ]
+    resp = admin("PUT", "/api/admin/routing/stations", reverse, params={"process_id": bad})
+    check(
+        resp.status_code == 409 and "reverse_step_dep" in resp.json()["message"],
+        f"reverse dep must block save: {resp.status_code} {resp.text}",
+    )
+    resp = admin(
+        "PUT", "/api/admin/routing/stations", reverse, params={"process_id": bad, "force": True}
+    )
+    check(resp.status_code == 200, f"force save reverse: {resp.text}")
+    resp = admin("GET", "/api/admin/routing/validate", params={"process_id": bad})
+    codes = [i["code"] for i in resp.json()["issues"]]
+    check("reverse_step_dep" in codes, f"validate reverse dep: {codes}")
+
 def test_delete_guards():
     resp = admin("DELETE", f"/api/admin/processes/{P_MSO}")
     check(resp.status_code == 409 and "process_has_models" in resp.json()["code"], f"process guard: {resp.text}")
@@ -790,6 +810,13 @@ def test_repair_actions():
     check("TST-PARAM" not in resp.json()["passed_stations"], f"stamp removed: {resp.json()}")
     resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "TST-PARAM", "is_valid": False})
     check(resp.json()["total"] == 1, f"invalidated record: {resp.json()['total']}")
+    # 追溯工步口径一致：作废记录不参与"最后结果"，印章与结果不得自相矛盾
+    resp = admin("GET", f"/api/admin/records/trace/{sn}")
+    step = next(s for s in resp.json()["steps"] if s["station_id"] == "TST-PARAM")
+    check(
+        step["passed"] is False and step["last_result"] is None,
+        f"trace step must align with stamp: {step}",
+    )
 
     pass_station("TST-PARAM", sn)
 
