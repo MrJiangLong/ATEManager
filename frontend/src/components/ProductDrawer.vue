@@ -13,7 +13,7 @@
           {{ statusLabel }}
         </el-tag>
         <span class="summary-sn code">{{ row.sn }}</span>
-        <span class="muted">{{ row.product_model }} · {{ row.process_id || '-' }}</span>
+        <span class="muted">{{ row.product_model }} · {{ row.process_id || '—' }}</span>
         <el-tag v-if="!row.fw_match" size="small" type="warning" effect="plain">
           {{ $t('products.fwOffBaseline') }}
         </el-tag>
@@ -46,12 +46,12 @@
         <div class="block-title">{{ $t('products.sectionBasic') }}</div>
         <el-descriptions :column="2" size="small" border>
           <el-descriptions-item :label="$t('products.tableModel')">{{ row.product_model }}</el-descriptions-item>
-          <el-descriptions-item :label="$t('products.tableProcess')">{{ row.process_id || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('products.tableProcess')">{{ row.process_id || '—' }}</el-descriptions-item>
           <el-descriptions-item :label="$t('products.tableFw')">
             <span class="code">{{ row.current_fw_version }}</span>
           </el-descriptions-item>
           <el-descriptions-item :label="$t('products.baseline')">
-            {{ row.target_fw_version || '-' }}
+            {{ row.target_fw_version || '—' }}
           </el-descriptions-item>
           <el-descriptions-item :label="$t('products.tableFailCount')">
             <el-tag v-if="row.fail_count" type="danger" size="small">{{ row.fail_count }}</el-tag>

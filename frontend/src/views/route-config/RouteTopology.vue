@@ -64,7 +64,7 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="90" align="center">
         <template #default="{ $index }">
-          <el-button v-if="isAdmin" link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="canManage" link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -106,7 +106,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
-const { isAdmin } = useAuth()
+const { canManage } = useAuth()
 const { processes, stations, loadProcesses } = useProcesses()
 
 const processId = ref('')

@@ -76,8 +76,8 @@ export default {
     roles: { viewer: '访客', operator: '操作员', manager: '主管', admin: '管理员' },
     roleTag: {
       viewer: '只读浏览',
-      operator: '可做产线操作',
-      manager: '工艺与测试管理',
+      operator: '产线操作',
+      manager: '流程管理',
       admin: '全部权限',
     },
     status: '状态',

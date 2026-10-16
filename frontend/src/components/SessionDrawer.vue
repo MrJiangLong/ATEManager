@@ -78,7 +78,7 @@
           </el-table-column>
           <el-table-column :label="$t('common.result')" width="90" align="center">
             <template #default="{ row }">
-              <el-tag size="small" :type="resultTagType(row.result)">{{ row.result || '-' }}</el-tag>
+              <el-tag size="small" :type="resultTagType(row.result)">{{ row.result || '—' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column :label="$t('records.tableDuration')" width="100" align="right">

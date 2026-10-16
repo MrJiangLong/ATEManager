@@ -7,7 +7,7 @@
         </el-select>
         <el-button :icon="RefreshRight" size="small" @click="loadModels">{{ t('common.refresh') }}</el-button>
       </div>
-      <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">
@@ -61,8 +61,8 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button v-if="isAdmin" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="canManage" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -146,7 +146,7 @@ import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
-const { isAdmin } = useAuth()
+const { canManage } = useAuth()
 const { processes, processName, loadProcesses } = useProcesses()
 
 const list = ref([])

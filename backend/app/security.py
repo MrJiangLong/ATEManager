@@ -28,8 +28,9 @@ PBKDF2_ITERATIONS = 260_000
 
 ROLE_VIEWER = "viewer"
 ROLE_OPERATOR = "operator"
+ROLE_MANAGER = "manager"
 ROLE_ADMIN = "admin"
-ALL_ROLES = (ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN)
+ALL_ROLES = (ROLE_VIEWER, ROLE_OPERATOR, ROLE_MANAGER, ROLE_ADMIN)
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -126,7 +127,8 @@ def require_role(*roles: str):
     return dep
 
 # 产线操作（机台绑定/维修处置/强制解锁/中止会话）：operator 及以上
-require_operator = require_role(ROLE_OPERATOR, ROLE_ADMIN)
+require_operator = require_role(ROLE_OPERATOR, ROLE_MANAGER, ROLE_ADMIN)
+require_manager = require_role(ROLE_MANAGER, ROLE_ADMIN)
 require_admin = require_role(ROLE_ADMIN)
 
 def api_caller(

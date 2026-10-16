@@ -16,7 +16,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, not_found
 from ..logging import get_logger
-from ..security import api_caller, current_user, require_admin, require_operator
+from ..security import api_caller, current_user, require_manager, require_operator
 from ..services import reports
 from ..services.reports import engine as report_engine
 from ..services.reports import pdf as pdf_mod, registry, store
@@ -349,7 +349,7 @@ def _rule_out(db: Session, row: models.ReportRule) -> schemas.ReportRuleOut:
     )
 
 @rules_router.get("", response_model=List[schemas.ReportRuleOut], summary="报告规则清单(仅 admin)")
-def list_rules(db: Session = Depends(get_db), user: models.User = Depends(require_admin)):
+def list_rules(db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     rows = db.query(models.ReportRule).order_by(models.ReportRule.rule).all()
     return [_rule_out(db, r) for r in rows]
 
@@ -357,7 +357,7 @@ def list_rules(db: Session = Depends(get_db), user: models.User = Depends(requir
 def create_rule(
     payload: schemas.ReportRuleIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     if db.get(models.ReportRule, payload.rule) is not None:
         raise bad_request("rule_exists", f"rule_exists: {payload.rule}")
@@ -378,7 +378,7 @@ def update_rule(
     rule: str,
     payload: schemas.ReportRuleIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     row = db.get(models.ReportRule, rule)
     if row is None:
@@ -397,7 +397,7 @@ def update_rule(
     return _rule_out(db, db.get(models.ReportRule, rule))
 
 @rules_router.delete("/{rule}", status_code=204, summary="删除报告规则(仅 admin)")
-def delete_rule(rule: str, db: Session = Depends(get_db), user: models.User = Depends(require_admin)):
+def delete_rule(rule: str, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     row = db.get(models.ReportRule, rule)
     if row is None:
         raise not_found("rule_not_found", f"rule_not_found: {rule}")
@@ -423,7 +423,7 @@ async def upload_script(
     rule: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     row = db.get(models.ReportRule, rule)
     if row is None:
@@ -458,7 +458,7 @@ async def upload_templates(
     rule: str,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     row = db.get(models.ReportRule, rule)
     if row is None:
@@ -492,7 +492,7 @@ def delete_template(
     rule: str,
     filename: str,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     row = db.get(models.ReportTemplate, {"rule": rule, "filename": filename})
     if row is None:
@@ -509,7 +509,7 @@ def delete_template(
 def list_standards(
     rule: str = Query(...),
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     return (
         db.query(models.ReportStandard)
@@ -522,7 +522,7 @@ def list_standards(
 def create_standard(
     payload: schemas.ReportStandardIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     if db.get(models.ReportRule, payload.rule) is None:
         raise not_found("rule_not_found", f"rule_not_found: {payload.rule}")
@@ -537,7 +537,7 @@ def update_standard(
     std_id: int,
     payload: schemas.ReportStandardIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_admin),
+    user: models.User = Depends(require_manager),
 ):
     row = db.get(models.ReportStandard, std_id)
     if row is None:
@@ -550,7 +550,7 @@ def update_standard(
     return row
 
 @standards_router.delete("/{std_id}", status_code=204, summary="删除标准器(仅 admin)")
-def delete_standard(std_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_admin)):
+def delete_standard(std_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     row = db.get(models.ReportStandard, std_id)
     if row is None:
         raise not_found("standard_not_found", f"standard_not_found: {std_id}")

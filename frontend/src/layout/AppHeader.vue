@@ -61,7 +61,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, Calendar, Check, Expand, Fold, Lock, Monitor, Stamp, Switch, SwitchButton, View } from '@element-plus/icons-vue'
+import { ArrowDown, Calendar, Check, Expand, Fold, Lock, Monitor, Setting, Stamp, Switch, SwitchButton, View } from '@element-plus/icons-vue'
 import { setLocale } from '../i18n'
 import { useAuth } from '../stores/auth'
 
@@ -93,7 +93,7 @@ const langLabel = computed(() => (locale.value === 'en' ? t('layout.langEn') : t
 /* 直接读全局会话，避免父组件透传 */
 const userName = computed(() => auth.state.user?.full_name || auth.state.user?.username || '-')
 const userRole = computed(() => t(`users.roles.${auth.role.value}`))
-const ROLE_ICONS = { viewer: View, operator: Monitor, admin: Stamp }
+const ROLE_ICONS = { viewer: View, operator: Monitor, manager: Setting, admin: Stamp }
 const roleIcon = computed(() => ROLE_ICONS[auth.role.value] || View)
 
 function onLang(value) {
@@ -184,6 +184,7 @@ function onLang(value) {
 }
 .role-viewer { background: #eef1f6; color: #7c8aa5; }
 .role-operator { background: rgba(47, 107, 255, 0.1); color: #2f6bff; }
+.role-manager { background: rgba(103, 126, 58, 0.12); color: #5a8a1e; }
 .role-admin { background: rgba(230, 131, 43, 0.13); color: #d9731a; }
 
 @media (max-width: 900px) {

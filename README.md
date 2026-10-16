@@ -70,7 +70,7 @@
 - **SPC 良率看板**：产量/良率趋势、工位与流程良率、失效用例排行、机台在线
 - **出厂报告引擎**：盖章完成自动入队（60s 轮询，不触碰出站事务）→ 上传式插件产 Excel → MinIO 归档 → PDF 转换（服务端 LibreOffice 或外部 WPS Worker）→ MES 上传（multipart 字段名由插件 `mes_field` 声明）；报告规则（型号清单精确匹配 + 脚本 + 模板 + 标准器台账）全部 Web 端维护，后端零改动扩展新产品族
 - **报告产物存储语义**：走 MES 的产物上传成功即清理 ATEManager 侧 MinIO 对象与本地副本（MES 即唯一归档）；未走 MES 的产物（数据报告）随 `REPORT_RETENTION_DAYS` 到期连 MinIO 对象、本地目录、DB 记录一并清除；失败任务全量保留待重试
-- **三角色权限**：viewer 只读 / operator 产线操作 / admin 配置与用户管理，后端逐端点收口
+- **四角色权限**：viewer 只读 / operator 产线操作 / manager 配置管理（工艺+测试登记+报告规则，不含用户管理）/ admin 全部，后端逐端点收口
 
 ---
 
@@ -124,7 +124,7 @@ routers  ──▶  services  ──▶  models
 | `services/timeutil.py` | UTC 时间语义统一 + 统计日界（本地自然日切分） |
 | `services/reports/` | 出厂报告引擎：调度入队（scheduler）/ 插件执行（executor）/ 工厂库只读取数（extractor）/ 规则注册表与模板物化（registry）/ MinIO 归档（store）/ PDF 转换（pdf）/ MES 上传（mes）/ 任务管线（engine） |
 
-### 3.2 双通道鉴权与三角色
+### 3.2 双通道鉴权与四角色
 
 | 通道 | 前缀 | 鉴权 | 使用者 |
 |---|---|---|---|
@@ -132,13 +132,14 @@ routers  ──▶  services  ──▶  models
 | 通道二 | `/api/admin/*` | JWT Bearer | Web 管理端（例外：`report-jobs/pdf-claim` 与 `pdf-result` 接受 `X-API-Key`，供 PDF Worker 调用） |
 | 鉴权 | `/api/auth/*` | 账密换 token | 登录 |
 
-通道二按**三角色**收口（`users.role`，JWT 携带，逐端点校验）：
+通道二按**四角色**收口（`users.role`，JWT 携带，逐端点校验）：
 
 | 角色 | 权限 |
 |---|---|
 | `viewer` | 只读全部：运营总览、在制/台账/追溯、工艺配置查看 |
 | `operator` | viewer + 机台注册/绑定/注销、维修处置、强制解锁、中止会话 |
-| `admin` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、报告规则/模板/标准器台账、用户管理 |
+| `manager` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、测试登记、报告规则/模板/标准器台账（**不含用户管理**——账号权与业务权分离） |
+| `admin` | manager + 用户管理 |
 
 防自锁守卫：系统中永远保证至少一个启用中的 admin——删除/停用/降权最后一个有效 admin 一律 `409 last_admin`，不能删除自己的账号。被停用账号登录拒绝且已有 token 立即失效。
 
@@ -262,7 +263,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，51 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，55 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -338,7 +339,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（51 项）
+│   │   └── test_backend.py   端到端回归测试（55 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
@@ -626,26 +627,26 @@ URL、SCPI 指令、日志文件名里都无需转义。
 
 ### 9.2 通道二 `/api/admin/*` 与 `/api/auth/*`（JWT）
 
-最低角色列：`view` = 登录即可读（三角色均可），`op` = operator 及以上，`admin` = 仅管理员。写端点角色不足返回 `403 permission_denied`。
+最低角色列：`view` = 登录即可读（四角色均可），`op` = operator 及以上，`mgr` = manager 及以上（不含用户管理），`admin` = 仅管理员。写端点角色不足返回 `403 permission_denied`。
 
 | 分组 | 最低角色 | 接口 |
 |---|---|---|
 | 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
-| 工艺流程 | view / admin 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
-| 机型 | view / admin 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
-| 测试登记 | view / admin 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
-| 工位 | view / admin 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / admin 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
+| 工艺流程 | view / mgr 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
+| 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
+| 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
+| 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
-| 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs` |
+| 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
 | 测试会话 | view / op 写 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
 | 机台 | view / op 写 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
 | 统计 | view | `GET /api/admin/metrics/overview` |
 | 用户管理 | admin | `GET/POST /api/admin/users`、`PUT/DELETE /api/admin/users/{user_id}` |
 | 报告任务 | view / op 写 | `GET /api/admin/report-jobs`、`GET .../models`、`GET .../candidates`、`POST .../batch`、`POST /{job_id}/retry`、`POST /{job_id}/resend-mes`、`GET /{job_id}/download/{index}` |
-| 报告规则 | admin | `GET/POST /api/admin/report-rules`、`PUT/DELETE /{rule}`、`POST /{rule}/script`、`POST/DELETE /{rule}/templates[/{filename}]` |
-| 标准器台账 | admin | `GET/POST /api/admin/report-standards`、`PUT/DELETE /{id}` |
+| 报告规则 | mgr | `GET/POST /api/admin/report-rules`、`PUT/DELETE /{rule}`、`POST /{rule}/script`、`POST/DELETE /{rule}/templates[/{filename}]` |
+| 标准器台账 | mgr | `GET/POST /api/admin/report-standards`、`PUT/DELETE /{id}` |
 | PDF Worker | Worker 专用 | `GET /api/admin/report-jobs/pdf-claim`、`POST /api/admin/report-jobs/pdf-result`（X-API-Key 鉴权，部署在 Windows 测试机的 Worker 轮询调用） |
 
 完整参数与响应模型见 Swagger（`http://localhost:8000/docs`）。
@@ -777,7 +778,7 @@ MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，�
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 51 项，覆盖全部卡控场景
+python tests/test_backend.py      # 55 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

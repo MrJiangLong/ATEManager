@@ -36,7 +36,7 @@
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? t('users.editTitle') : t('users.createTitle')" width="440px" destroy-on-close class="form-dialog">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? t('users.editTitle') : t('users.createTitle')" width="560px" destroy-on-close class="form-dialog">
       <el-form :model="form" label-position="top" @submit.prevent="submit">
         <el-form-item :label="t('users.role')" required>
           <div class="role-cards">
@@ -89,7 +89,7 @@ import { fmtDateTime } from '../utils/format'
 const { t } = useI18n()
 const { state } = useAuth()
 
-const ROLES = ['viewer', 'operator', 'admin']
+const ROLES = ['viewer', 'operator', 'manager', 'admin']
 const rows = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
@@ -99,7 +99,7 @@ const editingId = ref(null)
 const form = reactive({ username: '', full_name: '', role: '', password: '', is_active: true })
 
 function roleTagType(role) {
-  return role === 'admin' ? 'danger' : role === 'operator' ? 'warning' : 'info'
+  return role === 'admin' ? 'danger' : role === 'manager' ? 'warning' : role === 'operator' ? 'primary' : 'info'
 }
 
 async function load() {

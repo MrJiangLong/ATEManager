@@ -86,7 +86,7 @@ const activeMenu = computed(() => {
 })
 
 /* 菜单：扁平结构，无业务域分组（与目标项目保持单层结构）。
-   roles 缺省 = 全员可见；用户管理仅 admin */
+   roles 缺省 = 全员可见；工艺配置 manager 及以上，用户管理仅 admin */
 const ALL_MENUS = [
   { path: '/dashboard', labelKey: 'menu.dashboard', icon: PieChart },
   { path: '/products',  labelKey: 'menu.products',  icon: Tickets },
@@ -95,7 +95,7 @@ const ALL_MENUS = [
   { path: '/clients',   labelKey: 'menu.clients',   icon: Monitor },
   { path: '/sessions',  labelKey: 'menu.sessions',  icon: Connection },
   { path: '/reports',   labelKey: 'menu.reports',   icon: Document },
-  { path: '/configs',   labelKey: 'menu.configs',   icon: Setting, roles: ['admin'] },
+  { path: '/configs',   labelKey: 'menu.configs',   icon: Setting, roles: ['manager', 'admin'] },
   { path: '/users',     labelKey: 'menu.users',     icon: User,     roles: ['admin'] },
 ]
 const { role } = useAuth()

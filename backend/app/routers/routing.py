@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404, not_found
-from ..security import current_user, require_admin
+from ..security import current_user, require_manager
 from ..services.routing import process_topology, station_item_summary, validate_process
 from ..services.timeutil import utcnow
 
@@ -61,7 +61,7 @@ def save_steps(
     payload: List[schemas.ProcessStationIn],
     force: bool = Query(False, description="跳过结构性校验强行保存"),
     db: Session = Depends(get_db),
-    user=Depends(require_admin),
+    user=Depends(require_manager),
 ):
     """以「整体覆盖」方式保存拓扑，前端一屏编排后一次性提交。
 
@@ -120,7 +120,7 @@ def save_steps(
 
 @router.delete("/stations/{station_id}", status_code=204, summary="移除工步(连带清理其测试项)")
 def delete_step(
-    process_id: str, station_id: str, db: Session = Depends(get_db), user=Depends(require_admin)
+    process_id: str, station_id: str, db: Session = Depends(get_db), user=Depends(require_manager)
 ):
     row = db.get(models.ProcessStation, (process_id, station_id))
     if row is None:
@@ -174,7 +174,7 @@ def list_items(
     return query.order_by(models.StationItem.station_id, models.StationItem.case_id).all()
 
 @router.post("/items", response_model=schemas.StationItemOut, status_code=201, summary="新增用例ID测试项")
-def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(require_admin)):
+def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
     exists = (
@@ -197,7 +197,7 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
 
 @router.put("/items/{item_id}", response_model=schemas.StationItemOut, summary="更新测试项")
 def update_item(
-    item_id: int, payload: schemas.StationItemUpdateIn, db: Session = Depends(get_db), user=Depends(require_admin)
+    item_id: int, payload: schemas.StationItemUpdateIn, db: Session = Depends(get_db), user=Depends(require_manager)
 ):
     row = get_or_404(db, models.StationItem, item_id, "item")
     for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
@@ -206,7 +206,7 @@ def update_item(
     return row
 
 @router.delete("/items/{item_id}", status_code=204, summary="删除测试项")
-def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(require_manager)):
     row = get_or_404(db, models.StationItem, item_id, "item")
     db.delete(row)
     db.commit()
@@ -216,7 +216,7 @@ def import_items(
     payload: schemas.StationItemImportIn,
     force: bool = Query(False, description="忽略 RUNNING 会话闸门强行同步"),
     db: Session = Depends(get_db),
-    user=Depends(require_admin),
+    user=Depends(require_manager),
 ):
     """整批同步某工位的用例ID清单，供上位机脚本自动对齐（pytest --collect-only 的输出）。
 
@@ -347,7 +347,7 @@ def validate(
     return validate_process(db, process_id)
 
 @router.post("/clone", response_model=schemas.CloneOut, summary="克隆流程(派生机型时复用拓扑与测试项)")
-def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=Depends(require_admin)):
+def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     steps = (
         db.query(models.ProcessStation)
         .filter(models.ProcessStation.process_id == payload.from_process)
@@ -492,7 +492,7 @@ def export_all_processes(db: Session = Depends(get_db), user=Depends(current_use
     status_code=201,
     summary="导入流程完整定义（JSON）",
 )
-def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(require_admin)):
+def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     """事务式导入：流程不存在（409 可改编号重试）；缺失工位自动补建（已有配置
     不覆盖——工位是跨流程共享字典）；机型已存在时跳过（绑定关系不迁移）；
     全部写入后复用拓扑校验，error 级问题整体回滚。"""

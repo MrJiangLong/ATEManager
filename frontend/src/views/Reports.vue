@@ -8,7 +8,7 @@ import { useAuth } from '../stores/auth'
 
 const { role } = useAuth()
 // 报告规则为 admin 专属（脚本上传=服务器受信代码维护）；后端接口同样以 require_admin 收口
-const isAdmin = computed(() => role.value === 'admin')
+const canManage = computed(() => ['manager', 'admin'].includes(role.value))
 const activeTab = ref('generate')
 </script>
 
@@ -23,7 +23,7 @@ const activeTab = ref('generate')
       <el-tab-pane :label="$t('reports.tabJobs')" name="jobs" lazy>
         <ReportJobsPanel :active="activeTab === 'jobs'" />
       </el-tab-pane>
-      <el-tab-pane v-if="isAdmin" :label="$t('reports.tabRules')" name="rules" lazy>
+      <el-tab-pane v-if="canManage" :label="$t('reports.tabRules')" name="rules" lazy>
         <ReportRulesPanel />
       </el-tab-pane>
     </el-tabs>

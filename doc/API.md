@@ -91,8 +91,9 @@ Content-Type: application/json
 
 > - 若服务端未配置 `V1_API_KEY`，可退化为网页 JWT（`Authorization: Bearer <token>`），
 >   仅供开发调试，**产线禁止**。
-> - 上位机与 Web 端的**三角色权限体系无关**：通道一只认 API Key，不存在角色概念。
->   Web 端用户管理（viewer/operator/admin）仅约束管理端接口。
+> - 上位机与 Web 端的**四角色权限体系无关**：通道一只认 API Key，不存在角色概念。
+>   Web 端用户管理（viewer/operator/manager/admin）仅约束管理端接口；
+>   `manager` = 业务/配置管理（工艺、测试登记、报告规则与标准器），不含用户管理。
 
 ### 2.2 注册机台并绑定工位
 
@@ -622,6 +623,14 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `session_completed` | 10 | check-in / checkpoint / artifact | 会话已出站 |
 | 409 | `session_aborted` | 14 | checkpoint / artifact | 会话已被运维中止（换测试用例清单前），须立即停机 |
 | 409 | `product_holding_lock` | 11 | 管理端 | 在制品被持锁，禁止处置 |
+| 409 | `product_scrapped` | 10 | 管理端维修处置 | 报废件禁非报废处置（封死复活通道；check-in 侧为 403 同名码） |
+| 400 | `action_not_batchable` | 10 | 管理端批量处置 | RESET/SCRAP 破坏面大，仅允许单条 + 二次确认 |
+| 400 | `items_required` / `batch_too_large` | 10 | 管理端批量处置 | 批量清单为空或超过 50 条上限 |
+| 400 | `duplicate_sn` / `field_required` | 10 | 管理端批量处置（单项） | 批量清单中的重复/空 SN，按失败项返回不中断整批 |
+| 409 | `already_undone` | 10 | 管理端撤销处置 | 该处置已被撤销（含撤销人与时间） |
+| 409 | `action_not_undoable` | 10 | 管理端撤销处置 | SCRAP 不可撤销（永久拦截语义） |
+| 409 | `not_latest_disposition` | 10 | 管理端撤销处置 | 仅允许撤销该 SN 最新一条处置 |
+| 409 | `repair_state_changed` | 10 | 管理端撤销处置 | 处置后产线已有动作（新会话/印章变化），只能走物理重测 |
 
 ### 6.2 处理决策
 
@@ -847,6 +856,9 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `POST /api/admin/sessions/{id}/abort` | 强制终止会话并解锁（body: `{"reason": "..."}`） |
 | `POST /api/admin/sessions/abort-running` | 批量终止运行中的会话；body 至少给一个过滤条件 `station_id / process_id / sn / client_id`（否则 400 `scope_required`），支持 `dry_run` 预演 |
 | `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`），不动印章与失败计数 |
+| `POST /api/admin/repairs/batch` | 批量处置（仅 RETEST/ROLLBACK）：`{"items": [sn...], "repair_action", "target_station", "reason", "dry_run"}`；dry_run=true 只守卫不落库并回显破坏面（机型/流程/当前状态/将撤销印章/将作废记录数）；逐条独立生效，失败项不影响已成功项；上限 50 |
+| `POST /api/admin/repairs/{repair_id}/undo` | 撤销维修处置（窄窗口）：按处置前快照精确还原印章/失败计数/状态，被作废的台账记录按快照 ID 精确恢复；完工态恢复后自动重出报告。边界（409）：仅 RETEST/ROLLBACK/RESET（`action_not_undoable`，SCRAP 永不可撤）、仅该 SN 最新一条（`not_latest_disposition`）、处置后无新会话且印章未变（`repair_state_changed`）、不可重复撤销（`already_undone`） |
+| `GET /api/admin/repairs` | 履历筛选扩展：`technician`（操作人模糊）、`days`（近 N 天，按本地日界，0 = 全部） |
 | `GET /api/admin/products/{sn}/sessions` | 该 SN 的会话时间线 |
 | `GET /api/admin/products` | 在制品清单，支持 `zombie_only=true` 过滤失联锁 |
 | `GET /api/admin/metrics/overview` | 运行概况，含 `locks: {active, zombie, sessions_running, sessions_abnormal}` |

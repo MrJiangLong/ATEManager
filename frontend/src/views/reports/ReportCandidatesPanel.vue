@@ -80,7 +80,7 @@ const { t } = useI18n()
 const { role } = useAuth()
 const props = defineProps({ active: { type: Boolean, default: false } })
 // 生成为 operator+；viewer 只读浏览
-const canOperate = computed(() => ['operator', 'admin'].includes(role.value))
+const canOperate = computed(() => ['operator', 'manager', 'admin'].includes(role.value))
 
 const loading = ref(false)
 const items = ref([])

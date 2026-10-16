@@ -75,8 +75,8 @@ export default {
     roles: { viewer: 'Viewer', operator: 'Operator', manager: 'Manager', admin: 'Admin' },
     roleTag: {
       viewer: 'Read-only',
-      operator: 'Shopfloor ops',
-      manager: 'Process & test management',
+      operator: 'Shopfloor operations',
+      manager: 'Process management',
       admin: 'Full access',
     },
     status: 'Status',

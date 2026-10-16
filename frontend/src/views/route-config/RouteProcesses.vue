@@ -2,12 +2,12 @@
   <div>
     <div class="tab-head tab-head-end">
       <div class="filter-row">
-        <el-button v-if="isAdmin" size="small" :icon="CopyDocument" @click="cloneVisible = true">{{ t('configs.clone') }}</el-button>
+        <el-button v-if="canManage" size="small" :icon="CopyDocument" @click="cloneVisible = true">{{ t('configs.clone') }}</el-button>
         <el-button size="small" :icon="Download" :loading="exportingAll" @click="exportAllJson">
           {{ t('configs.exportAll') }}
         </el-button>
-        <el-button v-if="isAdmin" size="small" :icon="Upload" @click="importVisible = true">{{ t('configs.importJson') }}</el-button>
-        <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+        <el-button v-if="canManage" size="small" :icon="Upload" @click="importVisible = true">{{ t('configs.importJson') }}</el-button>
+        <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
       </div>
     </div>
 
@@ -41,8 +41,8 @@
           <el-button link type="primary" size="small" :icon="View" @click="openDetail(row)">
             {{ t('configs.detail') }}
           </el-button>
-          <el-button v-if="isAdmin" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button v-if="isAdmin" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <el-button v-if="canManage" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -233,7 +233,7 @@ import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
-const { isAdmin } = useAuth()
+const { canManage } = useAuth()
 const { processes, loading, loadProcesses } = useProcesses()
 const { page, pageSize, paged } = useLocalPagination(processes)
 

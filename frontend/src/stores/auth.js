@@ -13,9 +13,10 @@ let refreshPromise = null
 export function useAuth() {
   const isLoggedIn = computed(() => Boolean(state.token) && Boolean(state.user))
   const role = computed(() => state.user?.role || 'viewer')
-  const isAdmin = computed(() => role.value === 'admin')
   // 产线操作（机台绑定/维修处置/强制解锁/中止会话）：operator 及以上
-  const canOperate = computed(() => role.value === 'operator' || role.value === 'admin')
+  const canOperate = computed(() => ['operator', 'manager', 'admin'].includes(role.value))
+  // 配置管理（工艺配置/测试登记/报告规则与标准器）：manager 及以上（不含用户管理）
+  const canManage = computed(() => role.value === 'manager' || role.value === 'admin')
 
   function refresh() {
     if (!state.token) {
@@ -69,5 +70,5 @@ export function useAuth() {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return { state, isLoggedIn, role, isAdmin, canOperate, refresh, login, logout }
+  return { state, isLoggedIn, role, canOperate, canManage, refresh, login, logout }
 }

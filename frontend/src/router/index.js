@@ -71,7 +71,7 @@ const router = createRouter({
           path: 'configs',
           name: 'RouteConfig',
           component: () => import('../views/RouteConfig.vue'),
-          meta: { titleKey: 'menu.configs', roles: ['admin'] },
+          meta: { titleKey: 'menu.configs', roles: ['manager', 'admin'] },
         },
         {
           path: 'users',

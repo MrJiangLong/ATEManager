@@ -804,13 +804,19 @@ def test_repair_actions():
 
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "SCRAP", "reason": "报废"})
     check(resp.status_code == 201, f"scrap: {resp.text}")
-    resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "复判合格"})
-    check(resp.status_code == 201, f"reset: {resp.text}")
     resp = admin("GET", f"/api/admin/products/{sn}")
-    check(resp.json()["current_status"] == "IDLE" and resp.json()["passed_stations"] == [], f"reset: {resp.json()}")
+    check(resp.json()["current_status"] == "SCRAPPED", f"scrapped: {resp.json()}")
+    # 报废件封死复活通道：RESET/RETEST/ROLLBACK 一律 409（防误操作击穿"永久拦截"语义）
+    resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "复判合格"})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "product_scrapped",
+        f"scrapped revival blocked: {resp.status_code} {resp.text}",
+    )
+    resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-PARAM"})
+    check(resp.status_code == 409, f"scrapped retest blocked: {resp.status_code} {resp.text}")
 
     resp = admin("GET", "/api/admin/repairs", params={"sn": sn})
-    check(resp.json()["total"] == 4, f"repair history: {resp.json()['total']}")
+    check(resp.json()["total"] == 3, f"repair history: {resp.json()['total']}")
 
 def test_repair_guards():
     sn = new_sn("RGUARD")
@@ -1541,7 +1547,7 @@ def _user_id(username: str) -> int:
     return next(u["id"] for u in rows if u["username"] == username)
 
 def test_role_permissions():
-    """三角色权限矩阵：viewer 只读 / operator 产线操作 / admin 配置+用户管理。
+    """四角色权限矩阵：viewer 只读 / operator 产线操作 / manager 配置管理 / admin 全部。
 
     覆盖：登录响应带角色 / 越权 403 / 停用账号登录拒绝且旧 token 立即失效 /
     防自锁（最后一个有效 admin 不可删/停/降）。
@@ -1606,6 +1612,41 @@ def test_role_permissions():
     check(resp.status_code == 201, f"create admin2: {resp.text}")
     resp = admin("PUT", f"/api/admin/users/{_user_id('admin2')}", {"is_active": False})
     check(resp.status_code == 200, f"disable second admin: {resp.text}")
+
+# ================= I2. manager 主管角色（admin 减用户管理） =================
+def test_role_manager():
+    """manager 主管角色：工艺配置/测试登记/报告规则可写，用户管理 403。
+
+    覆盖：创建 manager / 配置写放行（流程+机型+测试登记）/ 用户管理读写 403 /
+    产线操作超集放行（operator 能力）/ 非法角色校验回归（manager 是合法角色）。
+    """
+    resp = admin("POST", "/api/admin/users",
+                 {"username": "mgr1", "password": "mgr123456", "full_name": "工艺主管", "role": "manager"})
+    check(resp.status_code == 201 and resp.json()["role"] == "manager", f"create manager: {resp.text}")
+    mgr = _login("mgr1", "mgr123456").json()["access_token"]
+
+    # ① 配置写放行：工艺流程 + 机型 + 测试登记（原 require_admin 面）
+    resp = api("POST", "/api/admin/processes",
+               body={"process_id": f"PROC-MGR-TEST-{STAMP}", "process_name": "主管流程"}, token=mgr)
+    check(resp.status_code == 201, f"manager process: {resp.status_code} {resp.text}")
+    resp = api("POST", "/api/admin/product-models",
+               body={"product_model": f"MGR-M-{STAMP}", "process_id": f"PROC-MGR-TEST-{STAMP}",
+                     "target_fw_version": FW}, token=mgr)
+    check(resp.status_code == 201, f"manager model: {resp.status_code} {resp.text}")
+    resp = api("POST", "/api/admin/sn-registry", {"sn": new_sn("MGR"), "note": "主管登记"}, token=mgr)
+    check(resp.status_code == 201, f"manager register: {resp.status_code} {resp.text}")
+
+    # ② 用户管理：读写全部 403（职责分离的核心——manager 无提权入口）
+    resp = api("GET", "/api/admin/users", token=mgr)
+    check(resp.status_code == 403, f"manager users list: {resp.status_code}")
+    resp = api("POST", "/api/admin/users",
+               body={"username": "x-from-mgr", "password": "x123456", "role": "viewer"}, token=mgr)
+    check(resp.status_code == 403, f"manager user create: {resp.status_code}")
+
+    # ③ 产线操作超集：机台绑定放行（operator 能力）
+    resp = api("POST", "/api/admin/clients",
+               body={"client_id": new_client_id(), "bound_stations": ["CAL-PARAM"]}, token=mgr)
+    check(resp.status_code == 201, f"manager bind: {resp.status_code} {resp.text}")
 
 # ================= I. 测试产物 =================
 def _artifact_upload(
@@ -2023,6 +2064,208 @@ def test_sn_registry_polarity():
     resp = api("GET", "/api/admin/sn-registry", token=viewer_token)
     check(resp.status_code == 200, f"viewer list allowed: {resp.status_code} {resp.text}")
 
+# ================= K. 批量维修处置（dry_run 预演 + 破坏面回显） =================
+def test_repair_batch():
+    """批量处置：dry_run 只校验不落库并回显破坏面；逐条独立生效留痕。
+
+    覆盖：dry_run 混合成败（不存在/重复/空 SN）且零写入 / 执行后逐条生效 /
+    RESET/SCRAP 禁批量 400 / 空清单与超上限 400 / 报废件在批量中按失败项返回。
+    """
+    sn_a, sn_b = new_sn("BATCH-A"), new_sn("BATCH-B")
+    pass_station("CAL-PARAM", sn_a)
+    pass_station("CAL-IFACE", sn_a)
+    pass_station("CAL-PARAM", sn_b)
+
+    # ① RESET/SCRAP 禁批量；空清单 400
+    resp = admin("POST", "/api/admin/repairs/batch", {"items": [sn_a], "repair_action": "RESET", "reason": "x"})
+    check(resp.status_code == 400 and resp.json()["code"] == "action_not_batchable", f"reset batch: {resp.text}")
+    resp = admin("POST", "/api/admin/repairs/batch", {"items": [sn_a], "repair_action": "SCRAP", "reason": "x"})
+    check(resp.status_code == 400 and resp.json()["code"] == "action_not_batchable", f"scrap batch: {resp.text}")
+    resp = admin("POST", "/api/admin/repairs/batch", {"items": [], "repair_action": "RETEST"})
+    check(resp.status_code == 400 and resp.json()["code"] == "items_required", f"empty items: {resp.text}")
+    resp = admin(
+        "POST",
+        "/api/admin/repairs/batch",
+        {"items": [f"SN-X{i}" for i in range(51)], "repair_action": "RETEST", "target_station": "CAL-PARAM"},
+    )
+    check(resp.status_code == 400 and resp.json()["code"] == "batch_too_large", f"too large: {resp.text}")
+
+    # ② dry_run：混合成败（不存在 + 重复 + 空 SN），零写入
+    payload = {
+        "items": [sn_a, sn_a, "", new_sn("NOPE"), sn_b],
+        "repair_action": "RETEST",
+        "target_station": "CAL-PARAM",
+        "reason": "批量预演",
+        "dry_run": True,
+    }
+    resp = admin("POST", "/api/admin/repairs/batch", payload)
+    body = resp.json()
+    check(resp.status_code == 200 and body["dry_run"] is True, f"dry_run: {resp.text}")
+    check(body["total"] == 5 and body["ok_count"] == 2 and body["fail_count"] == 3, f"dry_run counts: {body}")
+    ok_a = next(i for i in body["items"] if i["sn"] == sn_a)
+    check(
+        ok_a["current_status"] == "IDLE"
+        and ok_a["revoked_stations"] == ["CAL-PARAM"]
+        and ok_a["invalidating_records"] == 1
+        and ok_a["product_model"] == M_DPO
+        and ok_a["process_id"] == P_DPO,
+        f"dry_run preview surface: {ok_a}",
+    )
+    check(
+        any(i["code"] == "product_not_found" for i in body["items"])
+        and any(i["code"] == "duplicate_sn" for i in body["items"])
+        and any(i["code"] == "field_required" for i in body["items"]),
+        f"dry_run failures: {body}",
+    )
+    # 零写入：印章未动、无维修履历
+    resp = admin("GET", f"/api/admin/products/{sn_a}")
+    check(resp.json()["passed_stations"] == ["CAL-IFACE", "CAL-PARAM"], f"dry_run no mutation: {resp.json()}")
+    resp = admin("GET", "/api/admin/repairs", params={"sn": sn_a})
+    check(resp.json()["total"] == 0, f"dry_run no history: {resp.json()['total']}")
+
+    # ③ 执行：逐条生效（sn_a 成功、不存在项失败），失败项不影响已成功项
+    payload["dry_run"] = False
+    resp = admin("POST", "/api/admin/repairs/batch", payload)
+    body = resp.json()
+    check(body["ok_count"] == 2 and body["fail_count"] == 3, f"execute counts: {body}")
+    resp = admin("GET", f"/api/admin/products/{sn_a}")
+    check(resp.json()["passed_stations"] == ["CAL-IFACE"], f"batch retest applied: {resp.json()}")
+    resp = admin("GET", "/api/admin/repairs", params={"sn": sn_a})
+    check(resp.json()["total"] == 1 and resp.json()["items"][0]["repair_action"] == "RETEST", f"history: {resp.text}")
+    resp = admin("GET", "/api/admin/records", params={"sn": sn_a, "station_id": "CAL-PARAM", "is_valid": False})
+    check(resp.json()["total"] == 1, f"batch invalidated records: {resp.text}")
+
+    # ④ 报废件在批量中按失败项返回（复活守卫同样生效于批量）
+    sn_c = new_sn("BATCH-C")
+    pass_station("CAL-PARAM", sn_c)
+    resp = admin("POST", "/api/admin/repairs", {"sn": sn_c, "repair_action": "SCRAP", "reason": "报废"})
+    check(resp.status_code == 201, f"scrap sn_c: {resp.text}")
+    resp = admin(
+        "POST",
+        "/api/admin/repairs/batch",
+        {"items": [sn_c], "repair_action": "RETEST", "target_station": "CAL-PARAM", "reason": "x"},
+    )
+    body = resp.json()
+    check(
+        body["fail_count"] == 1 and body["items"][0]["code"] == "product_scrapped",
+        f"scrapped in batch: {body}",
+    )
+
+# ================= L. 撤销维修处置（窄窗口快照还原） =================
+def test_repair_undo():
+    """撤销处置：按处置前快照精确还原（印章/失败计数/台账记录）。
+
+    覆盖：RETEST 后撤销全字段还原（含 fail_count）/ 二次撤销 409 already_undone /
+    处置后产线有动作 → 409 repair_state_changed / 非最新条 → 409 not_latest_disposition /
+    SCRAP → 409 action_not_undoable。
+    """
+    sn = new_sn("UNDO")
+    pass_station("CAL-PARAM", sn)
+    pass_station("CAL-IFACE", sn)
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        product.fail_count = 2
+        db.commit()
+
+    # RETEST CAL-IFACE：印章撤除 + fail_count 清零 + 台账记录作废
+    resp = admin(
+        "POST",
+        "/api/admin/repairs",
+        {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-IFACE", "reason": "误操作演练"},
+    )
+    check(resp.status_code == 201, f"retest: {resp.text}")
+    repair_id = resp.json()["repair_id"]
+    resp = admin("GET", f"/api/admin/products/{sn}")
+    check(resp.json()["passed_stations"] == ["CAL-PARAM"], f"after retest: {resp.json()}")
+    resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "CAL-IFACE", "is_valid": False})
+    check(resp.json()["total"] == 1, f"invalidated: {resp.text}")
+
+    # 撤销：印章/失败计数/台账记录按快照精确还原
+    resp = admin("POST", f"/api/admin/repairs/{repair_id}/undo")
+    check(
+        resp.status_code == 200 and resp.json()["undone_by"] == "admin" and resp.json()["undone_at"],
+        f"undo: {resp.text}",
+    )
+    resp = admin("GET", f"/api/admin/products/{sn}")
+    body = resp.json()
+    check(
+        sorted(body["passed_stations"]) == ["CAL-IFACE", "CAL-PARAM"] and body["fail_count"] == 2,
+        f"undo restore: {body}",
+    )
+    resp = admin("GET", "/api/admin/records", params={"sn": sn, "station_id": "CAL-IFACE", "is_valid": True})
+    check(resp.json()["total"] == 1, f"record revalidated: {resp.text}")
+
+    # 二次撤销 → 409 already_undone
+    resp = admin("POST", f"/api/admin/repairs/{repair_id}/undo")
+    check(resp.status_code == 409 and resp.json()["code"] == "already_undone", f"re-undo: {resp.text}")
+
+    # 非最新条 → 409 not_latest_disposition（连续两次处置，只能撤最新的）
+    resp = admin(
+        "POST",
+        "/api/admin/repairs",
+        {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-PARAM", "reason": "第二次处置"},
+    )
+    check(resp.status_code == 201, f"second disposition: {resp.text}")
+    middle_id = resp.json()["repair_id"]
+    resp = admin(
+        "POST",
+        "/api/admin/repairs",
+        {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-IFACE", "reason": "第三次处置"},
+    )
+    check(resp.status_code == 201, f"third disposition: {resp.text}")
+    resp = admin("POST", f"/api/admin/repairs/{middle_id}/undo")
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "not_latest_disposition",
+        f"undo older: {resp.status_code} {resp.text}",
+    )
+
+    # 处置后产线有动作（重新过站产生新会话）→ 409 repair_state_changed
+    sn2 = new_sn("UNDO2")
+    pass_station("CAL-PARAM", sn2)
+    resp = admin(
+        "POST",
+        "/api/admin/repairs",
+        {"sn": sn2, "repair_action": "RETEST", "target_station": "CAL-PARAM", "reason": "越窗演练"},
+    )
+    check(resp.status_code == 201, f"retest sn2: {resp.text}")
+    pass_station("CAL-PARAM", sn2)  # 处置后产线重新动作
+    resp = admin("GET", "/api/admin/repairs", params={"sn": sn2})
+    sn2_repair = resp.json()["items"][0]["repair_id"]
+    resp = admin("POST", f"/api/admin/repairs/{sn2_repair}/undo")
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "repair_state_changed",
+        f"undo after activity: {resp.status_code} {resp.text}",
+    )
+
+    # SCRAP 不可撤销（409 action_not_undoable）
+    resp = admin("POST", "/api/admin/repairs", {"sn": sn2, "repair_action": "SCRAP", "reason": "报废"})
+    check(resp.status_code == 201, f"scrap sn2: {resp.text}")
+    resp = admin("GET", "/api/admin/repairs", params={"sn": sn2})
+    scrap_id = resp.json()["items"][0]["repair_id"]
+    resp = admin("POST", f"/api/admin/repairs/{scrap_id}/undo")
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "action_not_undoable",
+        f"undo scrap: {resp.status_code} {resp.text}",
+    )
+
+# ================= M. 维修履历筛选 =================
+def test_repair_list_filters():
+    """履历筛选：操作人模糊 + 近 N 天（本地日界）+ 动作组合。"""
+    # 操作人筛选：admin 的处置都能查到
+    resp = admin("GET", "/api/admin/repairs", params={"technician": "admin", "days": 1})
+    body = resp.json()
+    check(resp.status_code == 200 and body["total"] >= 1, f"technician filter: {resp.text}")
+    check(
+        all(r["technician_id"] == "admin" for r in body["items"]),
+        f"technician filter rows: {body}",
+    )
+    # 近 1 天 + 动作组合筛选
+    resp = admin("GET", "/api/admin/repairs", params={"repair_action": "RETEST", "days": 1})
+    check(
+        all(r["repair_action"] == "RETEST" for r in resp.json()["items"]),
+        f"action+days filter: {resp.text}",
+    )
+
 # ================= J. 存量机型受控直通（passthrough 渐进上线） =================
 def test_passthrough_mode():
     """直通机型进站 ACK 零写入 + 模式切换卡控。
@@ -2161,11 +2404,15 @@ TESTS = [
     test_process_export_import,
     test_model_app_fields_roundtrip,
     test_role_permissions,
+    test_role_manager,
     test_artifacts,
     test_report_batch_requires_completed,
     test_optional_station_sampling,
     test_sn_registry_polarity,
     test_passthrough_mode,
+    test_repair_batch,
+    test_repair_undo,
+    test_repair_list_filters,
 ]
 
 if __name__ == "__main__":
