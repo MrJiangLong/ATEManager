@@ -31,10 +31,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="station_id" :label="$t('sessions.tableStation')" min-width="130">
-          <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
+          <template #default="{ row }">
+            <CodeTip :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
+          </template>
         </el-table-column>
         <el-table-column prop="client_id" :label="$t('sessions.tableClient')" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+          <template #default="{ row }">
+            <CodeTip :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
+          </template>
         </el-table-column>
 
         <!-- 状态列承载「这个会话现在怎么样」：运行中带心跳，异常终止带原因 -->
@@ -141,6 +145,8 @@ import PageToolbar from '../components/PageToolbar.vue'
 import SessionDrawer from '../components/SessionDrawer.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
+import { useDictionaries } from '../composables/useDictionaries'
+import CodeTip from '../components/CodeTip.vue'
 import { LOCK_GRACE_SEC, SESSION_STATUS_LIST } from '../utils/constants'
 import { attemptTipText, fmtDateTime, fmtRelative, sessionTagType } from '../utils/format'
 
@@ -148,6 +154,7 @@ const { t } = useI18n()
 const { canOperate } = useAuth()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
+const { stationName, clientName, ensureLoaded } = useDictionaries()
 
 const items = ref([])
 const loading = ref(false)
@@ -257,7 +264,7 @@ watch(
 )
 
 onMounted(async () => {
-  await loadProcesses()
+  await Promise.all([loadProcesses(), ensureLoaded()])
   await load()
 })
 

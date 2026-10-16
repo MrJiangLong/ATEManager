@@ -34,8 +34,8 @@
           <template #default="{ row }">
             <div class="items-panel">
               <div class="items-head muted">
-                {{ $t('records.checkoutId') }}: <span class="code">{{ row.executed_items?.checkout_id || '-' }}</span>
-                · {{ $t('trace.fwBaseline') }}: {{ row.executed_items?.firmware || '-' }}
+                {{ $t('records.checkoutId') }}: <span class="code">{{ row.executed_items?.checkout_id || '—' }}</span>
+                · {{ $t('trace.fwBaseline') }}: {{ row.executed_items?.firmware || '—' }}
                 · {{ $t('records.durationMs') }}: {{ fmtDurationMs(row.duration_ms) }}
               </div>
               <el-table :data="row.executed_items?.items || []" size="small" border>
@@ -87,10 +87,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="station_id" :label="$t('records.tableStation')" min-width="160">
-          <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
+          <template #default="{ row }">
+            <CodeTip :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
+          </template>
         </el-table-column>
         <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150">
-          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+          <template #default="{ row }">
+            <CodeTip :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
+          </template>
         </el-table-column>
         <el-table-column :label="$t('records.tableItems')" min-width="100" align="right">
           <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
@@ -144,6 +148,8 @@ import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import { useProcesses } from '../composables/useProcesses'
+import { useDictionaries } from '../composables/useDictionaries'
+import CodeTip from '../components/CodeTip.vue'
 import { TEST_RESULTS } from '../utils/constants'
 import CaseIdText from '../components/CaseIdText.vue'
 import { fmtDateTime, fmtDurationMs, resultTagType } from '../utils/format'
@@ -152,6 +158,7 @@ import { downloadArtifact } from '../utils/artifacts'
 const { t } = useI18n()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
+const { stationName, clientName, ensureLoaded } = useDictionaries()
 
 const items = ref([])
 const models = ref([])
@@ -201,7 +208,7 @@ watch(
 )
 
 onMounted(async () => {
-  await loadProcesses()
+  await Promise.all([loadProcesses(), ensureLoaded()])
   try {
     const res = await modelApi.list({})
     models.value = res.data

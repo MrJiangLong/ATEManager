@@ -29,7 +29,11 @@
 
       <DataCard :title="$t('configs.tabTopology')">
         <template #extra>
-          <el-tag size="small" effect="plain" type="info">{{ data.product.process_id }}</el-tag>
+          <el-tag size="small" effect="plain" type="info">
+            <CodeTip :code="data.product.process_id" :name="processName(data.product.process_id)">
+              {{ data.product.process_id }}
+            </CodeTip>
+          </el-tag>
           <el-tag v-if="data.product.is_completed" size="small" type="success">{{ $t('trace.completed') }}</el-tag>
         </template>
         <div class="steps">
@@ -39,7 +43,9 @@
               <span v-else>{{ i + 1 }}</span>
             </div>
             <div class="step-body">
-              <div class="step-name code">{{ step.station_id }}</div>
+              <div class="step-name code">
+                <CodeTip :code="step.station_id" :name="step.station_name">{{ step.station_id }}</CodeTip>
+              </div>
               <div class="step-sub muted">{{ step.station_name }}</div>
               <div class="step-deps muted" v-if="step.depends_on?.length">
                 {{ $t('trace.dependsOn') }}: {{ step.depends_on.join(', ') }}
@@ -127,7 +133,7 @@
               >
                 <span class="failed-items">{{ (row.failed_items || []).join('; ') }}</span>
               </el-tooltip>
-              <span v-else class="muted">-</span>
+              <span v-else class="muted">—</span>
             </template>
           </el-table-column>
           <el-table-column :label="$t('reports.tableMes')" width="115">
@@ -160,7 +166,7 @@
             <template #default="{ row }">
               <div class="items-panel">
                 <div class="items-head muted">
-                  {{ $t('records.checkoutId') }}: <span class="code">{{ row.executed_items?.checkout_id || '-' }}</span>
+                  {{ $t('records.checkoutId') }}: <span class="code">{{ row.executed_items?.checkout_id || '—' }}</span>
                   · {{ $t('records.durationMs') }}: {{ fmtDurationMs(row.duration_ms) }}
                 </div>
                 <el-table :data="row.executed_items?.items || []" size="small" border>
@@ -207,11 +213,15 @@
             <template #default="{ row }"><span class="code">{{ row.record_id }}</span></template>
           </el-table-column>
           <el-table-column prop="station_id" :label="$t('records.tableStation')" width="160">
-            <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
+            <template #default="{ row }">
+              <CodeTip :code="row.station_id" :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
+            </template>
           </el-table-column>
           <el-table-column prop="client_id" :label="$t('records.tableClient')" width="180" show-overflow-tooltip>
-          <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
-        </el-table-column>
+          <template #default="{ row }">
+            <CodeTip :code="row.client_id" :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
+          </template>
+          </el-table-column>
           <el-table-column :label="$t('records.tableItems')" min-width="90" align="right">
             <template #default="{ row }">{{ (row.executed_items?.items || []).length }}</template>
           </el-table-column>
@@ -239,10 +249,14 @@
       <DataCard :title="$t('sessions.title')">
         <el-table :data="sessions" stripe size="small">
           <el-table-column prop="station_id" :label="$t('sessions.tableStation')" width="140">
-            <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
+            <template #default="{ row }">
+              <CodeTip :code="row.station_id" :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
+            </template>
           </el-table-column>
           <el-table-column prop="client_id" :label="$t('sessions.tableClient')" width="180" show-overflow-tooltip>
-            <template #default="{ row }"><span class="code">{{ row.client_id }}</span></template>
+            <template #default="{ row }">
+              <CodeTip :code="row.client_id" :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
+            </template>
           </el-table-column>
           <el-table-column :label="$t('sessions.tableAttempt')" width="180">
             <template #default="{ row }">
@@ -298,12 +312,15 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import StatTile from '../components/StatTile.vue'
 import CaseIdText from '../components/CaseIdText.vue'
+import CodeTip from '../components/CodeTip.vue'
+import { useDictionaries } from '../composables/useDictionaries'
 import { attemptTipText, fmtDateTime, fmtDurationMs, repairTagType, resultTagType, sessionTagType } from '../utils/format'
 import { downloadArtifact } from '../utils/artifacts'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { stationName, clientName, processName, ensureLoaded } = useDictionaries()
 
 const sn = ref(decodeURIComponent(route.params.sn || ''))
 const inputSn = ref(sn.value)
@@ -384,7 +401,7 @@ const snLegend = computed(() =>
   data.value
     ? [
         { text: `${t('common.model')} ${data.value.product.product_model}` },
-        { text: `${t('trace.fwBaseline')} ${data.value.product.target_fw_version || '-'}` },
+        { text: `${t('trace.fwBaseline')} ${data.value.product.target_fw_version || '—'}` },
       ]
     : []
 )
@@ -398,7 +415,7 @@ const statusLegend = computed(() =>
   data.value
     ? [
         { text: `${t('products.tableFailCount')} ${data.value.product.fail_count}` },
-        { text: `${t('products.tableClient')} ${data.value.product.current_client || '-'}` },
+        { text: `${t('products.tableClient')} ${data.value.product.current_client || '—'}` },
       ]
     : []
 )
@@ -413,7 +430,10 @@ watch(() => route.params.sn, (v) => {
   inputSn.value = sn.value
   load()
 })
-onMounted(() => load())
+onMounted(() => {
+  ensureLoaded()
+  load()
+})
 </script>
 
 <style scoped>

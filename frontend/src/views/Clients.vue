@@ -46,7 +46,9 @@
                   size="small"
                   effect="plain"
                   type="primary"
-                >{{ s }}</el-tag>
+                >
+                  <CodeTip :code="s" :name="stationName(s)">{{ s }}</CodeTip>
+                </el-tag>
                 <el-tooltip
                   v-if="row.bound_stations.length > 3"
                   :content="row.bound_stations.join(', ')"
@@ -178,11 +180,14 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
+import { useDictionaries } from '../composables/useDictionaries'
+import CodeTip from '../components/CodeTip.vue'
 import { fmtRelative } from '../utils/format'
 
 const { t } = useI18n()
 const { canOperate } = useAuth()
 const { stations, loadProcesses } = useProcesses()
+const { stationName, ensureLoaded } = useDictionaries()
 
 const items = ref([])
 const loading = ref(false)
@@ -417,7 +422,7 @@ async function onDelete(row) {
 
 watch(stationFilter, () => load())
 onMounted(async () => {
-  await loadProcesses()
+  await Promise.all([loadProcesses(), ensureLoaded()])
   await load()
 })
 

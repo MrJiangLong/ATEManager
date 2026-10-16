@@ -29,7 +29,9 @@
           <template #default="{ row }">
             <div class="model-cell">
               <span>{{ row.product_model }}</span>
-              <span class="muted model-process">{{ row.process_id || '-' }}</span>
+              <span class="muted model-process">
+                <CodeTip :code="row.process_id" :name="processName(row.process_id)">{{ row.process_id || '—' }}</CodeTip>
+              </span>
             </div>
           </template>
         </el-table-column>
@@ -133,12 +135,15 @@ import ProductDrawer from '../components/ProductDrawer.vue'
 import RepairDialog from '../components/RepairDialog.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
+import { useDictionaries } from '../composables/useDictionaries'
+import CodeTip from '../components/CodeTip.vue'
 import { LOCK_GRACE_SEC, WIP_FILTER_STATUSES } from '../utils/constants'
 import { fmtDateTime, fmtDurationSec, fmtRelative, statusTagType } from '../utils/format'
 
 const { t } = useI18n()
 const router = useRouter()
 const { processes, loadProcesses } = useProcesses()
+const { processName, ensureLoaded } = useDictionaries()
 
 const items = ref([])
 const models = ref([])
@@ -272,7 +277,7 @@ watch(
 watch(zombieOnly, () => search())
 
 onMounted(async () => {
-  await loadProcesses()
+  await Promise.all([loadProcesses(), ensureLoaded()])
   try {
     const res = await modelApi.list({})
     models.value = res.data
