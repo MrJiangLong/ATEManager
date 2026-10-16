@@ -96,7 +96,7 @@
           >
             <el-tag size="small" type="danger" effect="plain">{{ (row.failed_items || []).length }}</el-tag>
           </el-tooltip>
-          <span v-else class="muted">-</span>
+          <span v-else class="muted">—</span>
         </template>
       </el-table-column>
       <el-table-column :label="t('reports.tableCreated')" min-width="160" show-overflow-tooltip>
@@ -146,7 +146,7 @@ import { fmtDateTime } from '../../utils/format'
 const { t } = useI18n()
 const { role } = useAuth()
 // 重试/重传为 operator+；viewer 只读浏览
-const canOperate = computed(() => ['operator', 'admin'].includes(role.value))
+const canOperate = computed(() => ['operator', 'manager', 'admin'].includes(role.value))
 
 const JOB_STATUSES = ['pending', 'running', 'success', 'partial', 'failed', 'invalid']
 const STATUS_META = {
