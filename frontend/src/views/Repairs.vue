@@ -32,6 +32,10 @@
           <el-option v-for="a in REPAIR_ACTIONS" :key="a" :value="a" :label="t(`repair.${a}`)" />
         </el-select>
         <el-input v-model="techFilter" clearable :placeholder="t('repairs.tableTech')" style="width:130px" @keyup.enter="search" />
+        <el-select v-model="statusFilter" clearable :placeholder="t('repairs.undoCol')" style="width:120px">
+          <el-option :value="'valid'" :label="t('repairs.statusValid')" />
+          <el-option :value="'undone'" :label="t('repairs.statusUndone')" />
+        </el-select>
         <div class="filter-right">
           <el-button :icon="RefreshRight" @click="search">{{ t('common.refresh') }}</el-button>
           <el-button :icon="Download" @click="exportCsv">{{ t('repairs.exportCsv') }}</el-button>
@@ -55,12 +59,9 @@
         <el-table-column prop="sn" :label="t('repairs.tableSn')" width="160">
           <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
         </el-table-column>
-        <el-table-column :label="t('repairs.tableAction')" width="160" align="center">
+        <el-table-column :label="t('repairs.tableAction')" width="130" align="center">
           <template #default="{ row }">
             <el-tag :type="repairTagType(row.repair_action)" size="small">{{ t(`repair.${row.repair_action}`) }}</el-tag>
-            <el-tag v-if="row.undone_at" size="small" type="info" effect="plain" style="margin-left:4px">
-              {{ t('repairs.undoneTag') }}
-            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="target_station" :label="t('repairs.tableTarget')" width="130">
@@ -73,6 +74,19 @@
         </el-table-column>
         <el-table-column prop="reason" :label="t('repairs.tableReason')" min-width="220" show-overflow-tooltip />
         <el-table-column prop="technician_id" :label="t('repairs.tableTech')" width="110" />
+        <el-table-column :label="t('repairs.undoCol')" width="100" align="center">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.undone_at"
+              :content="`${t('repairs.undoneBy')}: ${row.undone_by} · ${fmtDateTime(row.undone_at)}`"
+              placement="top"
+              :show-after="300"
+            >
+              <el-tag size="small" type="warning" effect="plain">{{ t('repairs.undoneTag') }}</el-tag>
+            </el-tooltip>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="t('repairs.tableTime')" width="160">
           <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
         </el-table-column>
@@ -326,6 +340,7 @@ const pageSize = ref(20)
 const snFilter = ref('')
 const actionFilter = ref('')
 const techFilter = ref('')
+const statusFilter = ref('')
 const dayFilter = ref(0)
 const saving = ref(false)
 const form = reactive({ sn: '', repair_action: 'RETEST', target_station: '', reason: '' })
@@ -353,6 +368,7 @@ async function load() {
     if (snFilter.value) params.sn = snFilter.value
     if (actionFilter.value) params.repair_action = actionFilter.value
     if (techFilter.value) params.technician = techFilter.value
+    if (statusFilter.value) params.undone = statusFilter.value === 'undone'
     if (dayFilter.value) params.days = dayFilter.value
     const res = await repairApi.list(params)
     items.value = res.data.items
@@ -667,7 +683,7 @@ async function executeBatch() {
 }
 
 watch([page, pageSize], () => load())
-watch([snFilter, actionFilter, techFilter, dayFilter], () => search())
+watch([snFilter, actionFilter, techFilter, statusFilter, dayFilter], () => search())
 
 onMounted(() => {
   ensureLoaded()

@@ -36,6 +36,7 @@ def list_repairs(
     sn: Optional[str] = None,
     repair_action: Optional[str] = None,
     technician: Optional[str] = None,
+    undone: Optional[bool] = Query(None, description="撤销状态筛选：true=已撤销 / false=有效（缺省=全部）"),
     days: int = Query(0, ge=0, le=3650, description="近 N 天（按本地日界，0 = 全部）"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
@@ -49,6 +50,10 @@ def list_repairs(
         query = query.filter(models.RepairRecord.repair_action == repair_action.upper())
     if technician:
         query = query.filter(models.RepairRecord.technician_id.ilike(f"%{technician}%"))
+    if undone is True:
+        query = query.filter(models.RepairRecord.undone_at.isnot(None))
+    elif undone is False:
+        query = query.filter(models.RepairRecord.undone_at.is_(None))
     if days:
         query = query.filter(models.RepairRecord.created_at >= _local_day_cutoff(days))
     total = query.count()

@@ -2292,6 +2292,19 @@ def test_repair_list_filters():
         all(r["repair_action"] == "RETEST" for r in resp.json()["items"]),
         f"action+days filter: {resp.text}",
     )
+    # 撤销状态筛选：true=仅已撤销 / false=仅有效
+    resp = admin("GET", "/api/admin/repairs", params={"undone": "true", "days": 1})
+    check(
+        resp.status_code == 200
+        and resp.json()["total"] >= 1
+        and all(r["undone_at"] for r in resp.json()["items"]),
+        f"undone=true filter: {resp.text}",
+    )
+    resp = admin("GET", "/api/admin/repairs", params={"undone": "false", "days": 1})
+    check(
+        resp.status_code == 200 and all(not r["undone_at"] for r in resp.json()["items"]),
+        f"undone=false filter: {resp.text}",
+    )
 
 # ================= J. 存量机型受控直通（passthrough 渐进上线） =================
 def test_passthrough_mode():
