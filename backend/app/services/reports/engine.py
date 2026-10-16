@@ -165,15 +165,13 @@ def upload_mes_if_ready(db, job: models.ReportJob) -> None:
     job.mes_status = "success" if ok else "failed"
     job.mes_message = msg
     if ok:
-        # 通用清理规则（与产品族无关）：凡声明 mes=true 的产物，上传成功即视为
-        # MES 是其唯一归档，立即清除 MinIO 对象与本地副本；未声明 MES 的产物
-        # （如数据报告）保留在存储里作为 ATEManager 侧归档。失败任务不清理，保重试。
-        _purge_artifacts(job, mes_arts)
+        for path in files.values():
+            path.unlink(missing_ok=True)
     db.commit()
 
 
 def _purge_artifacts(job: models.ReportJob, arts: list) -> None:
-    """清除产物存储：MinIO 对象（键置空）+ 本地副本，并标记 purged 落库。"""
+    """维修处置作废时清除产物：MinIO 对象与本地副本一并删除，并标记 purged 落库。"""
     for art in arts:
         if store.enabled():
             if art.get("object_key"):
@@ -183,13 +181,9 @@ def _purge_artifacts(job: models.ReportJob, arts: list) -> None:
                 store.remove(art["pdf_object_key"])
                 art["pdf_object_key"] = None
         for key in ("local_path", "local_pdf_path"):
-            p = art.get(key)
-            if p and Path(p).exists():
-                try:
-                    Path(p).unlink()
-                except OSError:
-                    pass
-            art[key] = None
+            p = art.pop(key, None)
+            if p:
+                Path(p).unlink(missing_ok=True)
         art["purged"] = True
     flag_modified(job, "artifacts")
 
@@ -244,8 +238,6 @@ def run_job(job_id: str) -> None:
 
         artifacts, failed_items, _logs = executor.run_generate(rule, job.model, job.sn, out_dir)
 
-        # 产物归档到 MinIO（未配置 MinIO 时保留本地文件作为归档）；
-        # 转 PDF 的产物先统一打印设置，保证 Worker 端（WPS 或 MS Excel）分页一致
         for art in artifacts:
             if art.get("pdf"):
                 try:
@@ -262,7 +254,6 @@ def run_job(job_id: str) -> None:
         job.artifacts = artifacts
         job.failed_items = failed_items
 
-        # ---- PDF 阶段 ----
         mode = pdf_mod.mode()
         for art in artifacts:
             if not art.get("pdf") or art.get("failed"):
@@ -274,6 +265,7 @@ def run_job(job_id: str) -> None:
                         key = store.object_key(job.model, job.sn, pdf_path.name)
                         store.upload(pdf_path, key)
                         art["pdf_object_key"] = key
+                        art["local_pdf_path"] = str(pdf_path)
                     art["pdf_status"] = "done"
                 except Exception as exc:
                     logger.warning("PDF 转换失败：%s %s %s", job.sn, art["type"], exc)
@@ -281,9 +273,16 @@ def run_job(job_id: str) -> None:
                     art["pdf_error"] = str(exc)
             elif mode == "external":
                 art["pdf_status"] = "pending"
-            # off：保持 pdf_status=none，仅出 Excel
 
-        # ---- 终态：按渲染/上传/PDF 结果综合评定，并尝试 MES ----
+        if store.enabled():
+            for art in artifacts:
+                if art.get("failed"):
+                    continue
+                for key in ("local_path", "local_pdf_path"):
+                    p = art.pop(key, None)
+                    if p:
+                        Path(p).unlink(missing_ok=True)
+
         finalize_job(db, job)
         logger.info("报告任务完成：%s %s status=%s failed_items=%s", job.sn, job.model, job.status, job.failed_items)
     except Exception as exc:

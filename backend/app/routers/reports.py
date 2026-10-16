@@ -299,7 +299,9 @@ async def pdf_result(
             key = store.object_key(job.model, job.sn, filename)
             store.upload(local, key)
             art["pdf_object_key"] = key
-        art["local_pdf_path"] = str(local)
+            local.unlink(missing_ok=True)
+        else:
+            art["local_pdf_path"] = str(local)
     else:
         art["pdf_status"] = "failed"
         art["pdf_error"] = error or "worker failed"

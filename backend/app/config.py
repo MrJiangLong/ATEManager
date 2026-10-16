@@ -108,7 +108,6 @@ class Settings:
     # 盖章完成产品扫描入队 + 调度间隔
     REPORT_SCAN_INTERVAL_SEC: int = _as_int(os.getenv("REPORT_SCAN_INTERVAL_SEC"), 60)
     REPORT_SCAN_BATCH: int = _as_int(os.getenv("REPORT_SCAN_BATCH"), 20)
-    REPORT_RETENTION_DAYS: int = _as_int(os.getenv("REPORT_RETENTION_DAYS"), 90)
     # PDF 转换：off = 仅 Excel；libreoffice = 服务端 headless；external = 外部 Worker（WPS COM）经 API 领取
     REPORT_PDF_MODE: str = os.getenv("REPORT_PDF_MODE", "off")
     SOFFICE_CMD: str = os.getenv("SOFFICE_CMD", "soffice")

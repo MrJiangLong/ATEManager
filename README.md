@@ -69,7 +69,7 @@
 - **SN 全追溯**：事件台账 + 维修履历 + 会话时间线
 - **SPC 良率看板**：产量/良率趋势、工位与流程良率、失效用例排行、机台在线
 - **出厂报告引擎**：盖章完成自动入队（60s 轮询，不触碰出站事务）→ 上传式插件产 Excel → MinIO 归档 → PDF 转换（服务端 LibreOffice 或外部 WPS Worker）→ MES 上传（multipart 字段名由插件 `mes_field` 声明）；报告规则（型号清单精确匹配 + 脚本 + 模板 + 标准器台账）全部 Web 端维护，后端零改动扩展新产品族
-- **报告产物存储语义**：走 MES 的产物上传成功即清理 ATEManager 侧 MinIO 对象与本地副本（MES 即唯一归档）；未走 MES 的产物（数据报告）随 `REPORT_RETENTION_DAYS` 到期连 MinIO 对象、本地目录、DB 记录一并清除；失败任务全量保留待重试
+- **报告产物存储语义**：产物上传 MinIO 成功后本地副本即删，**MinIO 与任务记录永久保留**（产物始终可预签名下载，无任何到期清理）；维修处置作废时该 SN 报告的 MinIO 对象与本地副本一并清除（报告不可再下载）；失败任务全量保留待重试；未配置 MinIO 时本地文件保留作为归档
 - **四角色权限**：viewer 只读 / operator 产线操作 / manager 配置管理（工艺+测试登记+报告规则，不含用户管理）/ admin 全部，后端逐端点收口
 
 ---
@@ -171,18 +171,18 @@ routers  ──▶  services  ──▶  models
 
 服务器**不含任何产品知识**：表名列名、型号字符串解析、MES 字段名、模板形态全部在插件或 Web 配置侧。
 
-存储与删除规则（按产物是否声明 `mes` 区分，与产品族无关）：
+存储与删除规则（与产品族无关）：
 
 | 产物 | MinIO | 本地 work_dir | DB 记录 |
 |---|---|---|---|
-| `mes=true`（校准报告/证书） | 上传成功**即刻删除** | 同左 | `REPORT_RETENTION_DAYS`（90 天） |
-| `mes=false`（数据报告） | 保留至保留期到期，随记录一并删除 | 同左 | 同左 |
-| 失败/部分成功任务 | 保留（重试与排查现场） | 保留 | 保留，到期一并清 |
+| 全部产物（`mes=true`/`mes=false`） | **永久保留** | 上传 MinIO 成功即删 | 永久保留 |
+| 维修处置作废/RESET 对应 SN 的报告 | 即刻删除（报告不可再下载） | 同左 | 标记 INVALID，记录永久保留 |
+| 失败/部分成功任务 | 保留（重试与排查现场） | 本地现场保留 | 保留 |
 
 两条硬保证：
 
 - MES 成功判定与 TekReport 上传工具同口径（HTTP 2xx 且 JSON `success=true`/`"true"`，无字段/字符串 `"false"`/数字均判失败）
-- 到期清理顺序：**先删文件（MinIO + 本地），全部删净后再清 DB 记录**；删除失败的任务保留记录下轮重试，不产生无索引的孤儿文件
+- 除"维修处置作废"与"上传后删除本地副本"外，系统不删除任何 MinIO 对象与任务记录
 
 ---
 
@@ -318,7 +318,7 @@ ATEManager/
 │   │   │   ├── timeutil.py   UTC 时间语义、"距某时刻多久"、统计日界
 │   │   │   └── reports/      出厂报告引擎
 │   │   │       ├── engine.py       任务管线：入队 / 执行 / 终态 / MES 就绪判定
-│   │   │       ├── scheduler.py    后台调度：扫描盖章完成自动入队 + 限流派发 + 过期清理
+│   │   │       ├── scheduler.py    后台调度：扫描盖章完成自动入队 + 限流派发
 │   │   │       ├── registry.py     规则注册表：型号精确匹配 / 脚本编译 / 模板物化缓存
 │   │   │       ├── executor.py     插件执行器：注入只读 api，隔离线程带超时运行
 │   │   │       ├── extractor.py    工厂测试库只读取数（各型号分库，库名=型号）
@@ -748,8 +748,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `REPORT_MES_URL` | MES 校准接口 | 各产品族统一的校准数据上传地址（multipart：`sn` + 各 PDF，字段名由插件产物 `mes_field` 声明）；成功判定与 TekReport 同口径（2xx 且 JSON `success=true`/`"true"`） |
 | `REPORT_MAX_CONCURRENCY` | `2` | 报告生成并发上限 |
 | `REPORT_SCAN_INTERVAL_SEC` / `REPORT_SCAN_BATCH` | `60` / `20` | 盖章完成产品扫描入队的间隔与单轮批量 |
-| `REPORT_WORK_DIR` | `reports` | 生成过程工作目录（xlsx 先落盘再传 MinIO；随任务记录保留期一起清理） |
-| `REPORT_RETENTION_DAYS` | `90` | 任务记录保留天数；到期时产物对应的 MinIO 对象、本地工作目录与任务记录一并删除（已上传 MES 的产物在上传成功时即清理，MES 即其归档） |
+| `REPORT_WORK_DIR` | `reports` | 生成过程工作目录（xlsx/PDF 上传 MinIO 成功后本地副本即删） |
 | `REPORT_TEMPLATE_DIR` | `report_templates` | 模板本地物化缓存目录 |
 | `REPORT_SCRIPT_TIMEOUT_SEC` | `300` | 插件 `generate()` 执行超时 |
 | `REPORT_JOB_TIMEOUT_SEC` | `600` | 任务级运行超时：超时仍为 running 的任务判失败可重试（防服务重启遗留孤儿卡死）；`<=0` 关闭看门狗 |
@@ -771,7 +770,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 **作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效；已上传
 MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，完工扫描自动生成全新报告；
 也可对作废任务手动「重试」重新生成。SCRAP 不作废报告（保留报废前最后有效状态的记录）。
-作废记录随保留期（90 天）一并清理。
+作废任务记录永久保留。
 
 ---
 
@@ -865,8 +864,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 前端页面 404（刷新后） | 静态托管未生效 | 确认 `frontend/dist/index.html` 存在，或改用 Hash 路由 |
 | 报告任务一直 pending | 调度器未启动 | 核对 `FACTORY_DB_*` 已配置且存在启用中的报告规则；启动日志应出现「报告调度器已启动」 |
 | PDF 长时间 pending | external 模式 Worker 未运行 | 在装有 WPS/Office 的 Windows 测试机启动 `tools/reports/pdf_worker/report_pdf_worker.py`（核对 server_url 与 api_key） |
-| PDF/Excel 下载按钮置灰 | 产物已上传 MES，ATEManager 不再保留副本 | 到 MES 侧查取；数据报告不受影响 |
-| 产物下载 404 | 任务记录已过保留期（默认 90 天），MinIO 对象随记录一并清除 | 到 MES 侧查取（校准类）；数据报告超期后不再提供下载 |
+| PDF/Excel 下载 404 | 产物已上传 MES（MinIO 对象保留，仅本地副本删除）或该 SN 报告被维修处置作废 | 校准类到 MES 侧查取；数据报告确认 SN 是否被作废 |
 | MES 上传失败（HTTP 503/连接拒绝） | `REPORT_MES_URL` 不可达或 MES 服务异常 | 核对地址；恢复后用「重传 MES」重试 |
 | 报告分页/排版与样张不一致 | 模板打印设置被改动 | 引擎转 PDF 前会自动规范化（多节回退 scale、单页锁 A4 + fitToPage 1×1）；检查模板是否被手工调整过分节符与纸张 |
 
