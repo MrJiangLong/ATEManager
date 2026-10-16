@@ -153,6 +153,10 @@ export const repairApi = {
   list: (params) => api.get('/admin/repairs', { params }),
   create: (data) => api.post('/admin/repairs', data),
   stats: (params) => api.get('/admin/repairs/stats', { params }),
+  /** 批量处置：dry_run=true 预演（RESET/SCRAP 禁批量） */
+  batch: (data) => api.post('/admin/repairs/batch', data),
+  /** 撤销处置：窄窗口（最新一条 + 零后续动作），SCRAP 不可撤 */
+  undo: (repairId) => api.post(`/admin/repairs/${repairId}/undo`),
 }
 
 /** 仪表盘统计 */

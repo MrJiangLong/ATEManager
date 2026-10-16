@@ -676,6 +676,8 @@ class RepairOut(ORMModel):
     target_station: Optional[str] = None
     reason: Optional[str] = None
     technician_id: str
+    undone_by: Optional[str] = None
+    undone_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
 class RepairPageOut(BaseModel):
@@ -691,6 +693,41 @@ class RepairActionStat(BaseModel):
 class RepairStatsOut(BaseModel):
     total: int = 0
     items: List[RepairActionStat] = []
+
+class RepairBatchIn(BaseModel):
+    items: List[str] = Field(description="SN 清单（去重，空/重复项按失败项返回）")
+    repair_action: str = Field(description="仅 RETEST / ROLLBACK（RESET/SCRAP 禁批量）")
+    target_station: Trimmed = Field(default=None, max_length=64, description="RETEST / ROLLBACK 必填")
+    reason: Trimmed = Field(default="")
+    dry_run: bool = Field(default=False, description="true = 只校验不落库（预演破坏面）")
+
+    @field_validator("repair_action")
+    @classmethod
+    def _check_action(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if v not in ("RETEST", "ROLLBACK", "RESET", "SCRAP"):
+            raise ValueError("invalid_repair_action: must be RETEST / ROLLBACK / RESET / SCRAP")
+        return v
+
+class RepairBatchItemOut(BaseModel):
+    sn: str
+    ok: bool
+    code: Optional[str] = None
+    message: Optional[str] = None
+    # 预演/执行成功时的破坏面回显（机型/流程随件透出：同工位名在各流程内容不同）
+    product_model: Optional[str] = None
+    process_id: Optional[str] = None
+    current_status: Optional[str] = None
+    passed_stations: List[str] = []
+    revoked_stations: List[str] = []
+    invalidating_records: int = 0
+
+class RepairBatchOut(BaseModel):
+    dry_run: bool
+    total: int
+    ok_count: int = 0
+    fail_count: int = 0
+    items: List[RepairBatchItemOut] = []
 
 # =====================================================================
 # 测试会话（续测与锁接管）

@@ -1,25 +1,42 @@
-"""通道二：维修处置履历（/api/admin/repairs）—— 只读 + 授权处置。"""
+"""通道二：维修处置履历（/api/admin/repairs）—— 只读 + 授权处置（单条 + 批量）。"""
 
-from datetime import timedelta
-from typing import Optional
+from datetime import timedelta, timezone
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..config import settings
 from ..database import get_db
+from ..errors import AppError, bad_request
 from ..security import current_user, require_operator
-from ..services import apply_repair
+from ..services import apply_repair, undo_repair
+from ..services.gate import _check_repair
 from ..services.timeutil import utcnow
 
 router = APIRouter(prefix="/api/admin/repairs", tags=["admin-维修处置"])
+
+# 批量处置单次上限：够一轮返修批次用，又足以限制误操作的破坏面
+REPAIR_BATCH_LIMIT = 50
+
+
+def _local_day_cutoff(days: int):
+    """本地时区"近 N 天"的日界 cutoff（含今天）：1 = 今天零点起，3 = 前天零点起。"""
+    local_now = utcnow().astimezone(settings.TZ_INFO)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=days - 1
+    )
+    return local_start.astimezone(timezone.utc)
 
 
 @router.get("", response_model=schemas.RepairPageOut, summary="维修处置履历")
 def list_repairs(
     sn: Optional[str] = None,
     repair_action: Optional[str] = None,
+    technician: Optional[str] = None,
+    days: int = Query(0, ge=0, le=3650, description="近 N 天（按本地日界，0 = 全部）"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -30,6 +47,10 @@ def list_repairs(
         query = query.filter(models.RepairRecord.sn.ilike(f"%{sn}%"))
     if repair_action:
         query = query.filter(models.RepairRecord.repair_action == repair_action.upper())
+    if technician:
+        query = query.filter(models.RepairRecord.technician_id.ilike(f"%{technician}%"))
+    if days:
+        query = query.filter(models.RepairRecord.created_at >= _local_day_cutoff(days))
     total = query.count()
     rows = (
         query.order_by(models.RepairRecord.repair_id.desc())
@@ -58,6 +79,100 @@ def create_repair(payload: schemas.RepairIn, db: Session = Depends(get_db), user
         technician_id=user.username,
     )
     return record
+
+
+@router.post(
+    "/{repair_id}/undo",
+    response_model=schemas.RepairOut,
+    summary="撤销维修处置（窄窗口：最新一条 + 处置后零后续动作；SCRAP 不可撤）",
+)
+def undo_repair_api(repair_id: int, db: Session = Depends(get_db), user=Depends(require_operator)):
+    """按处置前快照精确还原：印章/失败计数/状态恢复，被作废的台账记录按快照 ID 精确恢复；
+    完工件恢复完工态后由完工扫描自动重出报告。四条边界（SCRAP/最新/零后续/未撤销）
+    由服务端强制，任一不满足即 409。"""
+    return undo_repair(db, repair_id=repair_id, operator_id=user.username)
+
+
+@router.post(
+    "/batch",
+    response_model=schemas.RepairBatchOut,
+    summary="批量维修处置（dry_run 预演；RESET/SCRAP 禁批量，须单条 + 二次确认）",
+)
+def batch_repairs(payload: schemas.RepairBatchIn, db: Session = Depends(get_db), user=Depends(require_operator)):
+    """同一动作/目标逐条套用一批 SN，逐条返回成功/失败与破坏面。
+
+    - dry_run=true 只跑守卫不落库，回显每件当前状态、将被撤销的印章、将作废的台账记录数
+    - 高破坏动作 RESET/SCRAP 不允许批量（400 action_not_batchable），须单条 + 强确认
+    - 逐条独立生效：失败项不影响已成功项，全部留痕 repair_records
+    """
+    action = payload.repair_action
+    if action in (models.REPAIR_RESET, models.REPAIR_SCRAP):
+        raise bad_request("action_not_batchable", f"action_not_batchable: {action} is single-SN only")
+    if not payload.items:
+        raise bad_request("items_required", "items_required: at least one sn")
+    if len(payload.items) > REPAIR_BATCH_LIMIT:
+        raise bad_request("batch_too_large", f"batch_too_large: max {REPAIR_BATCH_LIMIT} items per batch")
+
+    items: List[schemas.RepairBatchItemOut] = []
+    seen: set = set()
+    for raw in payload.items:
+        sn = (raw or "").strip()
+        if not sn:
+            items.append(schemas.RepairBatchItemOut(sn="", ok=False, code="field_required", message="sn required"))
+            continue
+        if sn in seen:
+            items.append(
+                schemas.RepairBatchItemOut(sn=sn, ok=False, code="duplicate_sn", message=f"duplicate sn: {sn}")
+            )
+            continue
+        seen.add(sn)
+        try:
+            product, _action, _graph, passed, _completed, revoked, product_model, process_id = _check_repair(
+                db, sn=sn, repair_action=action, target_station=payload.target_station or None
+            )
+        except AppError as exc:
+            items.append(schemas.RepairBatchItemOut(sn=sn, ok=False, code=exc.code, message=exc.message))
+            continue
+        invalidating = 0
+        if revoked:
+            invalidating = (
+                db.query(models.TestRecord)
+                .filter(
+                    models.TestRecord.sn == sn,
+                    models.TestRecord.station_id.in_(revoked),
+                    models.TestRecord.is_valid.is_(True),
+                )
+                .count()
+            )
+        items.append(
+            schemas.RepairBatchItemOut(
+                sn=sn,
+                ok=True,
+                product_model=product_model,
+                process_id=process_id,
+                current_status=product.current_status,
+                passed_stations=sorted(passed),
+                revoked_stations=sorted(revoked) if revoked else [],
+                invalidating_records=invalidating,
+            )
+        )
+        if not payload.dry_run:
+            apply_repair(
+                db,
+                sn=sn,
+                repair_action=action,
+                target_station=payload.target_station or None,
+                reason=payload.reason or "",
+                technician_id=user.username,
+            )
+
+    return schemas.RepairBatchOut(
+        dry_run=payload.dry_run,
+        total=len(items),
+        ok_count=sum(1 for i in items if i.ok),
+        fail_count=sum(1 for i in items if not i.ok),
+        items=items,
+    )
 
 
 @router.get("/stats", response_model=schemas.RepairStatsOut, summary="处置动作分布统计")

@@ -20,6 +20,7 @@ from .gate import (
     save_checkpoint,
     stage_artifact,
     touch_client,
+    undo_repair,
 )
 from .metrics import build_overview
 

@@ -76,6 +76,12 @@ _ADDED_COLUMNS = {
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
+    "repair_records": {
+        # 处置前状态快照（撤销处置用）与撤销留痕
+        "snapshot": "JSON DEFAULT '{}'",
+        "undone_by": "VARCHAR(32)",
+        "undone_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
+    },
     "users": {
         # 存量唯一账号回填为 admin（升级不失权）；新账号由接口显式指定角色
         "role": "VARCHAR(16) DEFAULT 'admin'",

@@ -23,6 +23,7 @@
 """
 
 import uuid
+from datetime import timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from sqlalchemy import CursorResult, update
@@ -54,7 +55,7 @@ from .routing import (
     next_stations,
     station_rules,
 )
-from .timeutil import elapsed_sec, utcnow
+from .timeutil import as_utc, elapsed_sec, utcnow
 
 logger = get_logger("gate")
 
@@ -1189,9 +1190,10 @@ def _ack(
     )
 
 # =====================================================================
-def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> int:
+def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> List[int]:
+    """作废指定工位的有效台账记录（软删），返回被作废的 record_id 列表（撤销快照用）。"""
     if not station_ids:
-        return 0
+        return []
     rows = (
         db.query(models.TestRecord)
         .filter(
@@ -1201,19 +1203,21 @@ def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> int:
         )
         .all()
     )
+    ids = [row.record_id for row in rows]
     for row in rows:
         row.is_valid = False
-    return len(rows)
+    return ids
 
-def apply_repair(
-    db: Session,
-    *,
-    sn: str,
-    repair_action: str,
-    target_station: Optional[str],
-    reason: str,
-    technician_id: str,
-) -> Tuple[models.ProductStatus, models.RepairRecord]:
+def _check_repair(
+    db: Session, *, sn: str, repair_action: str, target_station: Optional[str]
+) -> Tuple[models.ProductStatus, str, object, Set[str], bool, Optional[Set[str]], str, str]:
+    """维修处置守卫：预演（dry_run）与执行共用同一套校验，杜绝口径漂移。不落库。
+
+    返回 (product, action, graph, passed, was_completed, revoked, product_model, process_id)；
+    revoked 仅 RETEST/ROLLBACK 有值（预演可据此计算破坏面）。
+    机型/流程随件返回：同一工位在各流程的测试项与工步序不同，批量混合批次必须让
+    操作员看到每件归属，避免"同工位名、不同工艺内容"的误解。
+    """
     product = _locked_product(db, sn)
     if product is None:
         raise not_found("product_not_found", f"product_not_found: {sn}")
@@ -1223,26 +1227,24 @@ def apply_repair(
             f"product_holding_lock: {sn} is under test by {product.current_client}",
             exit_code=EXIT_LOCK_CONFLICT,
         )
+    action = (repair_action or "").upper()
+    if action not in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK, models.REPAIR_RESET, models.REPAIR_SCRAP):
+        raise bad_request("invalid_repair_action", f"invalid_repair_action: {repair_action}")
+    # 报废件封死复活通道：RESET/RETEST/ROLLBACK 会把 SCRAPPED 置回 IDLE，
+    # 击穿报废语义。仅允许再次确认报废（幂等补留痕）。
+    if product.current_status == models.STATUS_SCRAPPED and action != models.REPAIR_SCRAP:
+        raise conflict_error(
+            "product_scrapped",
+            f"product_scrapped: {sn} is scrapped, cannot re-flow via {action}",
+        )
 
     model_row = db.get(models.ProductModel, product.product_model)
     graph = load_process(db, model_row.process_id) if model_row else None
-
     passed = _passed(product)
     was_completed = bool(product.is_completed)
-    action = repair_action.upper()
 
-    if action == models.REPAIR_SCRAP:
-        product.current_status = models.STATUS_SCRAPPED
-        product.locked_at = utcnow()
-        product.locked_reason = reason or "scrapped by technician"
-    elif action == models.REPAIR_RESET:
-        _invalidate_records(db, sn, set(graph.stations) if graph else set(passed))
-        _write_passed(product, set(), graph)
-        product.fail_count = 0
-        product.current_status = models.STATUS_IDLE
-        product.locked_at = None
-        product.locked_reason = None
-    elif action in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK):
+    revoked: Optional[Set[str]] = None
+    if action in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK):
         if not target_station:
             raise bad_request("target_station_required", "target_station_required for RETEST/ROLLBACK")
         if graph is not None and target_station not in graph.step_of:
@@ -1268,15 +1270,59 @@ def apply_repair(
                     "station_not_passed",
                     f"station_not_passed: nothing to roll back from {target_station}",
                 )
-        _invalidate_records(db, sn, revoked)
+    return product, action, graph, passed, was_completed, revoked, product.product_model, (
+        model_row.process_id if model_row else ""
+    )
+
+
+def apply_repair(
+    db: Session,
+    *,
+    sn: str,
+    repair_action: str,
+    target_station: Optional[str],
+    reason: str,
+    technician_id: str,
+) -> Tuple[models.ProductStatus, models.RepairRecord]:
+    product, action, graph, passed, was_completed, revoked, _model, _process = _check_repair(
+        db, sn=sn, repair_action=repair_action, target_station=target_station
+    )
+    # 处置前状态快照：撤销处置（undo_repair）的精确还原依据
+    if action == models.REPAIR_RESET:
+        snapshot_revoked = sorted(set(graph.stations) if graph else set(passed))
+    else:
+        snapshot_revoked = sorted(revoked) if revoked else []
+    snapshot = {
+        "passed_stations": sorted(passed),
+        "fail_count": product.fail_count or 0,
+        "current_status": product.current_status,
+        "is_completed": was_completed,
+        "locked_reason": product.locked_reason,
+        "revoked_stations": snapshot_revoked,
+        "invalidated_record_ids": [],
+    }
+
+    if action == models.REPAIR_SCRAP:
+        product.current_status = models.STATUS_SCRAPPED
+        product.locked_at = utcnow()
+        product.locked_reason = reason or "scrapped by technician"
+    elif action == models.REPAIR_RESET:
+        snapshot["invalidated_record_ids"] = _invalidate_records(
+            db, sn, set(graph.stations) if graph else set(passed)
+        )
+        _write_passed(product, set(), graph)
+        product.fail_count = 0
+        product.current_status = models.STATUS_IDLE
+        product.locked_at = None
+        product.locked_reason = None
+    else:  # RETEST / ROLLBACK：revoked 已由守卫算出且非空
+        snapshot["invalidated_record_ids"] = _invalidate_records(db, sn, revoked)
         _write_passed(product, passed - revoked, graph)
         product.current_status = models.STATUS_IDLE
         product.locked_at = None
         product.locked_reason = None
         if product.fail_count:
             product.fail_count = 0
-    else:
-        raise bad_request("invalid_repair_action", f"invalid_repair_action: {repair_action}")
 
     # 维修处置破坏完工态时，联动作废该 SN 的报告任务（含存储清理）；
     # 产品重新完工后由完工扫描自动生成新报告（SCRAP 不作废，报告为报废前最后有效记录）
@@ -1296,8 +1342,98 @@ def apply_repair(
         target_station=target_station or None,
         reason=reason or None,
         technician_id=technician_id,
+        snapshot=snapshot,
     )
     db.add(repair)
     db.commit()
     return product, repair
+
+
+def undo_repair(db: Session, *, repair_id: int, operator_id: str) -> models.RepairRecord:
+    """撤销维修处置：窄窗口精确还原（按处置前快照），SCRAP 永不可撤销。
+
+    边界（服务端强制，全部满足才可撤销）：
+    ① 仅 RETEST/ROLLBACK/RESET；② 仅该 SN 最新一条未撤销处置；
+    ③ 处置后零后续动作（无新会话、印章集合仍等于处置后状态）；④ 未被撤销过。
+    撤销效果：印章/失败计数/状态按快照还原，被作废的台账记录按快照 ID 精确恢复
+    （只碰本条处置作废的记录，不碰更早的历史）；完工态恢复后由完工扫描自动重出报告。
+    """
+    repair = db.get(models.RepairRecord, repair_id)
+    if repair is None:
+        raise not_found("repair_not_found", f"repair_not_found: {repair_id}")
+    if repair.undone_at is not None:
+        raise conflict_error(
+            "already_undone",
+            f"already_undone: repair {repair_id} was undone by {repair.undone_by}",
+        )
+    if repair.repair_action == models.REPAIR_SCRAP:
+        raise conflict_error(
+            "action_not_undoable",
+            f"action_not_undoable: SCRAP is irreversible (repair {repair_id})",
+        )
+    snap = repair.snapshot or {}
+    if not snap:
+        raise conflict_error(
+            "snapshot_missing", f"snapshot_missing: repair {repair_id} has no state snapshot"
+        )
+    product = db.get(models.ProductStatus, repair.sn)
+    if product is None:
+        raise not_found("product_not_found", f"product_not_found: {repair.sn}")
+
+    # ② 仅最新一条未撤销处置（链条中间撤销会造成状态分叉）
+    latest = (
+        db.query(models.RepairRecord)
+        .filter(
+            models.RepairRecord.sn == repair.sn,
+            models.RepairRecord.undone_at.is_(None),
+        )
+        .order_by(models.RepairRecord.repair_id.desc())
+        .first()
+    )
+    if latest is None or latest.repair_id != repair.repair_id:
+        raise conflict_error(
+            "not_latest_disposition",
+            f"not_latest_disposition: repair {repair_id} is not the latest disposition of {repair.sn}",
+        )
+
+    # ③ 处置后零后续动作：无新会话（时间统一按 UTC 解析；created_at 为秒级精度，
+    # 与会话 started_at 的微秒精度比较时加 1s 容差——印章比对才是主校验）
+    created_at = as_utc(repair.created_at)
+    sessions = db.query(models.TestSession).filter(models.TestSession.sn == repair.sn).all()
+    if any(
+        as_utc(s.started_at) > created_at + timedelta(seconds=1)
+        for s in sessions
+        if s.started_at is not None
+    ):
+        raise conflict_error(
+            "repair_state_changed",
+            f"repair_state_changed: {repair.sn} has new test sessions after repair {repair_id}",
+        )
+    # 印章集合仍等于处置后状态（处置前 - 撤销集合）
+    pre_passed = set(snap.get("passed_stations") or [])
+    post_passed = pre_passed - set(snap.get("revoked_stations") or [])
+    if set(_passed(product)) != post_passed:
+        raise conflict_error(
+            "repair_state_changed",
+            f"repair_state_changed: {repair.sn} stamps differ from post-repair state of {repair_id}",
+        )
+
+    # 按快照精确还原
+    model_row = db.get(models.ProductModel, product.product_model)
+    graph = load_process(db, model_row.process_id) if model_row else None
+    _write_passed(product, pre_passed, graph)
+    product.fail_count = snap.get("fail_count") or 0
+    product.current_status = snap.get("current_status") or models.STATUS_IDLE
+    product.locked_reason = snap.get("locked_reason")
+    product.locked_at = None
+    record_ids = snap.get("invalidated_record_ids") or []
+    if record_ids:
+        db.query(models.TestRecord).filter(models.TestRecord.record_id.in_(record_ids)).update(
+            {models.TestRecord.is_valid: True}, synchronize_session=False
+        )
+    product.updated_at = utcnow()
+    repair.undone_by = operator_id
+    repair.undone_at = utcnow()
+    db.commit()
+    return repair
 

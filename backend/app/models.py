@@ -336,6 +336,11 @@ class RepairRecord(Base):
     target_station: Mapped[Optional[str]] = mapped_column(String(64))
     reason: Mapped[Optional[str]] = mapped_column(Text)
     technician_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 处置前状态快照（撤销处置的精确还原依据）：passed_stations / fail_count /
+    # current_status / is_completed / locked_reason / invalidated_record_ids
+    snapshot: Mapped[Optional[dict]] = mapped_column(JsonbType)
+    undone_by: Mapped[Optional[str]] = mapped_column(String(32))
+    undone_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class TestSession(Base):
