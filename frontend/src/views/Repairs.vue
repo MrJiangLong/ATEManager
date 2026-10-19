@@ -122,70 +122,11 @@
       </div>
     </DataCard>
 
-    <!-- 单件处置抽屉 -->
-    <el-drawer v-model="singleVisible" :title="t('repairs.singleDispose')" size="650px" class="form-dialog">
-      <el-form :model="form" label-position="top" @submit.prevent="submit">
-        <el-form-item :label="t('common.sn')" required>
-          <el-input
-            v-model="form.sn"
-            :placeholder="t('products.repairSnPh')"
-            clearable
-            @blur="lookupSn()"
-            @keyup.enter="lookupSn()"
-            @clear="clearSnInfo"
-          />
-          <div v-if="snInfoLoading" class="sn-hint muted">{{ t('repairs.snLooking') }}</div>
-          <div v-else-if="snInfoError === 'not_found'" class="sn-hint text-danger">{{ t('repairs.snNotFound') }}</div>
-          <div v-else-if="snInfo" class="sn-summary">
-            <el-tag :type="statusTagType(snStatusKey)" size="small">{{ t(`status.${snStatusKey}`) }}</el-tag>
-            <span class="muted">{{ t('products.tableFailCount') }} {{ snInfo.product.fail_count }}</span>
-            <span class="muted">{{ passedStations.join(' → ') || t('products.stepPending') }}</span>
-            <span v-if="snInfo.product.current_status === 'TESTING'" class="text-danger">
-              {{ t('repairs.snTestingHint') }}
-            </span>
-          </div>
-        </el-form-item>
-        <el-form-item :label="t('products.repairAction')" required>
-          <el-radio-group v-model="form.repair_action" class="action-group">
-            <el-radio-button v-for="a in REPAIR_ACTIONS" :key="a" :value="a">{{ t(`repair.${a}`) }}</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="needsTarget" required>
-          <template #label>
-            {{ t('products.repairTargetStation') }}
-            <span v-if="!passedStations.length" class="text-danger">{{ t('repairs.noPassedStation') }}</span>
-          </template>
-          <el-select
-            v-model="form.target_station"
-            filterable
-            :disabled="!passedStations.length"
-            :placeholder="t('products.repairTargetStation')"
-            style="width:100%"
-          >
-            <el-option v-for="s in passedStations" :key="s" :value="s" :label="s" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('products.repairReason')" required>
-          <el-input v-model="form.reason" type="textarea" :rows="3" :placeholder="t('products.repairReasonPh')" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <div class="drawer-footer">
-          <el-button @click="singleVisible = false">{{ t('common.close') }}</el-button>
-          <el-button
-            type="primary"
-            :loading="saving"
-            :disabled="snInfoError === 'not_found' || (needsTarget && !passedStations.length)"
-            @click="submit"
-          >
-            {{ t('repairs.execute') }}
-          </el-button>
-        </div>
-      </template>
-    </el-drawer>
+    <!-- 单件处置抽屉（共享组件：与在制管理入口同一套确认与依赖重测逻辑） -->
+    <RepairDisposeDrawer v-model="singleVisible" @saved="onDisposeSaved" />
 
     <!-- 批量处置抽屉（与单件同构：清单 + 动作 + 工位 + 原因，执行前自动校验 + 汇总确认） -->
-    <el-drawer v-model="batchVisible" :title="t('repairs.batchWizard')" size="650px" class="form-dialog">
+    <el-drawer v-model="batchVisible" :title="t('repairs.batchWizard')" size="680px" class="form-dialog">
       <el-form label-position="top" @submit.prevent="executeBatch">
         <el-form-item :label="t('repairs.batchSnList')" required>
           <el-input v-model="batch.snText" type="textarea" :rows="7" :placeholder="t('repairs.batchSnListPh')" />
@@ -208,7 +149,7 @@
             :placeholder="t('repairs.batchStationPh')"
             style="width:100%"
           >
-            <el-option v-for="s in stationOptions" :key="s" :value="s" :label="s" />
+            <el-option v-for="s in stationOptions" :key="s" :value="s" :label="stationLabel(s)" />
           </el-select>
           <div class="muted sn-hint">{{ t('repairs.batchStationUnion') }}</div>
         </el-form-item>
@@ -218,51 +159,113 @@
       </el-form>
       <template #footer>
         <div class="drawer-footer">
-          <el-button @click="batchVisible = false">{{ t('common.close') }}</el-button>
-          <el-button type="primary" :loading="batchSaving" :disabled="!batchSns.length" @click="executeBatch">
+          <el-button :icon="Close" @click="batchVisible = false">{{ t('common.close') }}</el-button>
+          <el-button type="primary" :icon="Check" :loading="batchSaving" :disabled="!batchSns.length" @click="executeBatch">
             {{ t('repairs.execute') }}
           </el-button>
         </div>
       </template>
-      <el-table
-        v-if="batchResults.length"
-        :data="batchResults"
-        stripe
-        size="small"
-        max-height="360"
-        style="margin-top:14px; width:100%"
+
+      <!-- 批量全流程弹窗：依赖重测确认 / 汇总确认 / 结果与撤销，明细表内嵌（列宽适配内容） -->
+      <el-dialog
+        v-model="confirmDialog.visible"
+        :title="confirmDialog.stage === 'downstream' ? t('repairs.batchStepDownstream', { n: dialogStep }) : confirmDialog.stage === 'result' ? t('repairs.batchStepResult', { n: dialogStep }) : t('repairs.batchStepExecute', { n: dialogStep })"
+        width="1200px"
+        append-to-body
+        :close-on-click-modal="false"
       >
-        <el-table-column prop="sn" label="SN" width="140">
-          <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
-        </el-table-column>
-        <el-table-column prop="product_model" :label="t('configs.modelId')" width="110">
-          <template #default="{ row }">{{ row.product_model || '—' }}</template>
-        </el-table-column>
-        <el-table-column prop="process_id" :label="t('configs.modelProcess')" width="150" show-overflow-tooltip>
-          <template #default="{ row }">
-            <CodeTip :code="row.process_id" :name="processName(row.process_id)">{{ row.process_id || '—' }}</CodeTip>
+        <el-alert
+          :type="confirmDialog.stage === 'downstream' ? 'warning' : confirmDialog.stage === 'result' ? (batchUndone ? 'info' : (batchResults.every((i) => i.ok) ? 'success' : 'warning')) : 'info'"
+          :closable="false"
+        >
+          <template #title>
+            <span class="confirm-alert">
+              <el-icon v-if="confirmDialog.stage === 'result'"><InfoFilled /></el-icon>
+              <span>{{ confirmDialog.message }}</span>
+            </span>
           </template>
-        </el-table-column>
-        <el-table-column :label="t('repairs.colResult')" width="70" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.ok ? 'success' : 'danger'" size="small">{{ row.ok ? 'OK' : 'FAIL' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('repairs.colRevoked')" min-width="120" show-overflow-tooltip>
-          <template #default="{ row }">{{ (row.revoked_stations || []).join('、') || '—' }}</template>
-        </el-table-column>
-        <el-table-column prop="invalidating_records" :label="t('repairs.colRecords')" width="90" align="center" />
-        <el-table-column :label="t('repairs.colMessage')" min-width="130" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span v-if="!row.ok" class="text-danger">{{ row.code }}</span>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-      </el-table>
+        </el-alert>
+        <!-- 第 1 步：只看受影响的 SN 与其下游工位（明细并入表格，警示条不再堆文本） -->
+        <el-table
+          v-if="confirmDialog.stage === 'downstream'"
+          :data="cascadeRows"
+          size="small"
+          max-height="360"
+          style="margin-top:12px; width:100%"
+        >
+          <el-table-column prop="sn" :label="t('common.sn')" width="160">
+            <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
+          </el-table-column>
+          <el-table-column :label="t('repairs.colRetestStation')" min-width="160">
+            <template #default="{ row }">{{ stationLabel(batch.target_station) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('repairs.colDownstream')" min-width="220">
+            <template #default="{ row }">{{ row.stations }}</template>
+          </el-table-column>
+        </el-table>
+        <el-table
+          v-else
+          :data="batchResults"
+          size="small"
+          max-height="360"
+          style="margin-top:12px; width:100%"
+        >
+          <el-table-column prop="sn" :label="t('common.sn')" width="160">
+            <template #default="{ row }"><span class="code">{{ row.sn }}</span></template>
+          </el-table-column>
+          <el-table-column prop="product_model" :label="t('configs.modelId')" min-width="110">
+            <template #default="{ row }">{{ row.product_model || '—' }}</template>
+          </el-table-column>
+          <el-table-column prop="process_id" :label="t('configs.modelProcess')" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">
+              <CodeTip :code="row.process_id" :name="processName(row.process_id)">{{ row.process_id || '—' }}</CodeTip>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('repairs.colResult')" min-width="70" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.ok ? 'success' : 'danger'" size="small">{{ row.ok ? 'OK' : 'FAIL' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('repairs.colRevoked')" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ (row.revoked_stations || []).map((s) => stationLabel(s)).join('、') || '—' }}</template>
+          </el-table-column>
+          <el-table-column prop="invalidating_records" :label="t('repairs.colRecords')" min-width="90" align="center" />
+          <el-table-column :label="t('repairs.colMessage')" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="!row.ok" class="text-danger">{{ row.code }}</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <template #footer>
+          <el-button
+            v-if="confirmDialog.stage === 'result' && !batchUndone"
+            type="warning"
+            plain
+            :icon="RefreshLeft"
+            :loading="undoSaving"
+            @click="onBatchUndo"
+          >
+            {{ t('repairs.batchUndo') }}
+          </el-button>
+          <el-button :icon="Close" @click="confirmDialog.visible = false">
+            {{ confirmDialog.stage === 'result' ? t('common.close') : t('common.cancel') }}
+          </el-button>
+          <el-button
+            v-if="confirmDialog.stage !== 'result'"
+            type="primary"
+            :icon="confirmDialog.stage === 'downstream' ? RefreshLeft : Check"
+            :loading="confirmDialog.loading"
+            @click="onConfirmProceed"
+          >
+            {{ confirmDialog.stage === 'downstream' ? t('repairs.downstreamConfirm') : t('repairs.execute') }}
+          </el-button>
+        </template>
+      </el-dialog>
     </el-drawer>
 
     <!-- 详情抽屉：本次处置 + 工件档案  -->
-    <el-drawer v-model="detailVisible" :title="t('repairs.detailTitle')" size="650px">
+    <el-drawer v-model="detailVisible" :title="t('repairs.detailTitle')" size="680px">
       <div v-loading="detailLoading">
         <template v-if="detail">
           <!-- 本次处置 -->
@@ -307,7 +310,7 @@
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <el-button @click="detailVisible = false">{{ t('common.close') }}</el-button>
+          <el-button :icon="Close" @click="detailVisible = false">{{ t('common.close') }}</el-button>
         </div>
       </template>
     </el-drawer>
@@ -318,7 +321,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Pointer, RefreshRight, Tickets } from '@element-plus/icons-vue'
+import { Check, Close, Download, InfoFilled, Pointer, RefreshLeft, RefreshRight, Tickets } from '@element-plus/icons-vue'
 import { recordApi, repairApi } from '../api'
 import { useAuth } from '../stores/auth'
 import DataCard from '../components/DataCard.vue'
@@ -326,12 +329,19 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import CodeTip from '../components/CodeTip.vue'
 import { useDictionaries } from '../composables/useDictionaries'
-import { REPAIR_ACTIONS, REPAIR_ACTIONS_WITH_TARGET } from '../utils/constants'
+import { REPAIR_ACTIONS } from '../utils/constants'
+import RepairDisposeDrawer from '../components/RepairDisposeDrawer.vue'
 import { fmtDateTime, repairTagType, statusTagType } from '../utils/format'
 
 const { t } = useI18n()
 const { canOperate } = useAuth()
 const { stationName, clientName, processName, ensureLoaded } = useDictionaries()
+
+/** 工位显示：代码（字典名称）；无名称时代码兜底（与处置抽屉同口径） */
+function stationLabel(s) {
+  const n = stationName(s)
+  return n ? `${s}（${n}）` : s
+}
 
 const items = ref([])
 const loading = ref(false)
@@ -344,9 +354,6 @@ const techFilter = ref('')
 const statusFilter = ref('')
 const dateRange = ref(null)
 const saving = ref(false)
-const form = reactive({ sn: '', repair_action: 'RETEST', target_station: '', reason: '' })
-
-const needsTarget = computed(() => REPAIR_ACTIONS_WITH_TARGET.includes(form.repair_action))
 
 // ---- 处置动作分布统计（原环图口径：各动作累计次数） ----
 const ACTION_COLORS = { RETEST: '#f59e0b', ROLLBACK: '#7c5cff', RESET: '#909399', SCRAP: '#ef4444' }
@@ -464,101 +471,15 @@ function openDetail(row) {
     })
 }
 
-// ---- 单件处置抽屉 ----
+// ---- 单件处置抽屉（共享组件 RepairDisposeDrawer：确认与依赖重测逻辑单点维护） ----
 const singleVisible = ref(false)
 
 function openSingle() {
-  Object.assign(form, { sn: '', repair_action: 'RETEST', target_station: '', reason: '' })
-  clearSnInfo()
   singleVisible.value = true
 }
 
-// ---- SN 反查回显：提交前让维修员看到该件的当前状态与可回退工位 ----
-const snInfo = ref(null)
-const snInfoLoading = ref(false)
-const snInfoError = ref('')
-
-const snStatusKey = computed(() => snStatusKeyOf(snInfo.value?.product))
-const passedStations = computed(() => passedPathOf(snInfo.value || {}))
-
-function clearSnInfo() {
-  snInfo.value = null
-  snInfoError.value = ''
-}
-
-async function lookupSn(force = false) {
-  const sn = form.sn.trim()
-  if (!sn) {
-    clearSnInfo()
-    return
-  }
-  if (!force && snInfo.value?.product?.sn === sn) return
-  snInfoLoading.value = true
-  snInfoError.value = ''
-  try {
-    const res = await recordApi.trace(sn)
-    if (form.sn.trim() !== sn) return
-    snInfo.value = res.data
-  } catch (e) {
-    if (form.sn.trim() !== sn) return
-    snInfo.value = null
-    if (e.status === 404) {
-      snInfoError.value = 'not_found'
-    } else {
-      snInfoError.value = ''
-      ElMessage.error(e.message || t('errors.loadFailed'))
-    }
-  } finally {
-    snInfoLoading.value = false
-  }
-}
-
-watch([needsTarget, passedStations], () => {
-  if (needsTarget.value && !passedStations.value.includes(form.target_station)) {
-    form.target_station = passedStations.value[0] || ''
-  }
-})
-
-/** 动作差异化后果提示：破坏力越强，警示越重（SCRAP 不可逆） */
-const CONFIRM_KEY = {
-  RETEST: 'repairs.confirmRetest',
-  ROLLBACK: 'repairs.confirmRollback',
-  RESET: 'repairs.confirmReset',
-  SCRAP: 'repairs.confirmScrap',
-}
-
-async function submit() {
-  if (!form.sn.trim()) return ElMessage.warning(t('repairs.snRequired'))
-  if (!snInfo.value && !snInfoError.value) await lookupSn(true)
-  if (snInfoError.value === 'not_found') return ElMessage.warning(t('repairs.snNotFound'))
-  if (!form.reason.trim()) return ElMessage.warning(t('repairs.reasonRequired'))
-  if (needsTarget.value && !form.target_station) return ElMessage.warning(t('products.targetRequired'))
-  try {
-    await ElMessageBox.confirm(
-      t(CONFIRM_KEY[form.repair_action], { sn: form.sn.trim(), station: form.target_station || '—' }),
-      t('common.confirm'),
-      { type: form.repair_action === 'SCRAP' ? 'error' : 'warning' },
-    )
-  } catch {
-    return
-  }
-  saving.value = true
-  try {
-    await repairApi.create({
-      sn: form.sn.trim(),
-      repair_action: form.repair_action,
-      target_station: needsTarget.value ? form.target_station : undefined,
-      reason: form.reason.trim(),
-    })
-    ElMessage.success(t('repairs.created'))
-    singleVisible.value = false
-    form.reason = ''
-    await Promise.all([load(), loadStats()])
-  } catch (e) {
-    ElMessage.error(e.message)
-  } finally {
-    saving.value = false
-  }
+function onDisposeSaved() {
+  Promise.all([load(), loadStats()])
 }
 
 // ---- 批量处置抽屉：与单件同构，仅清单为多 SN（RESET/SCRAP 服务端禁批量） ----
@@ -567,6 +488,35 @@ const batchVisible = ref(false)
 const batch = reactive({ snText: '', repair_action: 'RETEST', target_station: '', reason: '' })
 const batchSaving = ref(false)
 const batchResults = ref([])
+const lastBatchId = ref('')
+const batchUndone = ref(false)
+const undoSaving = ref(false)
+
+/** 批量撤销：按 batch_id 整批撤销（逐条独立生效，产线已动的件被跳过并回显原因） */
+async function onBatchUndo() {
+  const n = batchResults.value.filter((i) => i.ok).length || batchResults.value.length
+  try {
+    await ElMessageBox.confirm(
+      t('repairs.batchUndoConfirm', { n }),
+      t('repairs.downstreamTitle'),
+      { type: 'warning', confirmButtonText: t('common.confirm') },
+    )
+  } catch {
+    return
+  }
+  undoSaving.value = true
+  try {
+    const res = await repairApi.batchUndo({ batch_id: lastBatchId.value })
+    batchResults.value = res.data.items
+    batchUndone.value = true
+    confirmDialog.message = t('repairs.batchUndoSummary', { ok: res.data.ok_count, fail: res.data.fail_count })
+    await Promise.all([load(), loadStats()])
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    undoSaving.value = false
+  }
+}
 
 const batchSns = computed(() =>
   batch.snText
@@ -616,56 +566,130 @@ async function fetchStationUnion(sns) {
 function openBatch() {
   Object.assign(batch, { snText: '', repair_action: 'RETEST', target_station: '', reason: '' })
   batchResults.value = []
+  lastBatchId.value = ''
+  batchUndone.value = false
   batchVisible.value = true
 }
 
-/** 单按钮流程：点击执行 → 先自动校验（dry_run 不落库）→ 确认框汇总成败 → 确认后真正生效 */
+/** 单按钮流程：执行 → 预演 → 确认弹窗（内嵌预演明细表，依赖重测与汇总两阶段）→ 生效 */
+const checkData = ref(null)
+const confirmDownstream = ref(false)
+const confirmDialog = reactive({ visible: false, stage: 'execute', message: '', loading: false })
+const dialogStep = ref(0)
+/** 第 1 步明细：命中级联的 SN → 带名称的下游工位清单 */
+const cascadeRows = computed(() =>
+  (checkData.value?.items || [])
+    .filter((i) => !i.ok && i.code === 'downstream_invalidation_required')
+    .map((i) => ({
+      sn: i.sn,
+      stations: ((i.message || '').split(': ')[1] || '')
+        .split(', ')
+        .filter(Boolean)
+        .map((s) => stationLabel(s))
+        .join('、'),
+    })),
+)
+
+async function runPrecheck(confirm) {
+  const res = await repairApi.batch({
+    items: batchSns.value,
+    repair_action: batch.repair_action,
+    target_station: batch.target_station.trim() || undefined,
+    reason: batch.reason.trim(),
+    dry_run: true,
+    confirm_downstream: confirm,
+  })
+  checkData.value = res.data
+  batchResults.value = res.data.items
+  return res.data.ok_count > 0
+}
+
+function summaryMessage() {
+  const check = checkData.value
+  const processes = new Set(
+    (check.items || []).filter((i) => i.ok && i.process_id).map((i) => i.process_id),
+  )
+  const scope = [
+    ...new Set((check.items || []).filter((i) => i.ok).flatMap((i) => i.revoked_stations || [])),
+  ]
+  const scopeText = scope.length
+    ? ' ' + t('repairs.batchScope', { list: scope.map((s) => stationLabel(s)).join('、') })
+    : ''
+  return (
+    t('repairs.batchConfirm', {
+      ok: check.ok_count,
+      fail: check.fail_count,
+      action: t(`repair.${batch.repair_action}`),
+    }) +
+    scopeText +
+    (processes.size > 1 ? ' ' + t('repairs.batchMultiProcess', { n: processes.size }) : '')
+  )
+}
+
+function openConfirm(stage, message) {
+  dialogStep.value += 1
+  confirmDialog.stage = stage
+  confirmDialog.message = message
+  confirmDialog.visible = true
+}
+
 async function executeBatch() {
   if (!batchSns.value.length) return ElMessage.warning(t('repairs.snRequired'))
   if (!batch.target_station.trim()) return ElMessage.warning(t('products.targetRequired'))
   if (!batch.reason.trim()) return ElMessage.warning(t('repairs.reasonRequired'))
+  confirmDownstream.value = false
+  dialogStep.value = 0
   batchSaving.value = true
-  let check
   try {
-    // 第一步：校验（服务端只跑守卫不落库），把不可处置的件提前暴露出来
-    const res = await repairApi.batch({
-      items: batchSns.value,
-      repair_action: batch.repair_action,
-      target_station: batch.target_station.trim() || undefined,
-      reason: batch.reason.trim(),
-      dry_run: true,
-    })
-    check = res.data
-    batchResults.value = check.items
+    // 第一步：预演（服务端只跑守卫不落库），把不可处置的件提前暴露出来
+    await runPrecheck(false)
+    // 依赖重测检查必须先于"全部失败"判断：单 SN 批次可能全部失败原因都是级联
+    const cascade = checkData.value.items.filter(
+      (i) => !i.ok && i.code === 'downstream_invalidation_required',
+    )
+    if (cascade.length) {
+      const detail = cascade
+        .map((i) => {
+          const stations = (i.message || '').split(': ')[1] || ''
+          return `${i.sn}：${stations.split(', ').map((s) => stationLabel(s)).join('、')}`
+        })
+        .join('；')
+      openConfirm('downstream', t('repairs.batchDownstreamMsg', { list: detail }))
+      return
+    }
+    if (!checkData.value.ok_count) {
+      ElMessage.error(t('repairs.batchAllFailed'))
+      return
+    }
+    openConfirm('execute', summaryMessage())
   } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
     batchSaving.value = false
-    return ElMessage.error(e.message)
   }
-  if (!check.ok_count) {
-    batchSaving.value = false
-    return ElMessage.error(t('repairs.batchAllFailed'))
-  }
-  // 第二步：汇总确认后真正生效；混合流程批次明确警示（同工位名在各流程内容不同）
-  try {
-    const processes = new Set(
-      check.items.filter((i) => i.ok && i.process_id).map((i) => i.process_id),
-    )
-    await ElMessageBox.confirm(
-      t('repairs.batchConfirm', {
-        ok: check.ok_count,
-        fail: check.fail_count,
-        action: t(`repair.${batch.repair_action}`),
-      }) +
-        (processes.size > 1
-          ? ' ' + t('repairs.batchMultiProcess', { n: processes.size })
-          : ''),
-      t('common.confirm'),
-      { type: 'warning' },
-    )
-  } catch {
-    batchSaving.value = false
+}
+
+async function onConfirmProceed() {
+  if (confirmDialog.stage === 'downstream') {
+    confirmDialog.loading = true
+    try {
+      const ok = await runPrecheck(true)
+      if (!ok) {
+        confirmDialog.visible = false
+        ElMessage.error(t('repairs.batchAllFailed'))
+        return
+      }
+      confirmDownstream.value = true
+      openConfirm('execute', summaryMessage())
+    } catch (e) {
+      ElMessage.error(e.message)
+    } finally {
+      confirmDialog.loading = false
+    }
     return
   }
+  // 第二步：确认后真正生效；弹窗切换到结果阶段（结果表 + 撤销本批）
+  batchSaving.value = true
   try {
     const res = await repairApi.batch({
       items: batchSns.value,
@@ -673,9 +697,13 @@ async function executeBatch() {
       target_station: batch.target_station.trim() || undefined,
       reason: batch.reason.trim(),
       dry_run: false,
+      confirm_downstream: confirmDownstream.value,
     })
     batchResults.value = res.data.items
-    ElMessage.success(t('repairs.batchSummary', { ok: res.data.ok_count, fail: res.data.fail_count }))
+    lastBatchId.value = res.data.batch_id || ''
+    batchUndone.value = false
+    confirmDialog.stage = 'result'
+    confirmDialog.message = t('repairs.batchSummary', { ok: res.data.ok_count, fail: res.data.fail_count })
     await Promise.all([load(), loadStats()])
   } catch (e) {
     ElMessage.error(e.message)
@@ -736,6 +764,10 @@ onMounted(() => {
 .filter-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .action-group { display: flex; flex-wrap: wrap; }
 .drawer-footer { display: flex; justify-content: flex-end; }
+/* 确认弹窗警示条：Stamp 图标与文案同行（el-alert 无自定义 icon 属性，走 title 插槽） */
+.confirm-alert { display: inline-flex; align-items: center; gap: 6px; }
+/* 批量结果上方的撤销条：仅在最近一次批量可撤时显示 */
+.batch-undo-bar { margin: 12px 0 8px; display: flex; justify-content: flex-end; }
 /* SN 回显：状态标签 + 失败计数 + 已盖章路径，一行排布 */
 .sn-hint { margin-top: 4px; font-size: 12.5px; }
 /* 详情抽屉分区标题 */

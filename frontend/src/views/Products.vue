@@ -89,7 +89,7 @@
         </el-table-column>
         <el-table-column :label="$t('common.action')" width="120" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" :icon="View" @click="openDrawer(row)">
+            <el-button link type="primary" size="small" @click="openDrawer(row)">
               {{ $t('common.detail') }}
             </el-button>
           </template>
@@ -110,11 +110,9 @@
       </div>
     </DataCard>
 
-    <RepairDialog
+    <RepairDisposeDrawer
       v-model="repairVisible"
       :preset-sn="repairSn"
-      :station-options="repairStations"
-      :optional-stations="repairOptional"
       @saved="onRepairSaved"
     />
 
@@ -133,13 +131,13 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, View } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { modelApi, productApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import ProductDrawer from '../components/ProductDrawer.vue'
-import RepairDialog from '../components/RepairDialog.vue'
+import RepairDisposeDrawer from '../components/RepairDisposeDrawer.vue'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
 import { useDictionaries } from '../composables/useDictionaries'
@@ -164,8 +162,6 @@ const dateRange = ref(null)
 
 const repairVisible = ref(false)
 const repairSn = ref('')
-const repairStations = ref([])
-const repairOptional = ref([])
 
 const drawerVisible = ref(false)
 const current = ref(null)
@@ -227,8 +223,6 @@ function openDrawer(row) {
 
 function openRepair(row) {
   repairSn.value = row.sn
-  repairStations.value = row.passed_stations || []
-  repairOptional.value = row.optional_stations || []
   repairVisible.value = true
 }
 
