@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visible" size="640px" destroy-on-close @opened="load">
+  <el-drawer v-model="visible" size="680px" destroy-on-close @opened="load">
     <template #header>
       <div class="d-head">
         <span class="code d-id">{{ process?.process_id }}</span>
@@ -91,9 +91,9 @@
     </div>
 
     <template #footer>
-      <el-button @click="visible = false">{{ t('common.close') }}</el-button>
-      <el-button @click="exportJson" :loading="exporting">{{ t('configs.exportJson') }}</el-button>
-      <el-button type="primary" @click="$emit('edit', process)">{{ t('common.edit') }}</el-button>
+      <el-button :icon="Close" @click="visible = false">{{ t('common.close') }}</el-button>
+      <el-button :icon="Download" @click="exportJson" :loading="exporting">{{ t('configs.exportJson') }}</el-button>
+      <el-button type="primary" :icon="Edit" @click="$emit('edit', process)">{{ t('common.edit') }}</el-button>
     </template>
   </el-drawer>
 </template>
@@ -101,6 +101,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Close, Download, Edit } from '@element-plus/icons-vue'
 import { routingApi } from '../api'
 
 const props = defineProps({

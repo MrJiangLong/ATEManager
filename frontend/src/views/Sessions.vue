@@ -99,7 +99,7 @@
 
         <el-table-column :label="$t('common.action')" width="150" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" :icon="View" @click="openDrawer(row)">
+            <el-button link type="primary" size="small" @click="openDrawer(row)">
               {{ row.end_reason ? $t('sessions.viewReason') : $t('sessions.viewDetail') }}
             </el-button>
             <el-button
@@ -107,7 +107,6 @@
               link
               type="danger"
               size="small"
-              :icon="SwitchButton"
               @click="onAbort(row)"
             />
           </template>
@@ -144,7 +143,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, SwitchButton, View } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { productApi, sessionApi } from '../api'
 import DataCard from '../components/DataCard.vue'
 import EmptyState from '../components/EmptyState.vue'

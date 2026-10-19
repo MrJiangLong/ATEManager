@@ -2,7 +2,7 @@
   <el-drawer
     v-model="visible"
     :title="$t('sessions.drawerTitle')"
-    size="640px"
+    size="680px"
     destroy-on-close
     class="session-drawer"
   >
@@ -95,7 +95,7 @@
 
     <template #footer>
       <div class="drawer-actions">
-        <el-button @click="visible = false">{{ $t('common.close') }}</el-button>
+        <el-button :icon="Close" @click="visible = false">{{ $t('common.close') }}</el-button>
         <el-button :icon="View" @click="emit('trace', session)">{{ $t('products.viewTrace') }}</el-button>
         <el-button
           v-if="canOperate && session?.status === 'RUNNING'"
@@ -118,7 +118,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
-import { SwitchButton, Unlock, View } from '@element-plus/icons-vue'
+import { Close, SwitchButton, Unlock, View } from '@element-plus/icons-vue'
 import EmptyState from './EmptyState.vue'
 import { attemptTipText, caseOwner, fmtDateTime, fmtDurationMs, resultTagType, sessionTagType, shortCaseId } from '../utils/format'
 

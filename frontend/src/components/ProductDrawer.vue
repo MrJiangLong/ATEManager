@@ -104,7 +104,7 @@
 
     <template #footer>
       <div class="drawer-actions">
-        <el-button @click="visible = false">{{ $t('common.close') }}</el-button>
+        <el-button :icon="Close" @click="visible = false">{{ $t('common.close') }}</el-button>
         <el-button :icon="View" @click="emit('trace', row)">{{ $t('products.viewTrace') }}</el-button>
         <el-button v-if="canOperate" type="warning" :icon="Tools" @click="emit('repair', row)">
           {{ $t('products.repairAction') }}
@@ -127,7 +127,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
-import { Select, Tools, Unlock, View } from '@element-plus/icons-vue'
+import { Close, Select, Tools, Unlock, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { recordApi } from '../api'
 import EmptyState from './EmptyState.vue'

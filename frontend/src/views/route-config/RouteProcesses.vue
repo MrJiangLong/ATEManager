@@ -38,7 +38,7 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="210" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" :icon="View" @click="openDetail(row)">
+          <el-button link type="primary" size="small" @click="openDetail(row)">
             {{ t('configs.detail') }}
           </el-button>
           <el-button v-if="canManage" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
@@ -225,7 +225,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Document, Download, FolderOpened, Plus, Upload, View } from '@element-plus/icons-vue'
+import { CopyDocument, Document, Download, FolderOpened, Plus, Upload } from '@element-plus/icons-vue'
 import { processApi, routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import ProcessDetailDrawer from '../../components/ProcessDetailDrawer.vue'
