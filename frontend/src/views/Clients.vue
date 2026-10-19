@@ -10,6 +10,13 @@
       <el-select v-model="stationFilter" clearable :placeholder="$t('clients.filterStation')" style="width:180px">
         <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
       </el-select>
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="$t('common.startDate')"
+        :end-placeholder="$t('common.endDate')"
+      />
       <template #extra>
         <el-button :icon="Refresh" @click="load">{{ $t('common.refresh') }}</el-button>
         <el-button :icon="Download" :loading="exporting" @click="exportBindings">{{ $t('clients.exportBindings') }}</el-button>
@@ -192,6 +199,7 @@ const { stationName, ensureLoaded } = useDictionaries()
 const items = ref([])
 const loading = ref(false)
 const stationFilter = ref('')
+const dateRange = ref(null)
 const keyword = ref('')
 
 const dialogVisible = ref(false)
@@ -304,13 +312,23 @@ async function onImportFile(ev) {
 }
 
 const filtered = computed(() => {
+  let rows = items.value
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return items.value
-  return items.value.filter((c) =>
-    [c.client_id, c.client_name, c.ip_address].some((v) =>
-      String(v || '').toLowerCase().includes(kw)
+  if (kw) {
+    rows = rows.filter((c) =>
+      [c.client_id, c.client_name, c.ip_address].some((v) =>
+        String(v || '').toLowerCase().includes(kw)
+      )
     )
-  )
+  }
+  const from = dateRange.value?.[0]
+  const to = dateRange.value?.[1]
+  if (from || to) {
+    const day = (v) => (v ? new Date(v).toLocaleDateString('sv-SE') : '')
+    if (from) rows = rows.filter((c) => day(c.created_at) >= from)
+    if (to) rows = rows.filter((c) => day(c.created_at) <= to)
+  }
+  return rows
 })
 
 const page = ref(1)
@@ -319,7 +337,7 @@ const paged = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
 })
-watch([keyword, stationFilter], () => {
+watch([keyword, stationFilter, dateRange], () => {
   page.value = 1
 })
 // 删除或刷新后总数变少时，防止当前页越界留白

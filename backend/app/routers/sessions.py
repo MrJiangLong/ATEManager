@@ -12,7 +12,7 @@ from ..errors import bad_request, get_or_404
 from ..security import current_user, require_operator
 from ..services import force_release_lock
 from ..services.gate import _close_session
-from ..services.timeutil import as_utc, elapsed_int
+from ..services.timeutil import as_utc, date_range_bounds, elapsed_int
 
 router = APIRouter(prefix="/api/admin/sessions", tags=["admin-测试会话"])
 
@@ -53,6 +53,8 @@ def list_sessions(
     client_id: Optional[str] = None,
     status: Optional[str] = None,
     abnormal_only: bool = Query(False, description="仅看异常终止（失联/超时/被接管）"),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -69,6 +71,11 @@ def list_sessions(
         query = query.filter(models.TestSession.status.in_(models.ABNORMAL_SESSION_STATUSES))
     elif status:
         query = query.filter(models.TestSession.status == status.upper())
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.TestSession.created_at >= start)
+    if end:
+        query = query.filter(models.TestSession.created_at < end)
 
     total = query.count()
     rows = (

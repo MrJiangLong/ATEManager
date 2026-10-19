@@ -1,6 +1,5 @@
 """通道二：事件台账与 SN 全生命周期追溯（/api/admin/records）。"""
 
-from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -8,22 +7,14 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import AppError, bad_request, get_or_404, not_found
+from ..errors import AppError, get_or_404, not_found
 from ..security import current_user
 from ..services import artifacts as artifact_store
 from ..services.routing import _as_list, load_process
-from ..services.timeutil import local_day_start_of_date, sql_time
+from ..services.timeutil import date_range_bounds
 from ..services.views import build_product_out
 
 router = APIRouter(prefix="/api/admin/records", tags=["admin-台账追溯"])
-
-def _parse_date(value: str, field: str):
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        raise bad_request(
-            "invalid_date_format", f"invalid_date_format: {field} should be YYYY-MM-DD, got {value}"
-        ) from None
 
 @router.get("", response_model=schemas.RecordPageOut, summary="测试记录清单(多条件分页)")
 def list_records(
@@ -59,16 +50,11 @@ def list_records(
             .all()
         ]
         query = query.filter(models.TestRecord.sn.in_(sns or [""]))
-    if date_from:
-        query = query.filter(
-            models.TestRecord.created_at
-            >= sql_time(local_day_start_of_date(_parse_date(date_from, "date_from")))
-        )
-    if date_to:
-        query = query.filter(
-            models.TestRecord.created_at
-            < sql_time(local_day_start_of_date(_parse_date(date_to, "date_to") + timedelta(days=1)))
-        )
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.TestRecord.created_at >= start)
+    if end:
+        query = query.filter(models.TestRecord.created_at < end)
 
     total = query.count()
     rows = (

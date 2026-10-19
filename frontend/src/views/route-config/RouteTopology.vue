@@ -62,7 +62,7 @@
       <el-table-column :label="t('configs.itemCount')" width="90" align="right">
         <template #default="{ row }">{{ itemCountOf(row.station_id) }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="90" align="center">
+      <el-table-column :label="t('common.action')" width="120" align="center">
         <template #default="{ $index }">
           <el-button v-if="canManage" link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
         </template>

@@ -14,7 +14,7 @@ from ..errors import AppError, bad_request
 from ..security import current_user, require_operator
 from ..services import apply_repair, undo_repair
 from ..services.gate import _check_repair
-from ..services.timeutil import utcnow
+from ..services.timeutil import date_range_bounds, utcnow
 
 router = APIRouter(prefix="/api/admin/repairs", tags=["admin-维修处置"])
 
@@ -37,7 +37,8 @@ def list_repairs(
     repair_action: Optional[str] = None,
     technician: Optional[str] = None,
     undone: Optional[bool] = Query(None, description="撤销状态筛选：true=已撤销 / false=有效（缺省=全部）"),
-    days: int = Query(0, ge=0, le=3650, description="近 N 天（按本地日界，0 = 全部）"),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -54,8 +55,11 @@ def list_repairs(
         query = query.filter(models.RepairRecord.undone_at.isnot(None))
     elif undone is False:
         query = query.filter(models.RepairRecord.undone_at.is_(None))
-    if days:
-        query = query.filter(models.RepairRecord.created_at >= _local_day_cutoff(days))
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.RepairRecord.created_at >= start)
+    if end:
+        query = query.filter(models.RepairRecord.created_at < end)
     total = query.count()
     rows = (
         query.order_by(models.RepairRecord.repair_id.desc())

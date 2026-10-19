@@ -132,6 +132,8 @@ body {
   word-break: break-word;
 }
 .el-table .el-table__row td.el-table__cell { color: #2b3a5e; }
+/* 操作列链接按钮继承表格字体（字号+字重），与页面正文风格一致 */
+.el-table .cell .el-button { font-size: inherit; font-weight: inherit; }
 .el-table .cell .el-button + .el-button { margin-left: 4px; }
 .el-table .cell .el-tag { vertical-align: middle; }
 
@@ -235,6 +237,13 @@ body {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+/* 日期区间筛选统一宽度（与出厂报告一致），各页面不再单独设置；
+   flex:none 防止在弹性筛选行中被拉伸填充空白 */
+.el-date-editor--daterange {
+  --el-date-editor-daterange-width: 240px;
+  width: 240px;
+  flex: none;
 }
 /* 无左侧说明文字时，操作区靠右与表格右上角对齐 */
 .tab-head-end { justify-content: flex-end; }

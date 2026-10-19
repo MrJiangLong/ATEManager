@@ -74,3 +74,30 @@ def client_online_since(now: Optional[datetime] = None) -> datetime:
 def is_client_online(last_seen_at: Optional[datetime], now: Optional[datetime] = None) -> bool:
     moment = as_utc(last_seen_at)
     return moment is not None and moment >= client_online_since(now)
+
+
+def date_range_bounds(
+    date_from: Optional[str], date_to: Optional[str]
+) -> "tuple[Optional[datetime], Optional[datetime]]":
+    """解析 YYYY-MM-DD 起止日期（本地日历日）为 [起, 止) 的 UTC 边界对；缺省侧为 None。
+
+    各列表端点的 date_from/date_to 筛选共用；格式非法抛 400 invalid_date_format。
+    """
+    from ..errors import bad_request
+
+    def _parse(value: str, field: str) -> date:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            raise bad_request(
+                "invalid_date_format",
+                f"invalid_date_format: {field} should be YYYY-MM-DD, got {value}",
+            ) from None
+
+    start = sql_time(local_day_start_of_date(_parse(date_from, "date_from"))) if date_from else None
+    end = (
+        sql_time(local_day_start_of_date(_parse(date_to, "date_to") + timedelta(days=1)))
+        if date_to
+        else None
+    )
+    return start, end

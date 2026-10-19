@@ -21,7 +21,7 @@ from ..services import reports
 from ..services.reports import engine as report_engine
 from ..services.reports import pdf as pdf_mod, registry, store
 from ..services.reports import scheduler as report_scheduler
-from ..services.timeutil import local_day_start_of_date, sql_time, utcnow
+from ..services.timeutil import date_range_bounds, utcnow
 
 logger = get_logger("api.reports")
 
@@ -48,6 +48,8 @@ def list_jobs(
     sn: Optional[str] = None,
     model: Optional[str] = None,
     status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -60,6 +62,11 @@ def list_jobs(
         query = query.filter(models.ReportJob.model == model)
     if status:
         query = query.filter(models.ReportJob.status == status)
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.ReportJob.created_at >= start)
+    if end:
+        query = query.filter(models.ReportJob.created_at < end)
     total = query.count()
     rows = (
         query.order_by(models.ReportJob.created_at.desc())

@@ -33,7 +33,7 @@
       <el-table-column prop="created_at" :label="t('snRegistry.registeredAt')" width="170">
         <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="100" align="center" fixed="right">
+      <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('snRegistry.unregister') }}</el-button>
         </template>

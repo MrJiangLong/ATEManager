@@ -850,7 +850,7 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/admin/sessions` | 会话清单，支持 `sn / station_id / client_id / status / abnormal_only / page / page_size` |
+| `GET /api/admin/sessions` | 会话清单，支持 `sn / station_id / client_id / status / abnormal_only / date_from / date_to / page / page_size` |
 | `GET /api/admin/sessions/zombie-locks` | 失联僵尸锁清单（可被接管/强制解锁） |
 | `GET /api/admin/sessions/{id}` | 会话详情，含 checkpoint 明细（"跑到哪崩的"） |
 | `POST /api/admin/sessions/{id}/abort` | 强制终止会话并解锁（body: `{"reason": "..."}`） |
@@ -858,11 +858,11 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`），不动印章与失败计数 |
 | `POST /api/admin/repairs/batch` | 批量处置（仅 RETEST/ROLLBACK）：`{"items": [sn...], "repair_action", "target_station", "reason", "dry_run"}`；dry_run=true 只守卫不落库并回显破坏面（机型/流程/当前状态/将撤销印章/将作废记录数）；逐条独立生效，失败项不影响已成功项；上限 50 |
 | `POST /api/admin/repairs/{repair_id}/undo` | 撤销维修处置（窄窗口）：按处置前快照精确还原印章/失败计数/状态，被作废的台账记录按快照 ID 精确恢复；完工态恢复后自动重出报告。边界（409）：仅 RETEST/ROLLBACK/RESET（`action_not_undoable`，SCRAP 永不可撤）、仅该 SN 最新一条（`not_latest_disposition`）、处置后无新会话且印章未变（`repair_state_changed`）、不可重复撤销（`already_undone`） |
-| `GET /api/admin/repairs` | 履历筛选扩展：`technician`（操作人模糊）、`days`（近 N 天，按本地日界，0 = 全部） |
+| `GET /api/admin/repairs` | 履历筛选扩展：`technician`（操作人模糊）、`undone`（撤销状态 true/false）、`date_from`/`date_to`（日期区间，YYYY-MM-DD，按本地日界） |
 | `GET /api/admin/products/{sn}/sessions` | 该 SN 的会话时间线 |
-| `GET /api/admin/products` | 在制品清单，支持 `zombie_only=true` 过滤失联锁 |
+| `GET /api/admin/products` | 在制品清单，支持 `zombie_only=true` 过滤失联锁、`date_from`/`date_to`（按最近活动时间） |
 | `GET /api/admin/metrics/overview` | 运行概况，含 `locks: {active, zombie, sessions_running, sessions_abnormal}` |
-| `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN） |
+| `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN），支持 `date_from`/`date_to`（按注册时间） |
 | `POST /api/admin/clients` | 注册机台并绑定工位 |
 | `GET /api/admin/records/{record_id}/files/{index}` | 测试产物下载（结果文件/日志等；返回 MinIO 预签名 URL JSON；MinIO 未配置时 503） |
 | `GET /api/admin/sn-registry` | 试验设备登记清单（按登记时间倒序） |

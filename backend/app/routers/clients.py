@@ -9,7 +9,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404
 from ..security import current_user, require_operator
-from ..services.timeutil import is_client_online
+from ..services.timeutil import as_utc, date_range_bounds, is_client_online
 
 router = APIRouter(prefix="/api/admin/clients", tags=["admin-机台"])
 
@@ -74,12 +74,19 @@ def _assert_not_holding(db: Session, client_id: str) -> None:
 @router.get("", response_model=List[schemas.ClientOut], summary="机台清单(在线状态 + 持锁 SN)")
 def list_clients(
     station_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ):
     clients = db.query(models.StationClient).order_by(models.StationClient.client_id).all()
     if station_id:
         clients = [c for c in clients if station_id in (c.bound_stations or [])]
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        clients = [c for c in clients if as_utc(c.created_at) >= start]
+    if end:
+        clients = [c for c in clients if as_utc(c.created_at) < end]
     return [_client_view(db, c) for c in clients]
 
 @router.post("", response_model=schemas.ClientOut, status_code=201, summary="注册机台")

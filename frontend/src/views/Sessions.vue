@@ -18,6 +18,13 @@
         <el-option value="abnormal" :label="$t('sessions.abnormalOnly')" />
         <el-option value="zombie" :label="$t('sessions.zombieOnly')" />
       </el-select>
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="$t('common.startDate')"
+        :end-placeholder="$t('common.endDate')"
+      />
       <template #extra>
         <el-button :icon="Refresh" @click="search">{{ $t('common.refresh') }}</el-button>
       </template>
@@ -162,6 +169,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const filters = reactive({ sn: '', station_id: '', status: '', view: '' })
+const dateRange = ref(null)
 
 const drawerVisible = ref(false)
 const current = ref(null)
@@ -187,6 +195,8 @@ async function load() {
       // 视图选「异常终止」时优先于具体状态（沿用后端 abnormal_only 语义）
       if (filters.view === 'abnormal') params.abnormal_only = true
       else if (filters.status) params.status = filters.status
+      if (dateRange.value?.[0]) params.date_from = dateRange.value[0]
+      if (dateRange.value?.[1]) params.date_to = dateRange.value[1]
       const res = await sessionApi.list(params)
       items.value = res.data.items
       total.value = res.data.total
@@ -259,7 +269,7 @@ async function onForceRelease(row) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.station_id, filters.status, filters.view],
+  () => [filters.sn, filters.station_id, filters.status, filters.view, dateRange.value],
   () => search()
 )
 

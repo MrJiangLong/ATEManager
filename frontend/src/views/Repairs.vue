@@ -21,12 +21,6 @@
     <!-- 台账与记录区（占满剩余高度，表格内部滚动） -->
     <DataCard class="ledger-card">
       <div class="filter-row">
-        <el-select v-model="dayFilter" style="width:110px">
-          <el-option :value="0" :label="t('repairs.dayAll')" />
-          <el-option :value="1" :label="t('repairs.dayToday')" />
-          <el-option :value="3" :label="t('repairs.day3')" />
-          <el-option :value="7" :label="t('repairs.day7')" />
-        </el-select>
         <el-input v-model="snFilter" clearable :placeholder="t('common.sn')" style="width:180px" @keyup.enter="search" />
         <el-select v-model="actionFilter" clearable :placeholder="t('repairs.tableAction')" style="width:150px">
           <el-option v-for="a in REPAIR_ACTIONS" :key="a" :value="a" :label="t(`repair.${a}`)" />
@@ -36,6 +30,13 @@
           <el-option :value="'valid'" :label="t('repairs.statusValid')" />
           <el-option :value="'undone'" :label="t('repairs.statusUndone')" />
         </el-select>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          :start-placeholder="t('common.startDate')"
+          :end-placeholder="t('common.endDate')"
+        />
         <div class="filter-right">
           <el-button :icon="RefreshRight" @click="search">{{ t('common.refresh') }}</el-button>
           <el-button :icon="Download" @click="exportCsv">{{ t('repairs.exportCsv') }}</el-button>
@@ -341,7 +342,7 @@ const snFilter = ref('')
 const actionFilter = ref('')
 const techFilter = ref('')
 const statusFilter = ref('')
-const dayFilter = ref(0)
+const dateRange = ref(null)
 const saving = ref(false)
 const form = reactive({ sn: '', repair_action: 'RETEST', target_station: '', reason: '' })
 
@@ -369,7 +370,8 @@ async function load() {
     if (actionFilter.value) params.repair_action = actionFilter.value
     if (techFilter.value) params.technician = techFilter.value
     if (statusFilter.value) params.undone = statusFilter.value === 'undone'
-    if (dayFilter.value) params.days = dayFilter.value
+    if (dateRange.value?.[0]) params.date_from = dateRange.value[0]
+    if (dateRange.value?.[1]) params.date_to = dateRange.value[1]
     const res = await repairApi.list(params)
     items.value = res.data.items
     total.value = res.data.total
@@ -683,7 +685,7 @@ async function executeBatch() {
 }
 
 watch([page, pageSize], () => load())
-watch([snFilter, actionFilter, techFilter, statusFilter, dayFilter], () => search())
+watch([snFilter, actionFilter, techFilter, statusFilter, dateRange], () => search())
 
 onMounted(() => {
   ensureLoaded()

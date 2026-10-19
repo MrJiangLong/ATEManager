@@ -10,9 +10,8 @@
           v-model="dateRange"
           type="daterange"
           value-format="YYYY-MM-DD"
-          :start-placeholder="t('records.startDate')"
-          :end-placeholder="t('records.endDate')"
-          style="width:240px"
+          :start-placeholder="t('common.startDate')"
+          :end-placeholder="t('common.endDate')"
         />
         <el-button :icon="RefreshRight" size="small" @click="load">{{ t('common.refresh') }}</el-button>
       </div>

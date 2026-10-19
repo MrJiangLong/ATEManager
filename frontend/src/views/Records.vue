@@ -19,9 +19,8 @@
         v-model="dateRange"
         type="daterange"
         value-format="YYYY-MM-DD"
-        :start-placeholder="$t('records.startDate')"
-        :end-placeholder="$t('records.endDate')"
-        style="width:250px"
+        :start-placeholder="$t('common.startDate')"
+        :end-placeholder="$t('common.endDate')"
       />
       <template #extra>
         <el-button :icon="Refresh" @click="search">{{ $t('common.refresh') }}</el-button>

@@ -127,7 +127,7 @@
         <el-table-column :label="t('rules.filename')" min-width="240">
           <template #default="{ row }">{{ row }}</template>
         </el-table-column>
-        <el-table-column :label="t('common.action')" width="80" align="center">
+        <el-table-column :label="t('common.action')" width="120" align="center">
           <template #default="{ row }">
             <el-button link type="danger" size="small" @click="onTplDelete(row)">{{ t('common.delete') }}</el-button>
           </template>

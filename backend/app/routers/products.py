@@ -11,6 +11,7 @@ from ..errors import get_or_404
 from ..security import current_user, require_operator
 from ..services import force_release_lock
 from ..services.routing import load_process
+from ..services.timeutil import date_range_bounds
 from ..services.views import build_product_out
 from .sessions import _session_view
 
@@ -42,6 +43,8 @@ def list_products(
     current_status: Optional[str] = None,
     process_id: Optional[str] = None,
     zombie_only: bool = Query(False, description="仅看失联僵尸锁（心跳断流，可被接管）"),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -52,6 +55,11 @@ def list_products(
         query = query.filter(models.ProductStatus.sn.ilike(f"%{sn}%"))
     if product_model:
         query = query.filter(models.ProductStatus.product_model == product_model)
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.ProductStatus.updated_at >= start)
+    if end:
+        query = query.filter(models.ProductStatus.updated_at < end)
     status_filter = (current_status or "").upper()
     if current_status and status_filter not in ("IDLE", "COMPLETED"):
         query = query.filter(models.ProductStatus.current_status == status_filter)

@@ -11,6 +11,13 @@
       <el-select v-model="filters.current_status" clearable :placeholder="$t('products.filterStatus')" style="width:140px">
         <el-option v-for="s in WIP_FILTER_STATUSES" :key="s" :value="s" :label="$t(`status.${s}`)" />
       </el-select>
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="$t('common.startDate')"
+        :end-placeholder="$t('common.endDate')"
+      />
       <el-checkbox v-model="zombieOnly" :label="$t('products.zombieOnly')" />
       <template #extra>
         <el-button :icon="Refresh" @click="search">{{ $t('common.refresh') }}</el-button>
@@ -153,6 +160,7 @@ const page = ref(1)
 const pageSize = ref(20)
 const filters = reactive({ sn: '', process_id: '', product_model: '', current_status: '' })
 const zombieOnly = ref(false)
+const dateRange = ref(null)
 
 const repairVisible = ref(false)
 const repairSn = ref('')
@@ -171,6 +179,8 @@ async function load() {
     if (filters.product_model) params.product_model = filters.product_model
     if (filters.current_status) params.current_status = filters.current_status
     if (zombieOnly.value) params.zombie_only = true
+    if (dateRange.value?.[0]) params.date_from = dateRange.value[0]
+    if (dateRange.value?.[1]) params.date_to = dateRange.value[1]
     const res = await productApi.list(params)
     items.value = res.data.items
     total.value = res.data.total
@@ -271,7 +281,7 @@ async function onForceRelease(row) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.process_id, filters.product_model, filters.current_status],
+  () => [filters.sn, filters.process_id, filters.product_model, filters.current_status, dateRange.value],
   () => search()
 )
 watch(zombieOnly, () => search())

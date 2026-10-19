@@ -9,6 +9,13 @@
         <el-select v-model="filters.status" clearable :placeholder="t('reports.all')" style="width:140px">
           <el-option v-for="s in JOB_STATUSES" :key="s" :value="s" :label="t(`reports.status_${s}`)" />
         </el-select>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          :start-placeholder="t('common.startDate')"
+          :end-placeholder="t('common.endDate')"
+        />
         <el-button :icon="RefreshRight" size="small" @click="load">{{ t('common.refresh') }}</el-button>
       </div>
     </div>
@@ -102,7 +109,7 @@
       <el-table-column :label="t('reports.tableCreated')" min-width="160" show-overflow-tooltip>
         <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
       </el-table-column>
-      <el-table-column v-if="canOperate" :label="t('common.action')" width="170" fixed="right">
+      <el-table-column v-if="canOperate" :label="t('common.action')" width="170" align="center" fixed="right">
         <template #default="{ row }">
           <el-button
             link type="primary" size="small"
@@ -177,12 +184,15 @@ const page = ref(1)
 const pageSize = ref(20)
 const models = ref([])
 const filters = reactive({ sn: '', model: '', status: '' })
+const dateRange = ref(null)
 
 function params() {
   const p = { page: page.value, page_size: pageSize.value }
   if (filters.sn) p.sn = filters.sn
   if (filters.model) p.model = filters.model
   if (filters.status) p.status = filters.status
+  if (dateRange.value?.[0]) p.date_from = dateRange.value[0]
+  if (dateRange.value?.[1]) p.date_to = dateRange.value[1]
   return p
 }
 
@@ -235,7 +245,7 @@ async function download(row, index, variant) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.model, filters.status],
+  () => [filters.sn, filters.model, filters.status, dateRange.value],
   () => {
     page.value = 1
     search()

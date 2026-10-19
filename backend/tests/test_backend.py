@@ -2277,33 +2277,41 @@ def test_repair_undo():
 
 # ================= M. 维修履历筛选 =================
 def test_repair_list_filters():
-    """履历筛选：操作人模糊 + 近 N 天（本地日界）+ 动作组合。"""
+    """履历筛选：操作人模糊 + 日期区间（本地日界）+ 动作/撤销状态组合。"""
+    today = time.strftime("%Y-%m-%d")
+    dates = {"date_from": today, "date_to": today}
     # 操作人筛选：admin 的处置都能查到
-    resp = admin("GET", "/api/admin/repairs", params={"technician": "admin", "days": 1})
+    resp = admin("GET", "/api/admin/repairs", params={"technician": "admin", **dates})
     body = resp.json()
     check(resp.status_code == 200 and body["total"] >= 1, f"technician filter: {resp.text}")
     check(
         all(r["technician_id"] == "admin" for r in body["items"]),
         f"technician filter rows: {body}",
     )
-    # 近 1 天 + 动作组合筛选
-    resp = admin("GET", "/api/admin/repairs", params={"repair_action": "RETEST", "days": 1})
+    # 今日区间 + 动作组合筛选
+    resp = admin("GET", "/api/admin/repairs", params={"repair_action": "RETEST", **dates})
     check(
         all(r["repair_action"] == "RETEST" for r in resp.json()["items"]),
-        f"action+days filter: {resp.text}",
+        f"action+date filter: {resp.text}",
     )
     # 撤销状态筛选：true=仅已撤销 / false=仅有效
-    resp = admin("GET", "/api/admin/repairs", params={"undone": "true", "days": 1})
+    resp = admin("GET", "/api/admin/repairs", params={"undone": "true", **dates})
     check(
         resp.status_code == 200
         and resp.json()["total"] >= 1
         and all(r["undone_at"] for r in resp.json()["items"]),
         f"undone=true filter: {resp.text}",
     )
-    resp = admin("GET", "/api/admin/repairs", params={"undone": "false", "days": 1})
+    resp = admin("GET", "/api/admin/repairs", params={"undone": "false", **dates})
     check(
         resp.status_code == 200 and all(not r["undone_at"] for r in resp.json()["items"]),
         f"undone=false filter: {resp.text}",
+    )
+    # 非法日期格式 400
+    resp = admin("GET", "/api/admin/repairs", params={"date_from": "2026/01/01"})
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "invalid_date_format",
+        f"invalid date: {resp.text}",
     )
 
 # ================= J. 存量机型受控直通（passthrough 渐进上线） =================

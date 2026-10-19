@@ -25,7 +25,7 @@
       <el-table-column :label="t('users.createdAt')" width="170">
         <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="140" align="center" fixed="right">
+      <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
           <el-button link type="danger" size="small" :disabled="row.username === state.user?.username" @click="onDelete(row)">
@@ -77,7 +77,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
@@ -108,6 +108,7 @@ async function load() {
     rows.value = (await usersApi.list()).data
   } catch (e) {
     ElMessage.error(e.message)
+
   } finally {
     loading.value = false
   }
