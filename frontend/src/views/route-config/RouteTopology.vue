@@ -59,6 +59,14 @@
           <el-switch v-model="row.is_optional" size="small" />
         </template>
       </el-table-column>
+      <el-table-column :label="t('configs.invalidatesDownstream')" width="120" align="center">
+        <template #header>
+          <span :title="t('configs.invalidatesDownstreamTip')">{{ t('configs.invalidatesDownstream') }}</span>
+        </template>
+        <template #default="{ row }">
+          <el-switch v-model="row.invalidates_downstream" size="small" />
+        </template>
+      </el-table-column>
       <el-table-column :label="t('configs.itemCount')" width="90" align="right">
         <template #default="{ row }">{{ itemCountOf(row.station_id) }}</template>
       </el-table-column>
@@ -70,7 +78,7 @@
       <template #empty><EmptyState :text="t('common.noData')" /></template>
     </el-table>
 
-    <el-drawer v-model="validateVisible" size="560px" destroy-on-close>
+    <el-drawer v-model="validateVisible" size="680px" destroy-on-close>
       <div v-if="validateResult">
         <el-alert
           :title="validateMeta.title"
@@ -173,7 +181,7 @@ function removedStations() {
 
 function addStep() {
   const nextOrder = steps.value.length ? Math.max(...steps.value.map((s) => s.step_order)) + 10 : 10
-  steps.value.push({ station_id: '', step_order: nextOrder, depends_on: [], is_optional: false })
+  steps.value.push({ station_id: '', step_order: nextOrder, depends_on: [], is_optional: false, invalidates_downstream: false })
 }
 
 function removeRow(index) {
@@ -207,6 +215,7 @@ async function save() {
         step_order: s.step_order,
         depends_on: s.depends_on || [],
         is_optional: !!s.is_optional,
+        invalidates_downstream: !!s.invalidates_downstream,
       }))
     )
     ElMessage.success(t('configs.topologySaved'))

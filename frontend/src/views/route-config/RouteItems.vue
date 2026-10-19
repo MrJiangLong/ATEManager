@@ -16,6 +16,19 @@
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">
+      <el-table-column :label="t('configs.sortOrder')" width="130">
+        <template #default="{ row }">
+          <el-input-number
+            v-model="row.sort_order"
+            :min="1"
+            :max="999"
+            controls-position="right"
+            :value-on-clear="null"
+            style="width:100%"
+            @change="onOrderChange(row)"
+          />
+        </template>
+      </el-table-column>
       <el-table-column prop="station_id" :label="t('configs.tabStations')" width="150">
         <template #default="{ row }"><span class="code">{{ row.station_id }}</span></template>
       </el-table-column>
@@ -202,6 +215,16 @@ async function submit() {
     ElMessage.error(e.message)
   } finally {
     saving.value = false
+  }
+}
+
+/** 行内直接改执行序号：立即落库（清空 = 重置为未编号，排到队尾） */
+async function onOrderChange(row) {
+  try {
+    await routingApi.updateItem(row.item_id, { sort_order: row.sort_order ?? null })
+  } catch (e) {
+    ElMessage.error(e.message || t('errors.loadFailed'))
+    loadItems()
   }
 }
 

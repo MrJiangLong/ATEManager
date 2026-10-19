@@ -1489,6 +1489,17 @@ def test_process_export_import():
     check(len(doc["steps"]) == 4, f"export steps: {len(doc['steps'])}")
     check(len(doc["items"]) >= 8, f"export items: {len(doc['items'])}")
 
+    # 导出前给两个用例设置执行顺序，验证导出→导入往返不丢失
+    dpo_items = admin("GET", "/api/admin/routing/items",
+                      params={"process_id": P_DPO, "station_id": "CAL-PARAM"}).json()
+    check(len(dpo_items) >= 2, f"dpo items for order: {len(dpo_items)}")
+    admin("PUT", f"/api/admin/routing/items/{dpo_items[0]['item_id']}", {"sort_order": 20})
+    admin("PUT", f"/api/admin/routing/items/{dpo_items[1]['item_id']}", {"sort_order": 10})
+    doc = admin("GET", f"/api/admin/routing/processes/{P_DPO}/export").json()
+    exported_orders = {i["case_id"]: i.get("sort_order") for i in doc["items"]
+                       if i["station_id"] == "CAL-PARAM"}
+    check(exported_orders.get(dpo_items[0]["case_id"]) == 20, f"export sort_order: {exported_orders}")
+
     imp = f"PROC-TEST-IMP-{STAMP}"
     doc["process"]["process_id"] = imp
     doc["process"]["process_name"] = "导入副本"
@@ -1498,6 +1509,33 @@ def test_process_export_import():
     check(body["steps_created"] == 4 and body["items_created"] == len(doc["items"]), f"counts: {body}")
     check(body["stations_created"] == 0, f"工位已存在不重复建: {body}")
     check(body["models_skipped"] == 1, f"机型冲突跳过: {body}")
+
+    # 导入副本：显式序号与源一致（往返不丢失）；未编号项自动编号
+    imp_orders = {i["case_id"]: i.get("sort_order")
+                  for i in admin("GET", "/api/admin/routing/items",
+                                 params={"process_id": imp, "station_id": "CAL-PARAM"}).json()}
+    for cid, so in exported_orders.items():
+        if so is not None:
+            check(imp_orders.get(cid) == so, f"roundtrip order {cid}: {imp_orders}")
+    check(all(v is not None for v in imp_orders.values()), f"import auto numbered: {imp_orders}")
+
+    # 旧格式兼容：无 sort_order 的导出文件可导入，按导入顺序以步长 10 自动编号
+    old = json.loads(json.dumps(doc))
+    old["process"]["process_id"] = f"PROC-IMP-OLD-{STAMP}"
+    for it in old["items"]:
+        it.pop("sort_order", None)
+    resp = admin("POST", "/api/admin/routing/processes/import", old)
+    check(resp.status_code == 201, f"old-format import: {resp.status_code} {resp.text}")
+    old_items = admin("GET", "/api/admin/routing/items",
+                      params={"process_id": f"PROC-IMP-OLD-{STAMP}",
+                              "station_id": "CAL-PARAM"}).json()
+    old_orders = [r["sort_order"] for r in old_items]
+    check(old_orders == sorted(old_orders) and old_orders[0] == 10 and len(set(old_orders)) == len(old_orders),
+          f"old-format auto numbering: {old_orders}")
+
+    # 清理副本上的序号标记，避免影响其他用例
+    for it in dpo_items:
+        admin("PUT", f"/api/admin/routing/items/{it['item_id']}", {"sort_order": None})
 
     res = admin("GET", "/api/admin/routing/validate", params={"process_id": imp})
     check(res.json()["ok"] is True, "副本拓扑校验通过")
@@ -2314,6 +2352,167 @@ def test_repair_list_filters():
         f"invalid date: {resp.text}",
     )
 
+# ================= I4. 依赖重测与用例执行顺序 =================
+def test_dependency_retest_cascade():
+    """RETEST 依赖重测工位：未确认 409 + 下游闭包清单 / 确认后一并清除下游印章。"""
+    proc = f"PROC-CASC-TEST-{STAMP}"
+    resp = admin("POST", "/api/admin/processes", {"process_id": proc, "process_name": "级联验证"})
+    check(resp.status_code == 201, f"create proc: {resp.text}")
+    topo = [
+        {"station_id": "CAL-PARAM", "step_order": 10, "depends_on": [],
+         "invalidates_downstream": True},
+        {"station_id": "CAL-IFACE", "step_order": 20, "depends_on": ["CAL-PARAM"]},
+        {"station_id": "TST-PARAM", "step_order": 30, "depends_on": ["CAL-IFACE"]},
+        # 依赖链之外：工步顺序在后但 depends_on 不经过 CAL-PARAM → 不级联
+        {"station_id": "CAL-AWG", "step_order": 40, "depends_on": []},
+    ]
+    resp = admin("PUT", "/api/admin/routing/stations", topo, params={"process_id": proc})
+    check(resp.status_code == 200, f"topo: {resp.text}")
+    for it in (
+        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/casc.py::test_cal",
+         "item_name": "重校准", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/casc.py::test_iface",
+         "item_name": "接口测量"},
+        {"process_id": proc, "station_id": "TST-PARAM", "case_id": "tests/casc.py::test_param",
+         "item_name": "指标测量"},
+        {"process_id": proc, "station_id": "CAL-AWG", "case_id": "tests/casc.py::test_awg",
+         "item_name": "AWG 测量"},
+    ):
+        resp = admin("POST", "/api/admin/routing/items", it)
+        check(resp.status_code == 201, f"create item: {resp.status_code} {resp.text}")
+    model = f"M-CASC-{STAMP}"
+    resp = admin("POST", "/api/admin/product-models",
+                 {"product_model": model, "process_id": proc, "target_fw_version": FW})
+    check(resp.status_code == 201, f"create model: {resp.text}")
+
+    sn = new_sn("CASC")
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM", "CAL-AWG"):
+        pass_station(station, sn, model=model)
+
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-PARAM",
+                  "reason": "重校准"})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "downstream_invalidation_required",
+        f"cascade 409: {resp.text}",
+    )
+    check(
+        resp.json()["data"]["stations"] == ["CAL-IFACE", "TST-PARAM"],
+        f"closure list: {resp.text}",
+    )
+
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-PARAM",
+                  "reason": "重校准", "confirm_downstream": True})
+    check(resp.status_code == 201, f"cascade retest: {resp.text}")
+    resp = admin("GET", f"/api/admin/products/{sn}")
+    check(
+        resp.json()["passed_stations"] == ["CAL-AWG"],
+        f"closure only: dependency-free station survives: {resp.json()}",
+    )
+
+    # 批量：未确认 → 全部失败（依赖重测 409）；确认 → 级联生效
+    sn2 = new_sn("CASC2")
+    for station in ("CAL-PARAM", "CAL-IFACE", "TST-PARAM", "CAL-AWG"):
+        pass_station(station, sn2, model=model)
+    resp = admin("POST", "/api/admin/repairs/batch",
+                 {"items": [sn2], "repair_action": "RETEST", "target_station": "CAL-PARAM",
+                  "reason": "批量重校准", "dry_run": True})
+    check(resp.status_code == 200, f"batch precheck: {resp.text}")
+    body = resp.json()
+    check(
+        body["fail_count"] == 1 and body["items"][0]["code"] == "downstream_invalidation_required",
+        f"batch cascade 409: {body}",
+    )
+    resp = admin("POST", "/api/admin/repairs/batch",
+                 {"items": [sn2], "repair_action": "RETEST", "target_station": "CAL-PARAM",
+                  "reason": "批量重校准", "confirm_downstream": True})
+    check(resp.status_code == 200 and resp.json()["ok_count"] == 1, f"batch cascade ok: {resp.text}")
+    batch_id = resp.json()["batch_id"]
+    check(batch_id, f"batch_id returned: {resp.text}")
+    resp = admin("GET", f"/api/admin/products/{sn2}")
+    check(resp.json()["passed_stations"] == ["CAL-AWG"], f"batch cascaded stamps: {resp.json()}")
+
+    # 批量撤销：整批按快照还原 → 印章与记录恢复；重复撤销 → already_undone
+    resp = admin("POST", "/api/admin/repairs/batch-undo", {"batch_id": batch_id})
+    check(resp.status_code == 200 and resp.json()["ok_count"] == 1, f"batch undo: {resp.text}")
+    resp = admin("GET", f"/api/admin/products/{sn2}")
+    check(
+        sorted(resp.json()["passed_stations"]) ==
+        sorted(["CAL-PARAM", "CAL-IFACE", "TST-PARAM", "CAL-AWG"]),
+        f"undo restored stamps: {resp.json()}",
+    )
+    resp = admin("POST", "/api/admin/repairs/batch-undo", {"batch_id": batch_id})
+    check(
+        resp.status_code == 200 and resp.json()["items"][0]["code"] == "already_undone",
+        f"repeat undo: {resp.text}",
+    )
+
+
+def test_item_sort_order():
+    """用例执行顺序：下发清单按 sort_order 排序（字母序被覆盖）；重复序号 warning。"""
+    proc = f"PROC-ORDER-TEST-{STAMP}"
+    resp = admin("POST", "/api/admin/processes", {"process_id": proc, "process_name": "排序验证"})
+    check(resp.status_code == 201, f"create proc: {resp.text}")
+    topo = [
+        {"station_id": "CAL-PARAM", "step_order": 10, "depends_on": []},
+        {"station_id": "CAL-IFACE", "step_order": 20, "depends_on": ["CAL-PARAM"]},
+    ]
+    resp = admin("PUT", "/api/admin/routing/stations", topo, params={"process_id": proc})
+    check(resp.status_code == 200, f"topo: {resp.text}")
+    for it in (
+        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/x.py::test_a",
+         "item_name": "测量A", "sort_order": 2},
+        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/x.py::test_b",
+         "item_name": "校准B", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_c",
+         "item_name": "重复序C", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_d",
+         "item_name": "重复序D", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_e",
+         "item_name": "自动续排E"},
+    ):
+        resp = admin("POST", "/api/admin/routing/items", it)
+        check(resp.status_code == 201, f"create item: {resp.status_code} {resp.text}")
+
+    model = f"M-ORDER-{STAMP}"
+    resp = admin("POST", "/api/admin/product-models",
+                 {"product_model": model, "process_id": proc, "target_fw_version": FW})
+    check(resp.status_code == 201, f"create model: {resp.text}")
+
+    sn = new_sn("ORDER")
+    resp = checkin("CAL-PARAM", sn, model=model)
+    check(resp.status_code == 200, f"checkin: {resp.text}")
+    rules = resp.json()["data"]["rules"]
+    check(
+        [r["case_id"] for r in rules] == ["tests/x.py::test_b", "tests/x.py::test_a"],
+        f"sort_order respected: {rules}",
+    )
+    checkout("CAL-PARAM", sn, [r["case_id"] for r in rules])
+    resp = checkin("CAL-IFACE", sn, model=model)
+    rules = resp.json()["data"]["rules"]
+    check(
+        [r["case_id"] for r in rules] ==
+        ["tests/x.py::test_c", "tests/x.py::test_d", "tests/x.py::test_e"],
+        f"auto append: {rules}",
+    )
+    resp = admin("GET", "/api/admin/routing/validate", params={"process_id": proc})
+    codes = [i["code"] for i in resp.json()["issues"]]
+    check("item_order_duplicate" in codes, f"dup order warning: {resp.text}")
+
+    row_b = next(r for r in admin("GET", "/api/admin/routing/items",
+                                 params={"process_id": proc, "station_id": "CAL-PARAM"}).json()
+                 if r["case_id"] == "tests/x.py::test_b")
+    resp = admin("PUT", f"/api/admin/routing/items/{row_b['item_id']}", {"sort_order": None})
+    check(resp.status_code == 200 and resp.json()["sort_order"] is None, f"reset null: {resp.text}")
+    sn2 = new_sn("ORDER2")
+    resp = checkin("CAL-PARAM", sn2, model=model)
+    rules = resp.json()["data"]["rules"]
+    check(
+        [r["case_id"] for r in rules] == ["tests/x.py::test_a", "tests/x.py::test_b"],
+        f"null resets to tail: {rules}",
+    )
+
 # ================= J. 存量机型受控直通（passthrough 渐进上线） =================
 def test_passthrough_mode():
     """直通机型进站 ACK 零写入 + 模式切换卡控。
@@ -2461,6 +2660,8 @@ TESTS = [
     test_repair_batch,
     test_repair_undo,
     test_repair_list_filters,
+    test_dependency_retest_cascade,
+    test_item_sort_order,
 ]
 
 if __name__ == "__main__":

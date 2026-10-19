@@ -30,6 +30,7 @@ class ProcessGraph(NamedTuple):
     name_of: Dict[str, str]
     items_of: Dict[str, List[models.StationItem]]
     optional: Set[str] = frozenset()  # 选检工位（QA 抽查），不参与完工判定
+    invalidates: Set[str] = frozenset()  # 依赖重测触发的工位（invalidates_downstream 配置）
 
 def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
     """装载流程拓扑。流程不存在或无任何工步时返回 None。"""
@@ -58,7 +59,12 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
             models.StationItem.process_id == process_id,
             models.StationItem.is_active.is_(True),
         )
-        .order_by(models.StationItem.station_id, models.StationItem.case_id)
+        .order_by(
+            models.StationItem.station_id,
+            models.StationItem.sort_order.is_(None),
+            models.StationItem.sort_order,
+            models.StationItem.case_id,
+        )
         .all()
     )
     items_of: Dict[str, List[models.StationItem]] = {}
@@ -82,6 +88,7 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
         },
         items_of=items_of,
         optional={s.station_id for s in steps if s.is_optional},
+        invalidates={s.station_id for s in steps if s.invalidates_downstream},
     )
 
 def missing_prereq(graph: ProcessGraph, station_id: str, passed: Set[str]) -> List[str]:
@@ -106,7 +113,7 @@ def next_stations(graph: ProcessGraph, passed: Set[str]) -> List[schemas.NextSta
     return result
 
 def mandatory_case_ids(graph: ProcessGraph, station_id: str) -> List[str]:
-    """该工位必测的用例ID清单（is_active AND is_mandatory）。"""
+    """该工位必测的用例ID清单（is_active AND is_mandatory），按配置的执行顺序返回。"""
     return [i.case_id for i in graph.items_of.get(station_id, []) if i.is_mandatory]
 
 def station_rules(graph: ProcessGraph, station_id: str) -> List[schemas.StationRule]:
@@ -253,12 +260,24 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     )
     active_of: Dict[str, int] = {}
     mandatory_of: Dict[str, int] = {}
+    order_seen: Dict[Tuple[str, int], List[str]] = {}
     for item in items:
         if not item.is_active:
             continue
         active_of[item.station_id] = active_of.get(item.station_id, 0) + 1
         if item.is_mandatory:
             mandatory_of[item.station_id] = mandatory_of.get(item.station_id, 0) + 1
+        if item.sort_order is not None:
+            order_seen.setdefault((item.station_id, item.sort_order), []).append(item.case_id)
+    for (station_id, order), cases in sorted(order_seen.items()):
+        if len(cases) > 1:
+            issues.append(
+                schemas.ValidateIssue(
+                    level="warning",
+                    code="item_order_duplicate",
+                    detail=f"{station_id} sort_order={order}: {', '.join(sorted(cases))}",
+                )
+            )
 
     for station_id in sorted(defined):
         if active_of.get(station_id, 0) == 0:
@@ -337,7 +356,12 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
     items = (
         db.query(models.StationItem)
         .filter(models.StationItem.process_id == process_id)
-        .order_by(models.StationItem.station_id, models.StationItem.case_id)
+        .order_by(
+            models.StationItem.station_id,
+            models.StationItem.sort_order.is_(None),
+            models.StationItem.sort_order,
+            models.StationItem.case_id,
+        )
         .all()
     )
     step_stations = (
@@ -359,6 +383,7 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
                 step_order=s.step_order,
                 depends_on=_as_list(s.depends_on),
                 is_optional=bool(s.is_optional),
+                invalidates_downstream=bool(s.invalidates_downstream),
                 item_count=item_count.get(s.station_id, 0),
                 timeout_sec=timeouts.get(s.station_id, 1800),
             )

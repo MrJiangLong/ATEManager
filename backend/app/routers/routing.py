@@ -7,6 +7,7 @@
 from typing import Dict, List
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -98,6 +99,7 @@ def save_steps(
                 step_order=step.step_order,
                 depends_on=list(step.depends_on or []),
                 is_optional=step.is_optional,
+                invalidates_downstream=step.invalidates_downstream,
             )
         )
     # 先落库再校验，以便直接复用 validate_process 的完整规则；不通过则整体回滚
@@ -173,10 +175,16 @@ def list_items(
     query = db.query(models.StationItem).filter(models.StationItem.process_id == process_id)
     if station_id:
         query = query.filter(models.StationItem.station_id == station_id)
-    return query.order_by(models.StationItem.station_id, models.StationItem.case_id).all()
+    return query.order_by(
+        models.StationItem.station_id,
+        models.StationItem.sort_order.is_(None),
+        models.StationItem.sort_order,
+        models.StationItem.case_id,
+    ).all()
 
 @router.post("/items", response_model=schemas.StationItemOut, status_code=201, summary="新增用例ID测试项")
 def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(require_manager)):
+    """新增测试项；未指定 sort_order 时按步长 10 追加到该工位末尾（预留中间插入空间）。"""
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
     exists = (
@@ -190,8 +198,23 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
     )
     if exists:
         raise conflict_error("item_already_exists", f"item_already_exists: {payload.case_id}")
+    next_order = payload.sort_order
+    if next_order is None:
+        max_order = (
+            db.query(func.max(models.StationItem.sort_order))
+            .filter(
+                models.StationItem.process_id == payload.process_id,
+                models.StationItem.station_id == payload.station_id,
+            )
+            .scalar()
+        )
+        next_order = (max_order or 0) + 10
     row = models.StationItem(
-        **{**payload.model_dump(), "item_name": payload.item_name or payload.case_id}
+        **{
+            **payload.model_dump(exclude={"sort_order"}),
+            "item_name": payload.item_name or payload.case_id,
+            "sort_order": next_order,
+        }
     )
     db.add(row)
     db.commit()
@@ -201,9 +224,16 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
 def update_item(
     item_id: int, payload: schemas.StationItemUpdateIn, db: Session = Depends(get_db), user=Depends(require_manager)
 ):
+    """更新测试项；sort_order 显式传 null = 重置为未编号（排在已编号项之后按 case_id 队尾）。"""
     row = get_or_404(db, models.StationItem, item_id, "item")
-    for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
-        setattr(row, key, value)
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        if key == "sort_order":
+            continue
+        if value is not None:
+            setattr(row, key, value)
+    if "sort_order" in data:
+        row.sort_order = data["sort_order"]
     db.commit()
     return row
 
@@ -225,10 +255,12 @@ def import_items(
     匹配键 (process_id, station_id, case_id) 与唯一约束一致，故重复导入幂等：
     第二次执行全部 unchanged，不会产生重复行，也不会因已存在而报 409。
 
-    闸门：本次导入会"新增必测项"（新用例 / 停用复活 / is_mandatory 翻 true）且该
+    闸门：本次导入会"    新增必测项"（新用例 / 停用复活 / is_mandatory 翻 true）且该
     工位有 RUNNING 会话时默认 409 拒绝 —— 运行中会话的断点里没有新必测项，出站会被
     missing_mandatory 误计一次失败（FAIL_LIMIT 次 → LOCKED）。先停会话再同步，或
     force=true 强行覆盖。只收缩清单（停用/降级/改名）不拦，随时可做。
+    执行顺序按导入载荷顺序整体编号（导入顺序即执行顺序）；replace 模式停用的清单外
+    项序号清空。
     """
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
@@ -248,6 +280,7 @@ def import_items(
 
     warnings: List[str] = []
     seen = set()
+    payload_order: List[str] = []
     mand: Dict[str, bool] = {}
     created = updated = unchanged = 0
     for row_in in payload.items:
@@ -258,6 +291,7 @@ def import_items(
             warnings.append(f"duplicate case_id in payload: {case_id}")
             continue
         seen.add(case_id)
+        payload_order.append(case_id)
         mand[case_id] = bool(row_in.is_mandatory)
 
         row = existing.get(case_id)
@@ -317,7 +351,13 @@ def import_items(
     if payload.mode == "replace":
         for case_id in orphans:
             existing[case_id].is_active = False
+            existing[case_id].sort_order = None
             deactivated += 1
+
+    for idx, case_id in enumerate(payload_order, 1):
+        row = existing.get(case_id)
+        if row is not None and row.sort_order != idx * 10:
+            row.sort_order = idx * 10
 
     total_active = sum(1 for r in existing.values() if r.is_active)
 
@@ -381,6 +421,7 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
                 step_order=step.step_order,
                 depends_on=list(step.depends_on or []),
                 is_optional=step.is_optional,
+                invalidates_downstream=step.invalidates_downstream,
             )
         )
     for item in items:
@@ -392,6 +433,7 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
                 item_name=item.item_name,
                 is_mandatory=item.is_mandatory,
                 is_active=item.is_active,
+                sort_order=item.sort_order,
             )
         )
     db.commit()
@@ -451,6 +493,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
                 step_order=s.step_order,
                 depends_on=list(s.depends_on or []),
                 is_optional=bool(s.is_optional),
+                invalidates_downstream=bool(s.invalidates_downstream),
             )
             for s in topo.steps
         ],
@@ -460,6 +503,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
                 case_id=i.case_id,
                 item_name=i.item_name or "",
                 is_mandatory=i.is_mandatory,
+                sort_order=i.sort_order,
             )
             for i in topo.items
         ],
@@ -497,7 +541,8 @@ def export_all_processes(db: Session = Depends(get_db), user=Depends(current_use
 def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     """事务式导入：流程不存在（409 可改编号重试）；缺失工位自动补建（已有配置
     不覆盖——工位是跨流程共享字典）；机型已存在时跳过（绑定关系不迁移）；
-    全部写入后复用拓扑校验，error 级问题整体回滚。"""
+    用例执行顺序保留导出文件携带的 sort_order，旧文件未携带时按导入顺序以
+    步长 10 自动编号；全部写入后复用拓扑校验，error 级问题整体回滚。"""
     proc_in = payload.process
     if db.get(models.Process, proc_in.process_id):
         raise conflict_error(
@@ -565,10 +610,17 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 step_order=s.step_order,
                 depends_on=list(s.depends_on or []),
                 is_optional=bool(s.is_optional),
+                invalidates_downstream=s.invalidates_downstream,
             )
         )
     items_created = 0
+    station_seq: Dict[str, int] = {}
     for it in payload.items:
+        if it.sort_order is not None:
+            seq = it.sort_order
+        else:
+            seq = station_seq.get(it.station_id, 0) + 10
+        station_seq[it.station_id] = max(station_seq.get(it.station_id, 0), seq)
         db.add(
             models.StationItem(
                 process_id=proc_in.process_id,
@@ -577,6 +629,7 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 item_name=it.item_name or it.case_id,
                 is_mandatory=it.is_mandatory,
                 is_active=True,
+                sort_order=seq,
             )
         )
         items_created += 1

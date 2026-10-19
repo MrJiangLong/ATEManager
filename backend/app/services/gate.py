@@ -1208,13 +1208,36 @@ def _invalidate_records(db: Session, sn: str, station_ids: Set[str]) -> List[int
         row.is_valid = False
     return ids
 
+def _dependents_closure(graph, target_station: str) -> Set[str]:
+    """依赖闭包：直接或间接 depends_on 包含 target 的全部工位（级联重测范围）。
+
+    沿"谁依赖我"反向遍历依赖图；工步顺序在后但依赖链不经过 target 的工位不在内。
+    """
+    dependents: Dict[str, List[str]] = {}
+    for s in graph.stations:
+        for d in graph.deps_of.get(s, []):
+            dependents.setdefault(d, []).append(s)
+    seen: Set[str] = set()
+    stack = [target_station]
+    while stack:
+        for nxt in dependents.get(stack.pop(), []):
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return seen
+
+
 def _check_repair(
-    db: Session, *, sn: str, repair_action: str, target_station: Optional[str]
+    db: Session, *, sn: str, repair_action: str, target_station: Optional[str],
+    confirm_downstream: bool = False,
 ) -> Tuple[models.ProductStatus, str, object, Set[str], bool, Optional[Set[str]], str, str]:
     """维修处置守卫：预演（dry_run）与执行共用同一套校验，杜绝口径漂移。不落库。
 
     返回 (product, action, graph, passed, was_completed, revoked, product_model, process_id)；
     revoked 仅 RETEST/ROLLBACK 有值（预演可据此计算破坏面）。
+    RETEST 命中 invalidates_downstream 工位且下游有已盖章工位时，需 confirm_downstream
+    确认依赖重测（未确认 409 downstream_invalidation_required）——重测改变了被测件状态，
+    依赖本工位数据的下游测量基于旧状态。
     机型/流程随件返回：同一工位在各流程的测试项与工步序不同，批量混合批次必须让
     操作员看到每件归属，避免"同工位名、不同工艺内容"的误解。
     """
@@ -1259,6 +1282,19 @@ def _check_repair(
                     "station_not_passed",
                     f"station_not_passed: {sn} has not passed {target_station}",
                 )
+            mutates = target_station in graph.invalidates if graph else False
+            downstream: Set[str] = set()
+            if graph and mutates:
+                downstream = _dependents_closure(graph, target_station) & passed
+            if mutates and downstream:
+                if not confirm_downstream:
+                    raise conflict_error(
+                        "downstream_invalidation_required",
+                        "downstream_invalidation_required: "
+                        + ", ".join(sorted(downstream)),
+                        data={"stations": sorted(downstream)},
+                    )
+                revoked |= downstream
         else:
             base_order = graph.step_of.get(target_station, 0) if graph else 0
             revoked = {
@@ -1283,9 +1319,12 @@ def apply_repair(
     target_station: Optional[str],
     reason: str,
     technician_id: str,
+    confirm_downstream: bool = False,
+    batch_id: Optional[str] = None,
 ) -> Tuple[models.ProductStatus, models.RepairRecord]:
     product, action, graph, passed, was_completed, revoked, _model, _process = _check_repair(
-        db, sn=sn, repair_action=repair_action, target_station=target_station
+        db, sn=sn, repair_action=repair_action, target_station=target_station,
+        confirm_downstream=confirm_downstream,
     )
     # 处置前状态快照：撤销处置（undo_repair）的精确还原依据
     if action == models.REPAIR_RESET:
@@ -1343,6 +1382,7 @@ def apply_repair(
         reason=reason or None,
         technician_id=technician_id,
         snapshot=snapshot,
+        batch_id=batch_id,
     )
     db.add(repair)
     db.commit()

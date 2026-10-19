@@ -187,6 +187,8 @@ class ProcessStation(Base):
 
     is_optional = 选检工位（如 QA 抽查）：不要求全部产品通过——不参与完工判定，
     也不得被必跑工位依赖（否则变相必跑）；被抽中的件照常进站出站、照常卡前置。
+    invalidates_downstream = 依赖重测触发：本工位测试会改变被测件状态，
+    RETEST 时依赖本工位数据的下游已盖章工位需一并重测（确认后一并作废清除）。
     """
 
     __tablename__ = "process_stations"
@@ -200,6 +202,9 @@ class ProcessStation(Base):
     step_order: Mapped[int] = mapped_column(Integer, nullable=False)
     depends_on: Mapped[List[str]] = _array_column()
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    invalidates_downstream: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
 
     process = relationship("Process", back_populates="steps")
     station = relationship("Station")
@@ -221,6 +226,8 @@ class StationItem(Base):
     station_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     case_id: Mapped[str] = mapped_column("nodeid", String(256), nullable=False)
     item_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 执行顺序：同工位内用例的执行次序；未指定时按添加顺序自动续排
+    sort_order: Mapped[Optional[int]] = mapped_column()
     is_mandatory: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
 
@@ -339,6 +346,8 @@ class RepairRecord(Base):
     # 处置前状态快照（撤销处置的精确还原依据）：passed_stations / fail_count /
     # current_status / is_completed / locked_reason / invalidated_record_ids
     snapshot: Mapped[Optional[dict]] = mapped_column(JsonbType)
+    # 批量处置关联：同一次批量生成的记录共享一个 batch_id，供批量撤销
+    batch_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     undone_by: Mapped[Optional[str]] = mapped_column(String(32))
     undone_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

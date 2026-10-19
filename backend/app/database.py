@@ -76,11 +76,21 @@ _ADDED_COLUMNS = {
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
+    "process_stations": {
+        # 依赖重测触发标记：存量行回填 false = 级联不触发，与旧版语义完全一致
+        "invalidates_downstream": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
+    },
+    "station_items": {
+        # 用例执行顺序（进站下发按此排序）
+        "sort_order": "INTEGER",
+    },
     "repair_records": {
         # 处置前状态快照（撤销处置用）与撤销留痕
         "snapshot": "JSON DEFAULT '{}'",
         "undone_by": "VARCHAR(32)",
         "undone_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
+        # 批量处置关联（批量撤销按此分组）
+        "batch_id": "VARCHAR(64)",
     },
     "report_rules": {
         # MES 作废接口（维修处置作废报告时联动调用；空 = 该产品族待人工处理）

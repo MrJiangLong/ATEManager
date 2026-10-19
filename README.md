@@ -407,8 +407,8 @@ ATEManager/
 | `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定 |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
-| `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
+| `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；`sort_order` 定工位内执行顺序（进站下发的用例清单按此排序；新增/导入未指定时按顺序以步长 10 自动编号，便于中间插入）；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
 > ORM 层用 `mapped_column("nodeid")` 将属性名映射为 `case_id`。
@@ -640,7 +640,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
 | 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
@@ -770,7 +770,10 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 处置仅在在制品未被持锁（非 `TESTING`）时允许执行，否则返回 `409 product_holding_lock`。
 
 **与出厂报告的联动**：RETEST / ROLLBACK / RESET 破坏完工态时，该 SN 的报告任务自动
-**作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效）。曾上传
+**作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效）。RETEST
+命中**依赖重测**工位（`invalidates_downstream`，工步拓扑中配置）且下游有已盖章
+工位时，需确认**依赖重测**（未确认 409 `downstream_invalidation_required`；确认后下游
+印章与记录一并作废清除——重测改变了被测件状态，下游测量基于旧状态）。曾上传
 MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 侧副本；未配置则标记
 「待人工」。产品重新完工后，完工扫描自动生成全新报告；
 也可对作废任务手动「重试」重新生成。SCRAP 不作废报告（保留报废前最后有效状态的记录）。

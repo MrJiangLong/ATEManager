@@ -419,6 +419,7 @@ class ProcessStationOut(ORMModel):
     step_order: int
     depends_on: List[str] = []
     is_optional: bool = False
+    invalidates_downstream: bool = False
     item_count: int = 0
     timeout_sec: int = 1800
 
@@ -426,6 +427,7 @@ class ProcessStationIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     step_order: int = Field(ge=1)
     depends_on: List[str] = Field(default_factory=list)
+    invalidates_downstream: bool = False
     is_optional: bool = False
 
 class StationItemOut(ORMModel):
@@ -434,6 +436,7 @@ class StationItemOut(ORMModel):
     station_id: str
     case_id: str
     item_name: str
+    sort_order: Optional[int] = None
     is_mandatory: bool = True
     is_active: bool = True
 
@@ -442,11 +445,13 @@ class StationItemCreateIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
+    sort_order: Optional[int] = None
     is_mandatory: bool = True
     is_active: bool = True
 
 class StationItemUpdateIn(BaseModel):
     item_name: Trimmed = Field(default=None, max_length=128)
+    sort_order: Optional[int] = None
     is_mandatory: Optional[bool] = None
     is_active: Optional[bool] = None
 
@@ -524,12 +529,14 @@ class ExportStep(BaseModel):
     step_order: int
     depends_on: List[str] = []
     is_optional: bool = False
+    invalidates_downstream: bool = False
 
 class ExportItem(BaseModel):
     station_id: str
     case_id: str
     item_name: str = ""
     is_mandatory: bool = True
+    sort_order: Optional[int] = None
 
 class ProcessExportOut(BaseModel):
     export_version: int = 1
@@ -582,12 +589,14 @@ class ImportStep(BaseModel):
     step_order: int = Field(ge=1)
     depends_on: List[str] = []
     is_optional: bool = False
+    invalidates_downstream: bool = False  # 旧导出文件缺省 false 兼容
 
 class ImportItem(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     is_mandatory: bool = True
+    sort_order: Optional[int] = None  # 旧导出文件缺省 None → 按导入顺序自动编号
 
 class ProcessImportIn(BaseModel):
     """导入载荷：结构与导出文件一致（exported_at/export_version 可缺省）。"""
@@ -660,6 +669,10 @@ class RepairIn(BaseModel):
     repair_action: str = Field(description="RETEST / ROLLBACK / RESET / SCRAP")
     target_station: Trimmed = Field(default=None, max_length=64, description="RETEST / ROLLBACK 必填")
     reason: Trimmed = Field(default="")
+    confirm_downstream: bool = Field(
+        default=False,
+        description="RETEST 命中配置依赖重测的工位（invalidates_downstream）时，确认清除依赖本工位数据的下游已盖章工位",
+    )
 
     @field_validator("repair_action")
     @classmethod
@@ -700,6 +713,10 @@ class RepairBatchIn(BaseModel):
     target_station: Trimmed = Field(default=None, max_length=64, description="RETEST / ROLLBACK 必填")
     reason: Trimmed = Field(default="")
     dry_run: bool = Field(default=False, description="true = 只校验不落库（预演破坏面）")
+    confirm_downstream: bool = Field(
+        default=False,
+        description="RETEST 命中依赖重测工位时，确认一并清除下游已盖章工位",
+    )
 
     @field_validator("repair_action")
     @classmethod
@@ -724,6 +741,17 @@ class RepairBatchItemOut(BaseModel):
 
 class RepairBatchOut(BaseModel):
     dry_run: bool
+    total: int
+    ok_count: int = 0
+    fail_count: int = 0
+    items: List[RepairBatchItemOut] = []
+    batch_id: Optional[str] = None  # 非 dry_run 时生成，供批量撤销
+
+class BatchUndoIn(BaseModel):
+    batch_id: TrimmedRequired = Field(max_length=64)
+
+class RepairBatchUndoOut(BaseModel):
+    batch_id: str
     total: int
     ok_count: int = 0
     fail_count: int = 0
