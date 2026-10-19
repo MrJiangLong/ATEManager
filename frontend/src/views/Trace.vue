@@ -80,6 +80,19 @@
           <el-table-column prop="target_station" :label="$t('repairs.tableTarget')" width="140" />
           <el-table-column prop="reason" :label="$t('repairs.tableReason')" min-width="240" show-overflow-tooltip />
           <el-table-column prop="technician_id" :label="$t('repairs.tableTech')" width="120" />
+          <el-table-column :label="$t('repairs.undoCol')" width="120" align="center">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="row.undone_at"
+                :content="`${$t('repairs.undoneBy')}: ${row.undone_by} · ${fmtDateTime(row.undone_at)}`"
+                placement="top"
+                :show-after="300"
+              >
+                <el-tag size="small" type="warning" effect="plain">{{ $t('repairs.undoneTag') }}</el-tag>
+              </el-tooltip>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="$t('repairs.tableTime')" width="170">
             <template #default="{ row }"><span class="muted">{{ fmtDateTime(row.created_at) }}</span></template>
           </el-table-column>
