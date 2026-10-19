@@ -6,6 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      SERVER_ROLE: "production"
       DATABASE_URL: postgresql+pg8000://postgres:unitrend123@10.1.1.4:5433/ate_manager
       APP_DEBUG: "false"
       LOG_LEVEL: INFO

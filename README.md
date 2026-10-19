@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，55 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，57 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -342,7 +342,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（55 项）
+│   │   └── test_backend.py   端到端回归测试（57 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，上传 MinIO 后本地副本即删，gitignore）
@@ -519,7 +519,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | `station_clients` | `client_id` | 物理工控机档案，绑定逻辑工位（允许未绑定态存在，显式传空即解绑）；`app_version` 留档上位机程序版本，`created_at` 留档建档时间 |
 | `product_status` | `sn` | 在制品状态机，`passed_stations` 为已盖章工位集合 |
 | `test_records` | `record_id` | 事件底账，`executed_items` JSONB 为执行快照 |
-| `repair_records` | `repair_id` | 维修处置与回滚履历 |
+| `repair_records` | `repair_id` | 维修处置与回滚履历；`batch_id` 关联同一次批量处置（批量撤销按此分组），`snapshot` 为处置前快照（撤销精确还原依据） |
 | `test_sessions` | `session_id` | 测试会话，承载续测断点（崩溃续测的核心载体） |
 
 > `users` 表为 Web 管理端鉴权所需的基础设施，不属于业务表。
@@ -640,10 +640,10 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
 | 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`、`GET /api/admin/routing/item-summary` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order` 与 `invalidates_downstream`，旧导出文件缺省兼容）、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
-| 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
+| 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演与依赖重测确认 `confirm_downstream`，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/batch-undo`（按 `batch_id` 整批撤销，逐条独立生效走单条全部守卫）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
 | 测试会话 | view / op 写 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
 | 机台 | view / op 写 | `GET/POST /api/admin/clients`、`PUT/DELETE /api/admin/clients/{client_id}` |
 | 统计 | view | `GET /api/admin/metrics/overview` |
@@ -784,7 +784,7 @@ MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 55 项，覆盖全部卡控场景
+python tests/test_backend.py      # 57 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 
@@ -799,7 +799,7 @@ MinIO 不可达时该项失败）。
 ## 14. 部署
 
 ```bash
-docker compose up -d --build     # 单容器同源托管，http://localhost:8000
+docker compose up -d --build     # 生产：单容器同源托管，http://localhost:8000
 ```
 
 - 多阶段构建：Node 20 构建前端 → Python 3.11 运行时，镜像内自带 `frontend/dist`
@@ -827,6 +827,17 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 登记表语义 | **黑名单**：登记 SN 进站 403 `sn_is_test_device`（防试验设备混入生产台账，建档前拦截零痕迹） | **白名单**：未登记 SN 进站 403 `sn_not_registered_test_device`（服务端硬卡控，跳过 SDK 也绕不过） |
 | `DATABASE_URL` | 生产库 | 独立测试库（可随时重置） |
 | `V1_API_KEY` | 生产密钥（仅产线机台持有） | 测试密钥（研发持有） |
+
+**Docker 部署**：构建一次镜像（`docker compose build`），两台服务器各用一份 compose：
+
+```bash
+docker compose up -d                 # 生产服：docker-compose.yml（SERVER_ROLE=production）
+docker compose -f docker-compose.development.yml up -d   # 测试服：SERVER_ROLE=development
+```
+
+- `docker-compose.development.yml`：`SERVER_ROLE=development`、独立容器名/数据卷（`ate-manager-dev`、
+  `./data-dev`）、端口 8001，`DATABASE_URL`/`MINIO_*` 等指向测试侧资源（部署前填写）
+- 两台服务器资源互不共享：生产件误连测试服在进站口即被 403 拒收，试验设备误连生产服同样被拦截
 
 隔离效果：生产件误连测试服在进站口即被 403 拒收（用例不会执行），试验设备误连生产服同样被
 403 拦截——数据与台账互不污染，全部卡控收敛在服务端，SDK 零改动仅透传 403。
