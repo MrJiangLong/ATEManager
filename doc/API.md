@@ -856,6 +856,7 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 | `POST /api/admin/sessions/{id}/abort` | 强制终止会话并解锁（body: `{"reason": "..."}`） |
 | `POST /api/admin/sessions/abort-running` | 批量终止运行中的会话；body 至少给一个过滤条件 `station_id / process_id / sn / client_id`（否则 400 `scope_required`），支持 `dry_run` 预演 |
 | `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`），不动印章与失败计数 |
+| `POST /api/admin/repairs` | 单条处置：`{"sn", "repair_action"(RETEST/ROLLBACK/RESET/SCRAP), "target_station"?, "reason"}`。守卫：报废件 403 `product_scrapped`、持锁 409 `product_holding_lock`、RETEST 未盖章工位 400 `station_not_passed`。处置破坏完工态时自动作废该 SN 报告（MinIO/本地副本清除，已上传 MES 的副本按规则 `mes_void_url` 联动作废，未配置转人工） |
 | `POST /api/admin/repairs/batch` | 批量处置（仅 RETEST/ROLLBACK）：`{"items": [sn...], "repair_action", "target_station", "reason", "dry_run"}`；dry_run=true 只守卫不落库并回显破坏面（机型/流程/当前状态/将撤销印章/将作废记录数）；逐条独立生效，失败项不影响已成功项；上限 50 |
 | `POST /api/admin/repairs/{repair_id}/undo` | 撤销维修处置（窄窗口）：按处置前快照精确还原印章/失败计数/状态，被作废的台账记录按快照 ID 精确恢复；完工态恢复后自动重出报告。边界（409）：仅 RETEST/ROLLBACK/RESET（`action_not_undoable`，SCRAP 永不可撤）、仅该 SN 最新一条（`not_latest_disposition`）、处置后无新会话且印章未变（`repair_state_changed`）、不可重复撤销（`already_undone`） |
 | `GET /api/admin/repairs` | 履历筛选扩展：`technician`（操作人模糊）、`undone`（撤销状态 true/false）、`date_from`/`date_to`（日期区间，YYYY-MM-DD，按本地日界） |

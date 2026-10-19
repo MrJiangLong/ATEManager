@@ -111,10 +111,8 @@ class Settings:
     # PDF 转换：off = 仅 Excel；libreoffice = 服务端 headless；external = 外部 Worker（WPS COM）经 API 领取
     REPORT_PDF_MODE: str = os.getenv("REPORT_PDF_MODE", "off")
     SOFFICE_CMD: str = os.getenv("SOFFICE_CMD", "soffice")
-    # MES（各产品族统一接口：multipart sn + calibrationReport + calibrationCertificate）
-    REPORT_MES_URL: str = os.getenv(
-        "REPORT_MES_URL", "http://mes.uni-t.com.cn:7775/MES/api/upload/tek/calibration/data"
-    )
+    # MES 上传/作废地址一律按产品族配在报告规则（mes_url / mes_void_url）；
+    # 规则留空 = 该产品族禁用对应功能（不上传 / 不联动作废转人工），无全局回退
     # MinIO 对象存储（报告成品归档与下载；模板登记同样复用此桶）
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "")
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")

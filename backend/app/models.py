@@ -410,6 +410,7 @@ class ReportJob(Base):
         String(16), default="none", server_default=text("'none'")
     )
     mes_message: Mapped[Optional[str]] = mapped_column(Text)
+    mes_void_status: Mapped[Optional[str]] = mapped_column(String(16))
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -430,6 +431,8 @@ class ReportRule(Base):
     rule: Mapped[str] = mapped_column(String(64), primary_key=True)
     models: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
     mes_url: Mapped[Optional[str]] = mapped_column(String(256))
+    # MES 作废接口（维修处置作废报告时联动调用；空 = 该产品族待人工处理）
+    mes_void_url: Mapped[Optional[str]] = mapped_column(String(256))
     auto_trigger: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     enabled: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     script: Mapped[Optional[str]] = mapped_column(Text)

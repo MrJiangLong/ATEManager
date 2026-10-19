@@ -82,6 +82,14 @@ _ADDED_COLUMNS = {
         "undone_by": "VARCHAR(32)",
         "undone_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
     },
+    "report_rules": {
+        # MES 作废接口（维修处置作废报告时联动调用；空 = 该产品族待人工处理）
+        "mes_void_url": "VARCHAR(256)",
+    },
+    "report_jobs": {
+        # MES 作废三态：success / failed / skipped（未配置）
+        "mes_void_status": "VARCHAR(16)",
+    },
     "users": {
         # 存量唯一账号回填为 admin（升级不失权）；新账号由接口显式指定角色
         "role": "VARCHAR(16) DEFAULT 'admin'",

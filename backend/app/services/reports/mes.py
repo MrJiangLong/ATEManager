@@ -8,14 +8,13 @@ from typing import Optional
 
 import httpx
 
-from ...config import settings
 from ...logging import get_logger
 
 logger = get_logger("report.mes")
 
-def upload_mes(files: dict, sn: str, url: Optional[str] = None) -> tuple:
-    """按 {字段名: 本地 PDF 路径} 上传，返回 (success, message)。"""
-    target = url or settings.REPORT_MES_URL
+def upload_mes(files: dict, sn: str, url: str) -> tuple:
+    """按 {字段名: 本地 PDF 路径} 上传到 url（必传，规则未配置时调用方跳过）。"""
+    target = url
     try:
         with httpx.Client(timeout=300) as client:
             resp = client.post(
@@ -43,4 +42,30 @@ def upload_mes(files: dict, sn: str, url: Optional[str] = None) -> tuple:
         return ok, str(body.get("message") or text[:500])
     except Exception as exc:
         logger.warning("MES 上传失败：%s", exc)
+        return False, str(exc)
+
+
+def void_mes(sn: str, url: str) -> tuple:
+    """按 SN 作废 MES 侧报告副本（POST，sn 走 query；url 必传，调用方保证已配置）。"""
+    target = url
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(target, params={"sn": sn})
+        text = resp.text
+        if resp.status_code >= 400:
+            return False, f"HTTP {resp.status_code}: {text[:500]}"
+        try:
+            body = json.loads(text)
+        except (ValueError, TypeError):
+            return False, f"invalid response: {text[:500]}"
+        success = body.get("success")
+        if isinstance(success, bool):
+            ok = success
+        elif isinstance(success, str):
+            ok = success.strip().lower() == "true"
+        else:
+            ok = False
+        return ok, str(body.get("message") or text[:500])
+    except Exception as exc:
+        logger.warning("MES 作废失败：%s", exc)
         return False, str(exc)

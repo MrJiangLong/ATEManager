@@ -31,10 +31,8 @@ services:
       MINIO_BUCKET: "share"
       MINIO_SECURE: "false"
       REPORT_PDF_MODE: "external"
-      REPORT_MES_URL: "<填真实 MES 地址>"
       REPORT_MAX_CONCURRENCY: "2"
       REPORT_SCAN_INTERVAL_SEC: "60"
-      REPORT_RETENTION_DAYS: "90"
       REPORT_WORK_DIR: /app/data/reports
       REPORT_TEMPLATE_DIR: /app/data/report_templates
     volumes:

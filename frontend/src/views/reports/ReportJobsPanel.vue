@@ -93,6 +93,19 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column :label="t('reports.tableVoid')" width="110">
+        <template #default="{ row }">
+          <el-tag
+            v-if="row.mes_void_status && row.mes_void_status !== 'none'"
+            size="small"
+            :type="{ success: 'success', failed: 'warning', skipped: 'info' }[row.mes_void_status] || 'info'"
+            effect="plain"
+          >
+            {{ t(`reports.void_${row.mes_void_status}`) }}
+          </el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('reports.failedItems')" min-width="150">
         <template #default="{ row }">
           <el-tooltip

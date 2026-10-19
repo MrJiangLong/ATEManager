@@ -179,6 +179,9 @@ routers  ──▶  services  ──▶  models
 | 维修处置作废/RESET 对应 SN 的报告 | 即刻删除（报告不可再下载） | 同左 | 标记 INVALID，记录永久保留 |
 | 失败/部分成功任务 | 保留（重试与排查现场） | 本地现场保留 | 保留 |
 
+已上传 MES 的报告在处置作废时，联动调用规则配置的 MES 作废接口（`mes_void_url`）作废
+MES 侧副本；未配置则任务标记「待人工」，由人工在 MES 侧处理。
+
 两条硬保证：
 
 - MES 成功判定与 TekReport 上传工具同口径（HTTP 2xx 且 JSON `success=true`/`"true"`，无字段/字符串 `"false"`/数字均判失败）
@@ -342,7 +345,7 @@ ATEManager/
 │   │   └── test_backend.py   端到端回归测试（55 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
-│   ├── reports/              报告引擎工作目录（产物中间态，随任务保留期清理，gitignore）
+│   ├── reports/              报告引擎工作目录（产物中间态，上传 MinIO 后本地副本即删，gitignore）
 │   └── report_templates/     报告模板物化缓存（按 MinIO ETag 校验，gitignore）
 ├── tools/                    运维与验证工具（分域组织，见 tools/README.md 索引）
 │   ├── client/               上位机接入：ate_client.py（SDK 参考实现 + 演示）
@@ -552,7 +555,8 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | `processes.is_active` | 停用只作用于管理端（不再接受新机型绑定），运行期已绑定机型的在制品照常流转 |
 | `report_rules.models` | 报告规则绑定的确定型号清单（JSON），**精确匹配**不做字符串派生；型号规格（通道/带宽/AFG）由插件脚本自行解析 |
 | `report_rules.auto_trigger` | 盖章完成自动入队开关；`false` 时仅允许 Web「报告候选入队」手动生成 |
-| `report_rules.mes_url` | 该族 MES 上传地址，未配置时回退 `REPORT_MES_URL` |
+| `report_rules.mes_url` | 该族 MES 上传地址；**留空 = 该产品族禁用 MES 上传**（无全局回退） |
+| `report_rules.mes_void_url` | 该族 MES 作废地址（维修处置作废报告时联动调用）；**留空 = 不联动作废，转人工**（无全局回退） |
 | `report_jobs.artifacts` | 产物明细 JSON，结构见 7.4 注；`purged=true` 表示已随 MES 上传清理，ATEManager 不再保留副本 |
 
 ### 7.6 租约锁模型（v1.0）
@@ -743,9 +747,8 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 空 | MinIO 归档（报告成品/模板/脚本共用一个桶）；未配置时本地产物即归档 |
 | `MINIO_BUCKET` / `MINIO_SECURE` | `share` / `false` | 桶名与 TLS 开关 |
 | `MINIO_REPORT_PREFIX` / `MINIO_TEMPLATE_PREFIX` / `MINIO_SCRIPT_PREFIX` | `reports` / `report-templates` / `report-scripts` | 对象键前缀 |
-| `MINIO_ARTIFACT_PREFIX` / `ARTIFACT_MAX_BYTES` | `artifacts` / `209715200` | 测试产物归档（结果文件/日志等按 `artifacts/{model}/{sn}/{case_hash}/` 归档，`case_hash` = sha1(case_id) 前 12 位；任何机台客户端通用）：对象键前缀 / 单文件上限（字节）。产物**永久保留**（不随报告保留期清理）；MinIO 未配置时产物上传/下载整体拒绝 |
+| `MINIO_ARTIFACT_PREFIX` / `ARTIFACT_MAX_BYTES` | `artifacts` / `209715200` | 测试产物归档（结果文件/日志等按 `artifacts/{model}/{sn}/{case_hash}/` 归档，`case_hash` = sha1(case_id) 前 12 位；任何机台客户端通用）：对象键前缀 / 单文件上限（字节）。产物**永久保留**；MinIO 未配置时产物上传/下载整体拒绝 |
 | `REPORT_PDF_MODE` | `off` | PDF 转换：`off` 仅 Excel / `libreoffice` 服务端 headless（`SOFFICE_CMD`）/ `external` 外部 WPS Worker（`tools/reports/pdf_worker/`，部署在装有 WPS/Office 的 Windows 测试机） |
-| `REPORT_MES_URL` | MES 校准接口 | 各产品族统一的校准数据上传地址（multipart：`sn` + 各 PDF，字段名由插件产物 `mes_field` 声明）；成功判定与 TekReport 同口径（2xx 且 JSON `success=true`/`"true"`） |
 | `REPORT_MAX_CONCURRENCY` | `2` | 报告生成并发上限 |
 | `REPORT_SCAN_INTERVAL_SEC` / `REPORT_SCAN_BATCH` | `60` / `20` | 盖章完成产品扫描入队的间隔与单轮批量 |
 | `REPORT_WORK_DIR` | `reports` | 生成过程工作目录（xlsx/PDF 上传 MinIO 成功后本地副本即删） |
@@ -767,8 +770,9 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 处置仅在在制品未被持锁（非 `TESTING`）时允许执行，否则返回 `409 product_holding_lock`。
 
 **与出厂报告的联动**：RETEST / ROLLBACK / RESET 破坏完工态时，该 SN 的报告任务自动
-**作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效；已上传
-MES 的副本无法撤回，由 MES 保留历史）。产品重新完工后，完工扫描自动生成全新报告；
+**作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效）。曾上传
+MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 侧副本；未配置则标记
+「待人工」。产品重新完工后，完工扫描自动生成全新报告；
 也可对作废任务手动「重试」重新生成。SCRAP 不作废报告（保留报废前最后有效状态的记录）。
 作废任务记录永久保留。
 
@@ -865,7 +869,7 @@ docker compose up -d --build     # 单容器同源托管，http://localhost:8000
 | 报告任务一直 pending | 调度器未启动 | 核对 `FACTORY_DB_*` 已配置且存在启用中的报告规则；启动日志应出现「报告调度器已启动」 |
 | PDF 长时间 pending | external 模式 Worker 未运行 | 在装有 WPS/Office 的 Windows 测试机启动 `tools/reports/pdf_worker/report_pdf_worker.py`（核对 server_url 与 api_key） |
 | PDF/Excel 下载 404 | 产物已上传 MES（MinIO 对象保留，仅本地副本删除）或该 SN 报告被维修处置作废 | 校准类到 MES 侧查取；数据报告确认 SN 是否被作废 |
-| MES 上传失败（HTTP 503/连接拒绝） | `REPORT_MES_URL` 不可达或 MES 服务异常 | 核对地址；恢复后用「重传 MES」重试 |
+| MES 上传/作废失败（HTTP 503/连接拒绝） | 规则配置的 `mes_url` / `mes_void_url` 不可达或 MES 服务异常 | 核对该报告规则的地址；恢复后用「重传 MES」重试 |
 | 报告分页/排版与样张不一致 | 模板打印设置被改动 | 引擎转 PDF 前会自动规范化（多节回退 scale、单页锁 A4 + fitToPage 1×1）；检查模板是否被手工调整过分节符与纸张 |
 
 ---

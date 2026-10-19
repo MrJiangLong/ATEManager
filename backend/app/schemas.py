@@ -947,6 +947,7 @@ class ReportJobOut(ORMModel):
     failed_items: List[Any] = []
     mes_status: str = "none"
     mes_message: Optional[str] = None
+    mes_void_status: Optional[str] = None
     error: Optional[str] = None
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -985,6 +986,7 @@ class ReportRuleIn(BaseModel):
     rule: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
     models: List[str] = Field(min_length=1)
     mes_url: Optional[str] = None
+    mes_void_url: Optional[str] = None
     auto_trigger: bool = True
     enabled: bool = True
 
@@ -992,6 +994,7 @@ class ReportRuleOut(ORMModel):
     rule: str
     models: List[str] = []
     mes_url: Optional[str] = None
+    mes_void_url: Optional[str] = None
     auto_trigger: bool = True
     enabled: bool = True
     has_script: bool = False

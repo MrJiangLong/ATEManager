@@ -75,6 +75,9 @@
         <el-form-item :label="t('rules.mesUrl')">
           <el-input v-model="form.mes_url" :placeholder="t('rules.mesUrlPh')" />
         </el-form-item>
+        <el-form-item :label="t('rules.mesVoidUrl')">
+          <el-input v-model="form.mes_void_url" :placeholder="t('rules.mesVoidUrlPh')" />
+        </el-form-item>
         <el-form-item :label="t('rules.options')">
           <div class="switch-row">
             <label class="switch-item">
@@ -228,7 +231,7 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const current = ref(null)
-const form = reactive({ rule: '', modelsText: '', mes_url: '', auto_trigger: true, enabled: true })
+const form = reactive({ rule: '', modelsText: '', mes_url: '', mes_void_url: '', auto_trigger: true, enabled: true })
 
 const scriptDialog = ref(false)
 const scriptFile = ref(null)
@@ -272,7 +275,7 @@ function openLedger(row) {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { rule: '', modelsText: '', mes_url: '', auto_trigger: true, enabled: true })
+  Object.assign(form, { rule: '', modelsText: '', mes_url: '', mes_void_url: '', auto_trigger: true, enabled: true })
   dialogVisible.value = true
 }
 
@@ -283,6 +286,7 @@ function openEdit(row) {
     rule: row.rule,
     modelsText: row.models.join(', '),
     mes_url: row.mes_url || '',
+    mes_void_url: row.mes_void_url || '',
     auto_trigger: row.auto_trigger,
     enabled: row.enabled,
   })
@@ -294,6 +298,7 @@ function payload() {
     rule: form.rule.trim(),
     models: form.modelsText.split(/[,，\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean),
     mes_url: form.mes_url.trim() || null,
+    mes_void_url: form.mes_void_url.trim() || null,
     auto_trigger: form.auto_trigger,
     enabled: form.enabled,
   }

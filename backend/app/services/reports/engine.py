@@ -152,6 +152,13 @@ def upload_mes_if_ready(db, job: models.ReportJob) -> None:
         return
     out_dir = work_dir(job.model, job.sn)
     rule = registry.get_rule(job.rule)
+    url = rule.mes_url if rule else None
+    if not url:
+        # 规则未配置 MES 上传地址 = 该产品族禁用 MES 上传，转人工/后续流程
+        job.mes_status = "skipped"
+        job.mes_message = "MES upload URL not configured on rule"
+        db.commit()
+        return
     files = {}
     for art in mes_arts:
         pdf_path = _artifact_pdf_local(art, out_dir, job.model, job.sn)
@@ -161,7 +168,7 @@ def upload_mes_if_ready(db, job: models.ReportJob) -> None:
             db.commit()
             return
         files[art.get("mes_field") or art.get("type")] = pdf_path
-    ok, msg = mes_mod.upload_mes(files, job.sn, url=rule.mes_url if rule else None)
+    ok, msg = mes_mod.upload_mes(files, job.sn, url=url)
     job.mes_status = "success" if ok else "failed"
     job.mes_message = msg
     if ok:
@@ -188,11 +195,33 @@ def _purge_artifacts(job: models.ReportJob, arts: list) -> None:
     flag_modified(job, "artifacts")
 
 
+def _void_mes_copies(jobs: list) -> None:
+    """对曾上传 MES 的任务联动作废 MES 侧副本（三态：success/failed/skipped）。
+
+    作废地址 = 规则 mes_void_url（未配置 → skipped，转人工处理）。
+    作废失败不阻塞处置主流程，状态留待人工重试。"""
+    for job in jobs:
+        if job.mes_status != "success":
+            job.mes_void_status = None
+            continue
+        rule = registry.get_rule(job.rule)
+        url = rule.mes_void_url if rule else None
+        if not url:
+            job.mes_void_status = "skipped"
+            logger.info("MES 作废接口未配置，待人工处理：%s", job.sn)
+            continue
+        ok, msg = mes_mod.void_mes(job.sn, url)
+        job.mes_void_status = "success" if ok else "failed"
+        if not ok:
+            logger.warning("MES 作废失败（可人工重试）：%s %s", job.sn, msg)
+
+
 def invalidate_jobs_for_sn(db, sn: str) -> int:
     """维修处置破坏完工态时：作废该 SN 的全部报告任务并清除产物存储。
 
-    MES 已上传的副本无法撤回（由 MES 侧保留历史）；作废任务保留 90 天后随
-    到期清理一并删除；产品重新完工后由完工扫描自动生成新报告。"""
+    曾上传 MES 的报告按规则配置的作废接口联动作废 MES 侧副本（未配置 →
+    标记 skipped 待人工）；作废任务记录永久保留；产品重新完工后由完工扫描
+    自动生成新报告。"""
     jobs = (
         db.query(models.ReportJob)
         .filter(
@@ -205,6 +234,7 @@ def invalidate_jobs_for_sn(db, sn: str) -> int:
         _purge_artifacts(job, job.artifacts or [])
         job.status = models.REPORT_JOB_INVALID
         job.error = "invalidated by repair disposition"
+    _void_mes_copies(jobs)
     return len(jobs)
 
 def run_job(job_id: str) -> None:
