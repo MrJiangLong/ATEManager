@@ -2021,6 +2021,22 @@ def test_optional_station_sampling():
     )
 
 # ================= I. SN 准入极性（SERVER_ROLE 双态） =================
+def test_sn_registry_status_api():
+    """V1 只读登记状态查询：登记 true / 未登记 false / 无 SN 参数 422，供上位机路由判定。"""
+    resp = api("POST", "/api/admin/sn-registry", {"sn": "SIMRS-ROUTE-1", "note": "路由判定"},
+               token=token())
+    check(resp.status_code == 201, f"register: {resp.text}")
+    resp = api("GET", "/api/v1/client/sn-registry/status", params={"sn": "SIMRS-ROUTE-1"},
+               api_key=API_KEY)
+    check(resp.status_code == 200 and resp.json()["data"]["registered"] is True,
+          f"registered: {resp.text}")
+    resp = api("GET", "/api/v1/client/sn-registry/status", params={"sn": "SIMRS-ROUTE-X"},
+               api_key=API_KEY)
+    check(resp.status_code == 200 and resp.json()["data"]["registered"] is False,
+          f"unregistered: {resp.text}")
+    resp = api("GET", "/api/v1/client/sn-registry/status", api_key=API_KEY)
+    check(resp.status_code == 422, f"missing sn: {resp.status_code}")
+
 def test_sn_registry_polarity():
     """SN 准入极性：SERVER_ROLE 环境变量切换，服务端硬卡控，SDK 零改动仅透传 403。
 
@@ -2605,6 +2621,7 @@ def test_passthrough_mode():
     check(resp.status_code == 200 and resp.json()["passthrough"] is True, f"switch to passthrough: {resp.text}")
 
 TESTS = [
+    test_sn_registry_status_api,
     test_health,
     test_masters_seed,
     test_topology_and_items,

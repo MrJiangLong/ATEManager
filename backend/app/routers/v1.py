@@ -95,6 +95,19 @@ def resolve(
     )
 
 
+@router.get("/client/sn-registry/status", response_model=schemas.EnvelopeOut, summary="SN 登记状态查询（上位机路由判定，只读）")
+def sn_registry_status(
+    sn: str = Query(..., min_length=1, description="待判定的序列号"),
+    _: str = Depends(api_caller),
+    db: Session = Depends(get_db),
+):
+    """只读查询：该 SN 是否在登记表中。路由契约——true = 试验设备，应走研发服
+    （SERVER_ROLE=development）；false = 产线件，走生产服。仅返回布尔值，不暴露
+    登记清单；两端的进站守卫（黑名单/白名单）仍是最终卡控，误路由只会得到 403。"""
+    registered = db.get(models.SnRegistry, sn.strip()) is not None
+    return _ok("ok.sn_registry_status", {"sn": sn.strip(), "registered": registered})
+
+
 @router.post("/client/check-in", response_model=schemas.EnvelopeOut, summary="进站：防跳站/防复测/固件/用例ID 卡控")
 def check_in_endpoint(
     payload: schemas.CheckInIn,

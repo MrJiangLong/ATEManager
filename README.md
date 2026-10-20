@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，57 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，58 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -342,7 +342,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（57 项）
+│   │   └── test_backend.py   端到端回归测试（58 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，上传 MinIO 后本地副本即删，gitignore）
@@ -621,6 +621,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 方法 | 路径 | 说明 | 成功码 |
 |---|---|---|---|
 | POST | `/client/resolve` | 机台身份上报与工位反查（首次自动注册） | 200 |
+| GET | `/client/sn-registry/status` | SN 登记状态只读查询（上位机路由判定：true=试验设备走研发服 / false=产线件走生产服；布尔返回，不暴露清单） | 200 |
 | POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁；直通机型（`passthrough`）直接 ACK 零写入 | 200 |
 | POST | `/client/heartbeat` | 心跳保活（只刷新失联时间，不续硬超时） | 200 |
 | POST | `/client/checkpoint` | 续测断点：增量上报已完成用例（幂等覆盖） | 200 |
@@ -784,7 +785,7 @@ MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 57 项，覆盖全部卡控场景
+python tests/test_backend.py      # 58 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

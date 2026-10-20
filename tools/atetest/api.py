@@ -667,6 +667,18 @@ class AteExit(Exception):
         self.returncode = returncode
 
 
+def sn_registered(base_url: str, api_key: str, sn: str, timeout: float = DEFAULT_TIMEOUT) -> bool:
+    """查询 SN 登记状态（生产服登记表为事实源）：True = 试验设备 → 应改走研发服。
+
+    路由契约见 API 文档 5.2；查询失败向上抛 ApiError，由调用方决定回退到配置的服务器。
+    """
+    client = HttpClient(base_url, api_key, timeout=timeout)
+    env = client.request("GET", "/api/v1/client/sn-registry/status", params={"sn": sn})
+    if not env.get("ok"):
+        raise ApiError(0, env.get("code", "unknown_error"), env.get("message", ""))
+    return bool((env.get("data") or {}).get("registered"))
+
+
 def create_client(url: Optional[str] = None) -> Optional[AteClient]:
     """创建 ATE 客户端。
     优先使用传入的主机/IP（拼接为 http://{url}:8112）；缺省时回退到配置区的 ATE_URL。

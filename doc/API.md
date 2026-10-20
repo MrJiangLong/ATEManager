@@ -907,6 +907,7 @@ SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传�
 - **机型双态（passthrough）**：直通机型进站直接 ACK 零写入（响应 `passthrough=true`，`station_id`/`rules`/`session_id` 为空），SDK 跳过心跳/断点/出站；身份卡控不豁免。
 - **模式切换**：关直通需拓扑齐备（409 `model_topology_missing`）+ 清线确认位 `confirm_drain=true`（409 `drain_confirm_required`）；开直通需无在制（409 `model_has_wip`）。
 - **注销义务链**：注销仅解除登记，不触碰任何记录；若设备曾运行研发测试代码，重新入库前由工艺员走维修处置 RESET 重新流线（被动过的设备回产线会被固件基线 403 与用例判定自动拦下）。
+- **上位机路由判定（V1 只读查询）**：`GET /api/v1/client/sn-registry/status?sn=XXX`（X-API-Key）→ `data.registered`（true = 试验设备，应走研发服；false = 产线件，走生产服）。只返回布尔值，不暴露登记清单与备注；两端的进站守卫（黑名单/白名单）仍是最终卡控，误路由只会得到 403。登记动作仍在管理端「测试登记」（require_manager），本端点不提供任何设置能力。
 
 ---
 
