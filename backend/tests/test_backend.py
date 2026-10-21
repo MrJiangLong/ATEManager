@@ -2021,6 +2021,40 @@ def test_optional_station_sampling():
     )
 
 # ================= I. SN 准入极性（SERVER_ROLE 双态） =================
+def test_sn_registry_import_export():
+    """登记清单导出→导入：已存在跳过、新增生效、空清单 400、导出含登记留痕。"""
+    admin("POST", "/api/admin/sn-registry", {"sn": "SIMRS-IE-A", "note": "已有设备"})
+    resp = admin("GET", "/api/admin/sn-registry/export")
+    check(resp.status_code == 200, f"export: {resp.status_code} {resp.text}")
+    doc = resp.json()
+    check(doc["export_version"] == 1 and any(i["sn"] == "SIMRS-IE-A" for i in doc["items"]),
+          f"export content: {json.dumps(doc, ensure_ascii=False)[:200]}")
+
+    # 导入：文件全部已存在（跳过）+ 两条新增；计数按套件内已有登记动态断言
+    base_count = len(doc["items"])
+    items = [{"sn": i["sn"], "note": i["note"]} for i in doc["items"]]
+    items += [{"sn": "SIMRS-IE-B", "note": "新设备B"}, {"sn": "SIMRS-IE-C"}]
+    resp = admin("POST", "/api/admin/sn-registry/import", {"items": items})
+    check(
+        resp.status_code == 200 and resp.json()["created"] == 2
+        and resp.json()["skipped"] == base_count and resp.json()["total"] == base_count + 2,
+        f"import: {resp.text}",
+    )
+    # 重复导入幂等：全部跳过
+    resp = admin("POST", "/api/admin/sn-registry/import", {"items": items})
+    check(
+        resp.status_code == 200 and resp.json()["created"] == 0
+        and resp.json()["skipped"] == base_count + 2,
+        f"re-import idempotent: {resp.text}",
+    )
+    resp = admin("GET", "/api/admin/sn-registry")
+    sns = {r["sn"] for r in resp.json()}
+    check({"SIMRS-IE-A", "SIMRS-IE-B", "SIMRS-IE-C"} <= sns, f"imported visible: {sns}")
+    # 空清单 400
+    resp = admin("POST", "/api/admin/sn-registry/import", {"items": []})
+    check(resp.status_code == 400 and resp.json()["code"] == "items_required",
+          f"empty import: {resp.status_code} {resp.text}")
+
 def test_sn_registry_status_api():
     """V1 只读登记状态查询：登记 true / 未登记 false / 无 SN 参数 422，供上位机路由判定。"""
     resp = api("POST", "/api/admin/sn-registry", {"sn": "SIMRS-ROUTE-1", "note": "路由判定"},
@@ -2622,6 +2656,7 @@ def test_passthrough_mode():
 
 TESTS = [
     test_sn_registry_status_api,
+    test_sn_registry_import_export,
     test_health,
     test_masters_seed,
     test_topology_and_items,

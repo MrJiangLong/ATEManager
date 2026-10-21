@@ -682,6 +682,11 @@ export default {
     newEntry: '登记试验设备',
     unregister: '注销',
     confirmUnregister: '确认注销「{name}」？注销仅恢复进站资格，不影响任何记录。若该设备曾运行研发测试代码，重新入库前须由工艺员走维修处置 RESET 重新流线。',
+    export: '导出',
+    import: '导入',
+    importEmpty: '文件中没有可导入的登记项',
+    importInvalid: '文件格式不正确',
+    importDone: '导入完成：新增 {created} 条，跳过 {skipped} 条',
   },
 
   errors: {

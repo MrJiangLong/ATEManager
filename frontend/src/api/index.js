@@ -84,6 +84,10 @@ export const snRegistryApi = {
   list: () => api.get('/admin/sn-registry'),
   create: (data) => api.post('/admin/sn-registry', data),
   remove: (sn) => api.delete(`/admin/sn-registry/${enc(sn)}`),
+  /** 导出登记清单（JSON，含 exported_at/export_version） */
+  export: () => api.get('/admin/sn-registry/export'),
+  /** 导入登记清单：已存在的 SN 跳过，返回 {total, created, skipped} */
+  import: (data) => api.post('/admin/sn-registry/import', data),
 }
 
 /** 主数据：逻辑工位 */

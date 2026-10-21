@@ -11,8 +11,19 @@
         />
         <el-button :icon="RefreshRight" size="small" @click="loadRegistry">{{ t('common.refresh') }}</el-button>
       </div>
-      <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      <div class="tab-actions">
+        <el-button size="small" :icon="Download" @click="exportRegistry">{{ t('snRegistry.export') }}</el-button>
+        <el-button v-if="canManage" size="small" :icon="Upload" :loading="importing" @click="importInput?.click()">{{ t('snRegistry.import') }}</el-button>
+        <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      </div>
     </div>
+    <input
+      ref="importInput"
+      type="file"
+      accept=".json,application/json"
+      style="display: none"
+      @change="onImportFile"
+    />
 
     <el-table v-loading="loading" :data="paged" stripe size="small">
       <el-table-column prop="sn" :label="t('snRegistry.sn')" width="220">
@@ -73,6 +84,7 @@
         <el-button type="primary" :loading="saving" @click="submit">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 
@@ -81,7 +93,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Download, Plus, RefreshRight, Upload } from '@element-plus/icons-vue'
 import { snRegistryApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import { useLocalPagination } from '../../composables/usePagination'
@@ -97,6 +109,57 @@ const snFilter = ref('')
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({ sn: '', note: '' })
+
+const importing = ref(false)
+const importInput = ref(null)
+
+/** 导出登记清单为 JSON 文件（与工艺配置导出同款下载方式） */
+function exportRegistry() {
+  snRegistryApi
+    .export()
+    .then((res) => {
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' }))
+      a.download = `sn-registry-${stamp}.json`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    })
+    .catch((e) => ElMessage.error(e.message || t('errors.loadFailed')))
+}
+
+/** 一键导入：选文件即解析入库（已存在的 SN 服务端跳过），与机台导入同款交互 */
+function onImportFile(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = async () => {
+    let items = []
+    try {
+      const doc = JSON.parse(reader.result)
+      items = (Array.isArray(doc?.items) ? doc.items : []).filter(
+        (i) => i && String(i.sn || '').trim(),
+      )
+    } catch {
+      return ElMessage.error(t('snRegistry.importInvalid'))
+    }
+    if (!items.length) return ElMessage.warning(t('snRegistry.importEmpty'))
+    importing.value = true
+    try {
+      const res = await snRegistryApi.import({ items })
+      ElMessage.success(
+        t('snRegistry.importDone', { created: res.data.created, skipped: res.data.skipped }),
+      )
+      loadRegistry()
+    } catch (err) {
+      ElMessage.error(err.message)
+    } finally {
+      importing.value = false
+    }
+  }
+  reader.readAsText(file)
+}
 
 const filtered = computed(() => {
   const kw = snFilter.value.trim().toLowerCase()
@@ -160,3 +223,8 @@ async function onDelete(row) {
 
 onMounted(loadRegistry)
 </script>
+
+<style scoped>
+/* 工具栏右侧动作簇：导出 / 导入 / 新增（tab-head 为 space-between，左筛选右动作） */
+.tab-actions { display: flex; align-items: center; gap: 10px; }
+</style>

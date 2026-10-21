@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..errors import conflict_error, get_or_404
+from ..errors import bad_request, conflict_error, get_or_404
 from ..security import current_user, require_manager
 from ..services.routing import process_overview, load_process
+from ..services.timeutil import utcnow
 
 router = APIRouter()
 
@@ -220,6 +221,32 @@ def delete_sn_registry(sn: str, db: Session = Depends(get_db), user=Depends(requ
     # 固件基线 403 与用例判定自动拦下，不存在静默出货路径。
     db.delete(get_or_404(db, models.SnRegistry, sn, "sn_registry"))
     db.commit()
+
+
+@sn_registry_router.get("/export", response_model=schemas.SnRegistryExportOut, summary="导出测试登记清单")
+def export_sn_registry(db: Session = Depends(get_db), user=Depends(current_user)):
+    rows = db.query(models.SnRegistry).order_by(models.SnRegistry.created_at.desc()).all()
+    return schemas.SnRegistryExportOut(
+        exported_at=utcnow(),
+        items=[schemas.SnRegistryOut.model_validate(r) for r in rows],
+    )
+
+
+@sn_registry_router.post("/import", response_model=schemas.SnRegistryImportOut, summary="导入测试登记清单（已存在的 SN 跳过）")
+def import_sn_registry(payload: schemas.SnRegistryImportIn, db: Session = Depends(get_db), user=Depends(require_manager)):
+    """事务式导入：登记人统一记为当前操作者（操作留痕），与清单内文件值无关；
+    已存在的 SN 逐条跳过（幂等，重复导入安全），空清单 400 items_required。"""
+    if not payload.items:
+        raise bad_request("items_required", "items_required: import list is empty")
+    created = skipped = 0
+    for item in payload.items:
+        if db.get(models.SnRegistry, item.sn):
+            skipped += 1
+            continue
+        db.add(models.SnRegistry(sn=item.sn, note=item.note or None, registered_by=user.username))
+        created += 1
+    db.commit()
+    return schemas.SnRegistryImportOut(total=len(payload.items), created=created, skipped=skipped)
 
 router.include_router(process_router)
 router.include_router(model_router)

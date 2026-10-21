@@ -680,6 +680,11 @@ export default {
     newEntry: 'Register Test Device',
     unregister: 'Unregister',
     confirmUnregister: 'Unregister "{name}"? This only restores check-in eligibility and leaves all records untouched. If the unit ran dev test code, the process engineer must run the RESET disposition to re-flow it before it returns to stock.',
+    export: 'Export',
+    import: 'Import',
+    importEmpty: 'No importable entries in file',
+    importInvalid: 'Invalid file format',
+    importDone: 'Import finished: {created} created, {skipped} skipped',
   },
 
   errors: {

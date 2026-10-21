@@ -365,6 +365,23 @@ class SnRegistryIn(BaseModel):
     sn: TrimmedRequired = Field(max_length=64)
     note: Trimmed = Field(default="", max_length=256)
 
+class SnRegistryExportOut(BaseModel):
+    export_version: int = 1
+    exported_at: datetime
+    items: List[SnRegistryOut] = []
+
+class SnRegistryImportItem(BaseModel):
+    sn: TrimmedRequired = Field(max_length=64)
+    note: Trimmed = Field(default="", max_length=256)
+
+class SnRegistryImportIn(BaseModel):
+    items: List[SnRegistryImportItem] = []
+
+class SnRegistryImportOut(BaseModel):
+    total: int
+    created: int = 0
+    skipped: int = 0
+
 class StationOut(ORMModel):
     station_id: str
     station_name: str

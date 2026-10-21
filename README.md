@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，58 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，59 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -342,7 +342,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（58 项）
+│   │   └── test_backend.py   端到端回归测试（59 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，上传 MinIO 后本地副本即删，gitignore）
@@ -639,7 +639,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
 | 工艺流程 | view / mgr 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
 | 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
-| 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`（SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
+| 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
 | 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order` 与 `invalidates_downstream`，旧导出文件缺省兼容）、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
@@ -785,7 +785,7 @@ MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 58 项，覆盖全部卡控场景
+python tests/test_backend.py      # 59 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

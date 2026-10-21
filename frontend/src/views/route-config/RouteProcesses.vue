@@ -111,7 +111,7 @@
       @closed="resetImport"
     >
       <input ref="importFileEl" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
-      <el-button class="import-pick" :icon="FolderOpened" @click="importFileEl?.click()">
+      <el-button class="import-pick" :icon="Document" @click="importFileEl?.click()">
         {{ t('configs.importPick') }}
       </el-button>
       <template v-if="importDoc">
@@ -225,7 +225,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Document, Download, FolderOpened, Plus, Upload } from '@element-plus/icons-vue'
+import { CopyDocument, Document, Download, Plus, Upload } from '@element-plus/icons-vue'
 import { processApi, routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import ProcessDetailDrawer from '../../components/ProcessDetailDrawer.vue'
