@@ -1,8 +1,14 @@
 """自测工程 conftest —— 与 XApp testCase/conftest.py 的接入方式完全一致，
 仅把"仪器 *IDN? 读身份"替换为环境变量，机台编号可用 ATE_TEST_CLIENT 模拟不同物理机。
 
+两种进站模式（由 ATE_TEST_SN 是否置空决定）：
+    普通工位：ATE_TEST_SN=仪器/环境读到的 SN   → session 启动立即进站（全自动）
+    写 SN 工位：ATE_TEST_SN=（置空）           → 延迟进站：前置用例先离线自检，
+        写 SN 用例通过 sn_burner 夹具扫码触发 check_in（防呆前置：服务端拦截
+        发生在烧录硬件之前），进站后前置用例结果批量补报，全程入台账。
+
 环境变量：
-    ATE_TEST_SN / ATE_TEST_MODEL / ATE_TEST_FW   被测件身份（默认 CSELFTEST01 / DPO4054B / V3.20）
+    ATE_TEST_SN / ATE_TEST_MODEL / ATE_TEST_FW   被测件身份（写 SN 工位置空 ATE_TEST_SN）
     ATE_TEST_CLIENT                              机台编号（默认电脑名）
     ATE_FAIL=nodeid子串[,子串...]                 命中的用例判 FAIL（验证必测失败不出站）
     ATE_SKIP=nodeid子串[,子串...]                 命中的用例 SKIP（验证漏测拦截）
@@ -18,7 +24,7 @@ import api as ate
 
 _ate_run = None
 
-SN = os.environ.get("ATE_TEST_SN", "CSELFTEST01")
+SN = os.environ.get("ATE_TEST_SN", "")      # 置空 = 延迟进站（写 SN 工位）
 MODEL = os.environ.get("ATE_TEST_MODEL", "DPO4054B")
 FW = os.environ.get("ATE_TEST_FW", "V3.20")
 ate.CLIENT_ID = os.environ.get("ATE_TEST_CLIENT", ate.CLIENT_ID)  # 模拟不同物理机台
@@ -27,9 +33,15 @@ _FAIL = set(filter(None, os.environ.get("ATE_FAIL", "").split(",")))
 _SKIP = set(filter(None, os.environ.get("ATE_SKIP", "").split(",")))
 
 
+def _checked_in(run) -> bool:
+    """是否已完成进站（api.py 保持不动，由 conftest 依据 run.sn 兜底判断）。"""
+    return bool(run.sn)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """收集每个用例的结果（XApp 工程里这一步在现有 makereport 钩子内调用 collect）。"""
+    """收集每个用例的结果（XApp 工程里这一步在现有 makereport 钩子内调用 collect）。
+    未进站阶段照常收集：进站后由首次 gate() 批量补报。"""
     outcome = yield
     if _ate_run is not None:
         _ate_run.collect(item, outcome.get_result())
@@ -53,33 +65,32 @@ def ate_inject(request):
 def ate_session(request):
     global _ate_run
     run = ate.AteRun(ate.create_client())   # ATE_URL 留空时 client=None，全部方法自动旁路
-    try:
-        done = run.start(request.session.items, sn=SN, model=MODEL, fw=FW)
-    except ate.AteExit as e:
-        pytest.exit(e.message, returncode=e.returncode)
-    for item in request.session.items:      # 续测：上次已 PASS 的本轮跳过
-        if item.nodeid in done:
-            item.add_marker(pytest.mark.skip(reason="ATE 续测：该用例已通过，跳过"))
     _ate_run = run
+
+    # 普通工位：启动即有 SN → 立即进站；写 SN 工位：SN 置空 → 延迟到 sn_burner 扫码后进站
+    if SN.strip():
+        try:
+            done = run.start(request.session.items, sn=SN, model=MODEL, fw=FW)
+        except ate.AteExit as e:
+            pytest.exit(e.message, returncode=e.returncode)
+        for item in request.session.items:      # 续测：上次已 PASS 的本轮跳过
+            if item.nodeid in done:
+                item.add_marker(pytest.mark.skip(reason="ATE 续测：该用例已通过，跳过"))
     yield
-    try:
-        run.finish()
-    except ate.AteExit as e:
-        pytest.exit(e.message, returncode=e.returncode)
+    # 收尾：仅已进站的会话出站（未进站 = 服务器零痕迹，无需出站）
+    if _checked_in(run):
+        try:
+            run.finish()
+        except ate.AteExit as e:
+            pytest.exit(e.message, returncode=e.returncode)
 
 
 @pytest.fixture(scope="function", autouse=True)
 def ate_case_gate(request):
-    """每个用例收尾：产物上传（可选）+ 上报断点 + 失锁自检。
-
-    产物上传示例（ATE_ARTIFACTS=1 时生效）——真实工程里的典型形态：
-        磁盘文件：run.upload_artifact(request.node.nodeid, f"dumps/{short}.csv")
-        内存内容：run.upload_artifact(request.node.nodeid, content=png_bytes, filename="shot.png")
-    上传失败不阻断测试（ATE 锁失效除外，自动转停机）；产物引用由服务端
-    暂存，出站时自动并入 executed_items.items[].files，Web 台账可下载。
-    """
+    """每个用例收尾守卫：未进站阶段只累积结果不上报（checkpoint 由进站后首次
+    收尾批量补报）；产物上传同样仅进站后生效。"""
     yield
-    if _ate_run is not None:
+    if _ate_run is not None and _checked_in(_ate_run):
         try:
             if os.environ.get("ATE_ARTIFACTS") == "1":
                 short = request.node.nodeid.split("::")[-1]
@@ -91,3 +102,37 @@ def ate_case_gate(request):
             _ate_run.gate()
         except ate.AteExit as e:
             pytest.exit(e.message, returncode=e.returncode)
+
+
+@pytest.fixture
+def sn_burner(request):
+    """专供【写 SN 用例】调用的夹具：前置失败检查 → 扫码 → 防呆进站 → 返回 SN。
+
+    用法：
+        def test_burn_sn(sn_burner):
+            sn = sn_burner()            # 扫码 + check_in（服务端拦截在此处中止，绝不烧录）
+            hardware.write(sn)          # 进站成功后才执行硬件烧录
+            assert hardware.readback() == sn
+
+    防呆规则：
+        1. 此前任一用例 FAIL → 拒绝扫码（前置自检未通过不消耗合法 SN）
+        2. check_in 的服务端拦截（重号/跳站/极性/基线/锁）发生在烧录之前
+        3. 进站后前置用例结果批量补报，写号动作全程入台账
+    """
+    def _scan_and_checkin(scan_func=None) -> str:
+        bad = [nid for nid, res in getattr(_ate_run, "results", {}).items() if res == "failed"]
+        if bad:
+            pytest.fail(f"前置自检未通过，禁止扫码写号：{bad}")
+
+        scanned_sn = (scan_func() if scan_func else input("\n[请扫描产品SN条码]: ")).strip()
+        if not scanned_sn:
+            pytest.fail("扫码失败：SN 不能为空")
+
+        try:
+            _ate_run.start(request.session.items, sn=scanned_sn, model=MODEL, fw=FW)
+        except ate.AteExit as e:
+            pytest.exit(f"防呆拦截（禁止烧录）: {e.message}", returncode=e.returncode)
+
+        return scanned_sn
+
+    return _scan_and_checkin
