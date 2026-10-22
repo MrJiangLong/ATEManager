@@ -77,7 +77,7 @@ def resolve(
         db, payload.client_id, ip=payload.ip_address, app_version=payload.app_version, create=True
     )
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
 
     touch_client(db, payload.client_id)
 
@@ -116,7 +116,7 @@ def check_in_endpoint(
 ):
     client = get_client(db, payload.client_id, app_version=payload.app_version)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
 
     data = check_in(
         db,
@@ -139,7 +139,7 @@ def heartbeat_endpoint(
 ):
     client = get_client(db, payload.client_id)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
     data = heartbeat(db, client=client, sn=payload.sn, lock_token=payload.lock_token or None)
     return _ok("ok.heartbeat", data.model_dump())
 
@@ -156,7 +156,7 @@ def checkpoint_endpoint(
     """
     client = get_client(db, payload.client_id)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
 
     data = save_checkpoint(
         db,
@@ -199,16 +199,15 @@ async def artifact_endpoint(
         )
     client = get_client(db, client_id)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {client_id}")
+        raise not_found("client_not_registered", f"机台 {client_id} 未注册，请先在管理端登记机台")
 
     content = await file.read()
     if not content:
-        raise bad_request("artifact_empty", "artifact_empty: file content is empty")
+        raise bad_request("artifact_empty", "产物文件内容为空")
     if len(content) > settings.ARTIFACT_MAX_BYTES:
         raise bad_request(
             "artifact_too_large",
-            f"artifact_too_large: {len(content)} bytes exceeds limit "
-            f"{settings.ARTIFACT_MAX_BYTES}",
+            f"产物文件过大：{len(content)} 字节，超过上限 {settings.ARTIFACT_MAX_BYTES}",
         )
 
     # 先登记引用（flush 不提交）→ 文件落盘 → 统一提交；落盘失败则登记一并回滚
@@ -239,7 +238,7 @@ def release_endpoint(
 ):
     client = get_client(db, payload.client_id)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
     data = release_lock(
         db,
         client=client,
@@ -263,7 +262,7 @@ def check_out_endpoint(
 ):
     client = get_client(db, payload.client_id)
     if client is None:
-        raise not_found("client_not_registered", f"client_not_registered: {payload.client_id}")
+        raise not_found("client_not_registered", f"机台 {payload.client_id} 未注册，请先在管理端登记机台")
 
     data = check_out(
         db,
@@ -308,4 +307,4 @@ def ack(
                     "created_at": as_utc(record.created_at).isoformat() if record.created_at else None,
                 },
             )
-    raise not_found("ack_not_found", f"ack_not_found: no record for checkout_id {checkout_id}")
+    raise not_found("ack_not_found", f"未找到出站记录 {checkout_id} 的回执，请确认已成功出站")

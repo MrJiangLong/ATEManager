@@ -588,6 +588,8 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 
 ### 6.1 全量错误码
 
+**错误消费契约**：上位机应以 `code` + `data` 进行逻辑判断与本地化渲染（`code` 为稳定英文机器码，永不改变；`data` 携带 `sn`/`station_id`/`station_name` 等结构化参数）。`message` 为**中文**人类可读文本（工位/机台/流程以"代码（名称）"成对出现），仅供直接展示或日志，服务端不提供 message 的多语言版本。
+
 | HTTP | `code` | `exit_code` | 触发接口 | 含义 |
 |---|---|---|---|---|
 | 401 | `invalid_credentials` | 10 | 全部 | 缺少或无效的 `X-API-Key` |
