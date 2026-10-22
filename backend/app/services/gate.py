@@ -273,28 +273,28 @@ def stage_artifact(
     """
     session = db.get(models.TestSession, session_id)
     if session is None:
-        raise not_found("session_not_found", f"session_not_found: {session_id}")
+        raise not_found("session_not_found", f"会话 {session_id} 不存在")
     if session.sn != sn or session.client_id != client.client_id:
         raise bad_request(
             "session_mismatch",
-            f"session_mismatch: {session_id} does not belong to {sn}@{client.client_id}",
+            f"会话 {session_id} 不属于 {sn}@{client.client_id}",
         )
     if session.status == models.SESSION_COMPLETED:
-        raise conflict_error("session_completed", f"session_completed: {session_id}")
+        raise conflict_error("session_completed", f"会话 {session_id} 已完成出站，请勿重复上报")
     if session.status == models.SESSION_ABORTED:
         raise conflict_error(
             "session_aborted",
-            f"session_aborted: {session_id} terminated by operator, stop uploading now",
+            f"会话 {session_id} 已被运维中止，请立即停止上传",
             exit_code=EXIT_LOCK_EXPIRED,
             data={"session_id": session_id},
         )
     product = db.get(models.ProductStatus, sn)
     if product is None:
-        raise not_found("product_not_found", f"product_not_found: {sn}")
+        raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
     if product.lock_token and _token_mismatch(product, lock_token):
         raise forbidden(
             "lock_invalid",
-            f"lock_invalid: {sn} lock has been taken over, artifact rejected",
+            f"锁已失效：{sn} 的工位锁已被接管，产物上传被拒绝",
             exit_code=EXIT_LOCK_EXPIRED,
             data={"session_id": session_id},
         )
@@ -369,6 +369,21 @@ def _count_consecutive_lost(db: Session, sn: str, station_id: str) -> int:
 LOST_REASON_PREFIX = "client_lost"
 
 # =====================================================================
+def _label(code: str, name: Optional[str]) -> str:
+    """操作员可读标识：代码（名称）；无名称或与代码相同时退化为纯代码。"""
+    return f"{code}（{name}）" if name and name != code else code
+
+
+def _station_label(graph, station_id: str) -> str:
+    return _label(station_id, graph.name_of.get(station_id) if graph else None)
+
+
+def _dict_station_label(db, station_id: str) -> str:
+    """工位字典直查（无流程图上下文时使用）：代码（名称），缺失退化为纯代码。"""
+    st = db.get(models.Station, station_id)
+    return _label(station_id, st.station_name if st else None)
+
+
 def check_in(
     db: Session,
     *,
@@ -384,7 +399,7 @@ def check_in(
     if model_row is None:
         raise forbidden(
             "model_not_registered",
-            f"model_not_registered: {product_model} is not registered",
+            f"机型 {product_model} 未登记，请先在管理端注册机型",
         )
 
     # SN 准入极性（SERVER_ROLE 切换，服务端硬卡控；建档之前拦截，生产台账零痕迹）。
@@ -396,7 +411,7 @@ def check_in(
         if not is_registered:
             raise forbidden(
                 "sn_not_registered_test_device",
-                f"sn_not_registered_test_device: {sn} not registered in test lab",
+                f"序列号 {sn} 未在测试登记中登记（本服务器为研发白名单模式），禁止进站测试",
                 data={"sn": sn},
             )
     else:
@@ -404,7 +419,7 @@ def check_in(
         if is_registered:
             raise forbidden(
                 "sn_is_test_device",
-                f"sn_is_test_device: {sn} is a registered test device, production check-in denied",
+                f"序列号 {sn} 已登记为试验设备（生产准入黑名单），禁止进入生产产线",
                 data={"sn": sn},
             )
 
@@ -427,19 +442,21 @@ def check_in(
 
     graph = load_process(db, model_row.process_id)
     if graph is None:
-        raise not_found("process_not_found", f"process_not_found: {model_row.process_id}")
+        raise not_found("process_not_found", f"机型 {product_model} 绑定的流程 {model_row.process_id} 不存在")
 
     candidates = sorted(set(_as_list(client.bound_stations)) & set(graph.stations))
     if not candidates:
+        proc = db.get(models.Process, graph.process_id)
         raise forbidden(
             "client_not_bound",
-            f"client {client.client_id} 的绑定工位均不在流程 {graph.process_id} 内",
+            f"机台 {_label(client.client_id, client.client_name)} 的绑定工位均不在流程 "
+            f"{_label(graph.process_id, proc.process_name if proc else None)} 内",
         )
     if len(candidates) > 1:
         raise bad_request(
             "station_ambiguous",
-            f"station_ambiguous: {client.client_id} 在流程 {graph.process_id} 内绑定了多个工位"
-            f" ({', '.join(candidates)})，请修正机台绑定",
+            f"机台 {_label(client.client_id, client.client_name)} 在流程内绑定了多个工位"
+            f"（{', '.join(_station_label(graph, c) for c in candidates)}），请修正机台绑定",
         )
     station_id = candidates[0]
     client.station_id = station_id
@@ -450,7 +467,7 @@ def check_in(
         if station_id != graph.stations[0]:
             raise forbidden(
                 "missing_prereq",
-                f"missing_prereq: {sn} has no record yet, must start at {graph.stations[0]}",
+                f"序列号 {sn} 尚无测试记录，必须从工位 {_station_label(graph, graph.stations[0])} 开始",
                 data={"missing": graph.stations[0]},
             )
         product = models.ProductStatus(
@@ -471,7 +488,7 @@ def check_in(
     if product.product_model != product_model:
         raise forbidden(
             "model_mismatch",
-            f"model_mismatch: {sn} is registered as {product.product_model}, got {product_model}",
+            f"机型不符：序列号 {sn} 建档机型为 {product.product_model}，进站报的是 {product_model}",
         )
 
     rule = model_row.fw_match_rule or models.FW_RULE_EXACT
@@ -479,7 +496,7 @@ def check_in(
     if not fw_match and settings.ENFORCE_FW:
         raise forbidden(
             "firmware_mismatch",
-            f"firmware_mismatch: {sn} expected {rule} {model_row.target_fw_version}, got {firmware}",
+            f"固件版本不符：{sn} 期望（{rule}）{model_row.target_fw_version}，实际 {firmware}",
             data={
                 "expected": model_row.target_fw_version,
                 "actual": firmware,
@@ -498,8 +515,8 @@ def check_in(
         ):
             raise forbidden(
                 "app_version_mismatch",
-                f"app_version_mismatch: {sn} expected {app_rule} {target_app}, "
-                f"got {reported or 'unknown'}",
+                f"测试软件版本不符：{sn} 期望（{app_rule}）{target_app}，"
+                f"实际 {reported or 'unknown'}",
                 data={
                     "expected": target_app,
                     "actual": reported or None,
@@ -508,11 +525,11 @@ def check_in(
             )
 
     if product.current_status == models.STATUS_SCRAPPED:
-        raise forbidden("product_scrapped", f"product_scrapped: {sn} has been scrapped")
+        raise forbidden("product_scrapped", f"序列号 {sn} 已报废，禁止进站测试")
     if product.current_status == models.STATUS_LOCKED:
         raise forbidden(
             "product_locked",
-            f"product_locked: {sn} exceeded fail limit ({product.fail_count}/{settings.FAIL_LIMIT})",
+            f"序列号 {sn} 连续失败已达上限（{product.fail_count}/{settings.FAIL_LIMIT}），已被工程锁定",
             exit_code=EXIT_PRODUCT_LOCKED,
             data={"fail_count": product.fail_count, "locked_reason": product.locked_reason},
         )
@@ -522,7 +539,7 @@ def check_in(
     if station_id in passed:
         raise conflict_error(
             "station_already_passed",
-            f"station_already_passed: {sn} already passed {station_id}",
+            f"复测拦截：{sn} 已通过工位 {_station_label(graph, station_id)}",
             data={"passed_stations": sorted(passed)},
         )
 
@@ -531,7 +548,7 @@ def check_in(
     if missing:
         raise forbidden(
             "missing_prereq",
-            f"missing_prereq: {sn} must finish {', '.join(missing)} before {station_id}",
+            f"防跳站拦截：{sn} 须先完成工位 {'.、'.join(_station_label(graph, m) for m in missing)}，才能进入 {_station_label(graph, station_id)}",
             data={"missing": missing},
         )
 
@@ -542,7 +559,7 @@ def check_in(
         if absent:
             raise bad_request(
                 "case_id_mismatch",
-                f"case_id_mismatch: {station_id} mandatory case IDs missing from collection: {', '.join(absent)}",
+                f"用例清单不符：工位 {_station_label(graph, station_id)} 的必测用例未全部收集：{'.、'.join(absent)}",
                 exit_code=EXIT_CASE_ID_MISMATCH,
                 data={"missing_case_ids": absent},
             )
@@ -560,7 +577,7 @@ def check_in(
         if not reclaimable:
             raise conflict_error(
                 "lock_conflict",
-                f"lock_conflict: {sn} is under test by {product.current_client}",
+                f"锁冲突：{sn} 正在由机台 {product.current_client} 测试中",
                 exit_code=EXIT_LOCK_CONFLICT,
                 data={
                     "locked_client": product.current_client,
@@ -584,16 +601,16 @@ def check_in(
     if resume_session_id:
         session = db.get(models.TestSession, resume_session_id)
         if session is None:
-            raise not_found("session_not_found", f"session_not_found: {resume_session_id}")
+            raise not_found("session_not_found", f"会话 {resume_session_id} 不存在，无法续测")
         if session.sn != sn or session.station_id != station_id:
             raise bad_request(
                 "session_mismatch",
-                f"session_mismatch: {resume_session_id} does not belong to {sn}@{station_id}",
+                f"会话 {resume_session_id} 不属于 {sn}@{station_id}，无法续测",
             )
         if session.status == models.SESSION_COMPLETED:
             raise conflict_error(
                 "session_completed",
-                f"session_completed: {resume_session_id} already checked out",
+                f"会话 {resume_session_id} 已完成出站，无法续测",
             )
     elif not takeover:
         session = _running_session(db, sn, station_id)
@@ -648,7 +665,7 @@ def check_in(
         db.rollback()
         raise conflict_error(
             "lock_conflict",
-            f"lock_conflict: {sn} was claimed by another station concurrently",
+            f"锁冲突：{sn} 刚被其他机台并发抢占，请重试",
             exit_code=EXIT_LOCK_CONFLICT,
             data={"locked_client": observed_client, "sn": sn},
         )
@@ -748,21 +765,21 @@ def save_checkpoint(
 ) -> schemas.CheckpointData:
     session = db.get(models.TestSession, session_id)
     if session is None:
-        raise not_found("session_not_found", f"session_not_found: {session_id}")
+        raise not_found("session_not_found", f"会话 {session_id} 不存在")
     if session.sn != sn:
-        raise bad_request("session_mismatch", f"session_mismatch: {session_id} does not belong to {sn}")
+        raise bad_request("session_mismatch", f"会话 {session_id} 不属于 {sn}")
     if session.station_id != (client.station_id or ""):
         raise bad_request(
             "station_mismatch",
-            f"station_mismatch: {session_id} belongs to {session.station_id}",
+            f"会话 {session_id} 属于工位 {_dict_station_label(db, session.station_id)}，与当前机台不符",
         )
     if session.status == models.SESSION_COMPLETED:
-        raise conflict_error("session_completed", f"session_completed: {session_id}")
+        raise conflict_error("session_completed", f"会话 {session_id} 已完成出站，请勿重复上报")
     # 上位机不必跑完全部用例才发现出站被拒，避免白跑一轮。
     if session.status == models.SESSION_ABORTED:
         raise conflict_error(
             "session_aborted",
-            f"session_aborted: {session_id} terminated by operator, stop testing now",
+            f"会话 {session_id} 已被运维中止，请立即停止测试",
             exit_code=EXIT_LOCK_EXPIRED,
             data={"session_id": session_id},
         )
@@ -771,7 +788,7 @@ def save_checkpoint(
     if product is not None and product.lock_token and _token_mismatch(product, lock_token):
         raise forbidden(
             "lock_invalid",
-            f"lock_invalid: {sn} lock has been taken over, checkpoint rejected",
+            f"锁已失效：{sn} 的工位锁已被接管，断点上报被拒绝",
             exit_code=EXIT_LOCK_EXPIRED,
             data={"session_id": session_id},
         )
@@ -817,7 +834,7 @@ def release_lock(
     product = db.get(models.ProductStatus, sn)
     session_id = None
     if product is None:
-        raise not_found("product_not_found", f"product_not_found: {sn}")
+        raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
 
     holding = (
         product.current_status == models.STATUS_TESTING
@@ -827,7 +844,7 @@ def release_lock(
         if _token_mismatch(product, lock_token):
             raise forbidden(
                 "lock_invalid",
-                f"lock_invalid: {sn} lock has been taken over",
+                f"锁已失效：{sn} 的工位锁已被接管",
                 exit_code=EXIT_LOCK_EXPIRED,
             )
         session = _running_session(db, sn, client.station_id or "")
@@ -851,7 +868,7 @@ def force_release_lock(
     """运维强制解锁：仅释放锁与会话，不改变印章/失败计数。"""
     product = _locked_product(db, sn)
     if product is None:
-        raise not_found("product_not_found", f"product_not_found: {sn}")
+        raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
 
     previous_client = product.current_client
     session_id = None
@@ -1011,11 +1028,11 @@ def check_out(
 ) -> schemas.AckData:
     station_id = client.station_id
     if not station_id:
-        raise forbidden("client_not_bound", f"client {client.client_id} is not bound to any station")
+        raise forbidden("client_not_bound", f"机台 {_label(client.client_id, client.client_name)} 未绑定任何工位")
 
     product = _locked_product(db, sn)
     if product is None:
-        raise not_found("product_not_found", f"product_not_found: {sn}")
+        raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
 
     # 1) 幂等回放：网络重试命中同一 checkout_id 时直接返回既有回执
     replay = _find_by_checkout_id(db, sn, station_id, checkout_id)
@@ -1028,7 +1045,7 @@ def check_out(
     ):
         raise forbidden(
             "lock_invalid",
-            f"lock_invalid: {sn} is not held by {client.client_id}",
+            f"锁已失效：{sn} 的工位锁当前不在机台 {client.client_id} 手中",
             exit_code=EXIT_LOCK_EXPIRED,
         )
 
@@ -1036,7 +1053,7 @@ def check_out(
     if _token_mismatch(product, lock_token):
         raise forbidden(
             "lock_invalid",
-            f"lock_invalid: {sn} lock has been taken over, checkout rejected",
+            f"锁已失效：{sn} 的工位锁已被接管，出站被拒绝",
             exit_code=EXIT_LOCK_EXPIRED,
             data={"current_client": product.current_client},
         )
@@ -1055,7 +1072,7 @@ def check_out(
         db.commit()
         raise forbidden(
             "lock_expired",
-            f"lock_expired: {sn} lock at {station_id} exceeded {timeout_sec}s",
+            f"锁已超时：{sn} 在工位 {_dict_station_label(db, station_id)} 的锁超过 {timeout_sec}s 未心跳，已被自动释放",
             exit_code=EXIT_LOCK_EXPIRED,
         )
 
@@ -1064,7 +1081,7 @@ def check_out(
     if graph is None or station_id not in graph.step_of:
         raise bad_request(
             "station_not_in_process",
-            f"station_not_in_process: {station_id} is not configured for {product.product_model}",
+            f"工位 {_dict_station_label(db, station_id)} 未配置在机型 {product.product_model} 的流程中",
         )
 
     session = _running_session(db, sn, station_id)
@@ -1103,7 +1120,7 @@ def check_out(
         db.commit()
         raise bad_request(
             "missing_mandatory",
-            f"missing_mandatory: {len(absent)} mandatory case ID(s) not executed at {station_id}",
+            f"漏测拦截：工位 {_station_label(graph, station_id)} 有 {len(absent)} 条必测用例未执行",
             exit_code=EXIT_MISSING_MANDATORY,
             data={"case_ids": absent},
         )
@@ -1243,22 +1260,22 @@ def _check_repair(
     """
     product = _locked_product(db, sn)
     if product is None:
-        raise not_found("product_not_found", f"product_not_found: {sn}")
+        raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
     if product.current_status == models.STATUS_TESTING:
         raise conflict_error(
             "product_holding_lock",
-            f"product_holding_lock: {sn} is under test by {product.current_client}",
+            f"处置拦截：{sn} 正在由机台 {product.current_client} 测试中，请先中止会话",
             exit_code=EXIT_LOCK_CONFLICT,
         )
     action = (repair_action or "").upper()
     if action not in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK, models.REPAIR_RESET, models.REPAIR_SCRAP):
-        raise bad_request("invalid_repair_action", f"invalid_repair_action: {repair_action}")
+        raise bad_request("invalid_repair_action", f"未知的处置动作：{repair_action}")
     # 报废件封死复活通道：RESET/RETEST/ROLLBACK 会把 SCRAPPED 置回 IDLE，
     # 击穿报废语义。仅允许再次确认报废（幂等补留痕）。
     if product.current_status == models.STATUS_SCRAPPED and action != models.REPAIR_SCRAP:
         raise conflict_error(
             "product_scrapped",
-            f"product_scrapped: {sn} is scrapped, cannot re-flow via {action}",
+            f"处置拦截：{sn} 已报废，不能通过 {action} 重新流线",
         )
 
     model_row = db.get(models.ProductModel, product.product_model)
@@ -1269,18 +1286,20 @@ def _check_repair(
     revoked: Optional[Set[str]] = None
     if action in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK):
         if not target_station:
-            raise bad_request("target_station_required", "target_station_required for RETEST/ROLLBACK")
+            raise bad_request("target_station_required", "RETEST/ROLLBACK 需要指定目标工位")
         if graph is not None and target_station not in graph.step_of:
+            proc = db.get(models.Process, graph.process_id)
             raise bad_request(
                 "station_not_in_process",
-                f"station_not_in_process: {target_station} is not in {graph.process_id}",
+                f"目标工位 {target_station} 不在流程 "
+                f"{_label(graph.process_id, proc.process_name if proc else None)} 内",
             )
         if action == models.REPAIR_RETEST:
             revoked = {target_station} & passed
             if not revoked:
                 raise bad_request(
                     "station_not_passed",
-                    f"station_not_passed: {sn} has not passed {target_station}",
+                    f"重测拦截：{sn} 尚未通过工位 {_station_label(graph, target_station)}",
                 )
             mutates = target_station in graph.invalidates if graph else False
             downstream: Set[str] = set()
@@ -1290,7 +1309,7 @@ def _check_repair(
                 if not confirm_downstream:
                     raise conflict_error(
                         "downstream_invalidation_required",
-                        "downstream_invalidation_required: "
+                        "依赖重测确认：重测将一并清除以下下游工位的印章："
                         + ", ".join(sorted(downstream)),
                         data={"stations": sorted(downstream)},
                     )
@@ -1304,7 +1323,7 @@ def _check_repair(
             if not revoked:
                 raise bad_request(
                     "station_not_passed",
-                    f"station_not_passed: nothing to roll back from {target_station}",
+                    f"回退拦截：从工位 {_station_label(graph, target_station)} 起没有可回退的印章",
                 )
     return product, action, graph, passed, was_completed, revoked, product.product_model, (
         model_row.process_id if model_row else ""
@@ -1400,21 +1419,21 @@ def undo_repair(db: Session, *, repair_id: int, operator_id: str) -> models.Repa
     """
     repair = db.get(models.RepairRecord, repair_id)
     if repair is None:
-        raise not_found("repair_not_found", f"repair_not_found: {repair_id}")
+        raise not_found("repair_not_found", f"处置记录 {repair_id} 不存在")
     if repair.undone_at is not None:
         raise conflict_error(
             "already_undone",
-            f"already_undone: repair {repair_id} was undone by {repair.undone_by}",
+            f"该处置已由 {repair.undone_by} 撤销过（记录 {repair_id}），不能重复撤销",
         )
     if repair.repair_action == models.REPAIR_SCRAP:
         raise conflict_error(
             "action_not_undoable",
-            f"action_not_undoable: SCRAP is irreversible (repair {repair_id})",
+            f"报废处置不可撤销（记录 {repair_id}）",
         )
     snap = repair.snapshot or {}
     if not snap:
         raise conflict_error(
-            "snapshot_missing", f"snapshot_missing: repair {repair_id} has no state snapshot"
+            "snapshot_missing", f"处置记录 {repair_id} 缺少状态快照，无法撤销"
         )
     product = db.get(models.ProductStatus, repair.sn)
     if product is None:
@@ -1433,7 +1452,7 @@ def undo_repair(db: Session, *, repair_id: int, operator_id: str) -> models.Repa
     if latest is None or latest.repair_id != repair.repair_id:
         raise conflict_error(
             "not_latest_disposition",
-            f"not_latest_disposition: repair {repair_id} is not the latest disposition of {repair.sn}",
+            f"撤销拦截：记录 {repair_id} 不是 {repair.sn} 最新一条处置（仅最新一条可撤销）",
         )
 
     # ③ 处置后零后续动作：无新会话（时间统一按 UTC 解析；created_at 为秒级精度，
@@ -1447,7 +1466,7 @@ def undo_repair(db: Session, *, repair_id: int, operator_id: str) -> models.Repa
     ):
         raise conflict_error(
             "repair_state_changed",
-            f"repair_state_changed: {repair.sn} has new test sessions after repair {repair_id}",
+            f"撤销拦截：{repair.sn} 在处置 {repair_id} 之后产生了新的测试会话，撤销窗口已关闭",
         )
     # 印章集合仍等于处置后状态（处置前 - 撤销集合）
     pre_passed = set(snap.get("passed_stations") or [])
@@ -1455,7 +1474,7 @@ def undo_repair(db: Session, *, repair_id: int, operator_id: str) -> models.Repa
     if set(_passed(product)) != post_passed:
         raise conflict_error(
             "repair_state_changed",
-            f"repair_state_changed: {repair.sn} stamps differ from post-repair state of {repair_id}",
+            f"撤销拦截：{repair.sn} 的当前印章与处置 {repair_id} 后的状态不一致，撤销窗口已关闭",
         )
 
     # 按快照精确还原
