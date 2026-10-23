@@ -110,6 +110,7 @@ GATE_CODES = (
     "station_ambiguous", "case_id_mismatch", "missing_mandatory",
     "model_mismatch", "model_not_registered", "firmware_mismatch", "app_version_mismatch",
     "product_locked", "product_scrapped", "client_not_bound", "client_not_registered",
+    "sn_is_test_device", "sn_not_registered_test_device",
 )
 
 
@@ -297,6 +298,8 @@ class SessionState:
     lock_token: str = ""
     attempt: int = 1
     station_id: str = ""
+    """ 受控直通：进站 ACK 零写入（全部用例照跑，跳过断点/心跳/出站） """
+    passthrough: bool = False
     """ 出站幂等凭据 """
     checkout_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     completed_case_ids: List[str] = field(default_factory=list)
@@ -473,6 +476,7 @@ class AteClient:
             lock_token=data.get("lock_token") or "",
             attempt=int(data.get("attempt") or 1),
             station_id=data.get("station_id") or "",
+            passthrough=bool(data.get("passthrough") or False),
             checkout_id=(previous.checkout_id if previous and previous.sn == sn else uuid.uuid4().hex),
             completed_case_ids=list(resume_info.get("completed_case_ids") or []),
             mandatory_case_ids=[r.get("case_id") for r in (data.get("rules") or [])
@@ -481,6 +485,10 @@ class AteClient:
             pending_items=list(previous.pending_items) if previous and previous.sn == sn else [],
         )
         self._persist()
+
+        if self.state.passthrough:
+            LOGGER.info("直通机型 %s：进站 ACK 零写入，跳过心跳/断点/出站", product_model)
+            return self.state
 
         if data.get("takeover"):
             LOGGER.warning("本次进站接管了 %s 持有的锁", data.get("takeover_from"))
@@ -827,6 +835,8 @@ class AteRun:
         继续测试；仅 lock_invalid 转为 AteExit 让宿主停机（结果作废）。
         """
         if self.client is None:
+            return None
+        if getattr(self, "passthrough", False):
             return None
         try:
             return self.client.upload_artifact(case_id, path, filename=filename, content=content)

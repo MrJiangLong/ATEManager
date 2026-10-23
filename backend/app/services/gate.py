@@ -1384,14 +1384,11 @@ def apply_repair(
 
     # 维修处置破坏完工态时，联动作废该 SN 的报告任务（含存储清理）；
     # 产品重新完工后由完工扫描自动生成新报告（SCRAP 不作废，报告为报废前最后有效记录）
+    invalidated_jobs = []
     if action in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK, models.REPAIR_RESET) and was_completed:
         from .reports import engine as report_engine
 
-        invalidated = report_engine.invalidate_jobs_for_sn(db, sn)
-        if invalidated:
-            logger.info(
-                "维修处置使完工态失效，已作废 %d 个报告任务：%s %s", invalidated, sn, action
-            )
+        invalidated_jobs = report_engine.invalidate_jobs_for_sn(db, sn)
 
     product.updated_at = utcnow()
     repair = models.RepairRecord(
@@ -1405,6 +1402,12 @@ def apply_repair(
     )
     db.add(repair)
     db.commit()
+    # 提交成功后才动外部存储：避免处置回滚后产物已被删、MES 已被作废
+    if invalidated_jobs:
+        logger.info(
+            "维修处置使完工态失效，已作废 %d 个报告任务：%s %s", len(invalidated_jobs), sn, action
+        )
+        report_engine.purge_invalidated_jobs(db, invalidated_jobs)
     return product, repair
 
 

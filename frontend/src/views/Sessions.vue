@@ -108,7 +108,9 @@
               type="danger"
               size="small"
               @click="onAbort(row)"
-            />
+            >
+              {{ $t('sessions.abort') }}
+            </el-button>
           </template>
         </el-table-column>
         <template #empty><EmptyState :text="$t('common.noData')" /></template>
@@ -180,8 +182,8 @@ function liveClass(row) {
   return 'is-live'
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     if (filters.view === 'zombie') {
       const res = await sessionApi.zombieLocks({ page: page.value, page_size: pageSize.value })
@@ -201,11 +203,12 @@ async function load() {
       total.value = res.data.total
     }
   } catch (e) {
+    if (silent) return
     items.value = []
     total.value = 0
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -278,7 +281,7 @@ onMounted(async () => {
 })
 
 usePolling(async () => {
-  await load()
+  await load(true)
 }, 20000)
 </script>
 

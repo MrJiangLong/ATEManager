@@ -72,17 +72,16 @@ _ADDED_COLUMNS = {
     "process_stations": {
         # 选检工位（QA 抽查）：存量行回填 false = 必跑，与旧版语义完全一致
         "is_optional": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
+        # 依赖重测触发标记：存量行回填 false = 级联不触发，与旧版语义完全一致
+        "invalidates_downstream": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
     },
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
-    "process_stations": {
-        # 依赖重测触发标记：存量行回填 false = 级联不触发，与旧版语义完全一致
-        "invalidates_downstream": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
-    },
     "station_items": {
         # 用例执行顺序（进站下发按此排序）
         "sort_order": "INTEGER",
+        "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
     "repair_records": {
         # 处置前状态快照（撤销处置用）与撤销留痕

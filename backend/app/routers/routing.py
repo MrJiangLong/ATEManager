@@ -403,15 +403,19 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
     if not steps and not items:
         raise not_found("source_not_found", f"source_not_found: {payload.from_process}")
 
-    if db.get(models.Process, payload.to_process) is None:
-        source = db.get(models.Process, payload.from_process)
-        db.add(
-            models.Process(
-                process_id=payload.to_process,
-                process_name=f"{source.process_name} (副本)" if source else payload.to_process,
-            )
+    if db.get(models.Process, payload.to_process) is not None:
+        raise conflict_error(
+            "process_already_exists",
+            f"process_already_exists: {payload.to_process}（目标流程已存在，请换编号）",
         )
-        db.flush()
+    source = db.get(models.Process, payload.from_process)
+    db.add(
+        models.Process(
+            process_id=payload.to_process,
+            process_name=f"{source.process_name} (副本)" if source else payload.to_process,
+        )
+    )
+    db.flush()
 
     for step in steps:
         db.merge(
@@ -503,6 +507,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
                 case_id=i.case_id,
                 item_name=i.item_name or "",
                 is_mandatory=i.is_mandatory,
+                is_active=bool(i.is_active),
                 sort_order=i.sort_order,
             )
             for i in topo.items
@@ -628,7 +633,7 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 case_id=it.case_id,
                 item_name=it.item_name or it.case_id,
                 is_mandatory=it.is_mandatory,
-                is_active=True,
+                is_active=bool(it.is_active),
                 sort_order=seq,
             )
         )

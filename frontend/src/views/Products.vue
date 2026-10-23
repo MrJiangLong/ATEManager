@@ -166,8 +166,8 @@ const repairSn = ref('')
 const drawerVisible = ref(false)
 const current = ref(null)
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize.value }
     if (filters.sn) params.sn = filters.sn
@@ -181,11 +181,12 @@ async function load() {
     items.value = res.data.items
     total.value = res.data.total
   } catch (e) {
+    if (silent) return
     items.value = []
     total.value = 0
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -293,7 +294,7 @@ onMounted(async () => {
 })
 
 /* 锁状态是"准实时"数据：机台崩溃后需在分钟级被发现，故轮询刷新 */
-usePolling(load, 20000)
+usePolling(() => load(true), 20000)
 </script>
 
 <style scoped>

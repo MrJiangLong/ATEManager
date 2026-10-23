@@ -5,6 +5,7 @@
 """
 
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 from ... import models
@@ -58,12 +59,20 @@ def _loop() -> None:
         _wake.clear()
         if _stop.is_set():
             break
-        try:
-            _enqueue_completed()
-            _drain_queue()
-            _reclaim_stale_running()
-        except Exception as exc:
-            logger.exception("调度循环异常：%s", exc)
+        tick()
+
+
+def tick() -> None:
+    """执行一轮扫描+派发。每轮重判 enabled()：运行期新增规则由 kick() 唤醒后即可工作，
+    无需重启；未启用（无规则/测试库未配置）时空转。"""
+    if not enabled():
+        return
+    try:
+        _enqueue_completed()
+        _drain_queue()
+        _reclaim_stale_running()
+    except Exception as exc:
+        logger.exception("调度循环异常：%s", exc)
 
 def _enqueue_completed() -> None:
     """把「全部盖章完成且尚无报告任务」的产品自动入队（无产品族跳过）。"""

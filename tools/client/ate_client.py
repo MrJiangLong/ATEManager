@@ -107,6 +107,8 @@ GATE_CODES = (
     "product_scrapped",
     "client_not_bound",
     "client_not_registered",
+    "sn_is_test_device",
+    "sn_not_registered_test_device",
 )
 
 CAL_PARAM_CASES = [

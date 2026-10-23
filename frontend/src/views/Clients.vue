@@ -207,17 +207,18 @@ const isEdit = ref(false)
 const saving = ref(false)
 const form = reactive({ client_id: '', client_name: '', bound_stations: [], ip_address: '' })
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const params = stationFilter.value ? { station_id: stationFilter.value } : {}
     const res = await clientApi.list(params)
     items.value = res.data
   } catch (e) {
+    if (silent) return
     items.value = []
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -445,7 +446,7 @@ onMounted(async () => {
 })
 
 /* 机台在线/持锁状态需分钟级可见，否则崩溃机台会长期"假装在线" */
-usePolling(load, 20000)
+usePolling(() => load(true), 20000)
 </script>
 
 <style scoped>

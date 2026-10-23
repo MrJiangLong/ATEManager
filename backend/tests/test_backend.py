@@ -542,6 +542,11 @@ def test_clone_process():
     data = resp.json()
     check(data["cloned_steps"] == 6, f"clone steps: {data}")
     check(data["cloned_items"] == MSO_ITEM_COUNT, f"clone items: {data}")
+    resp = admin("POST", "/api/admin/routing/clone", {"from_process": P_MSO, "to_process": target})
+    check(
+        resp.status_code == 409 and resp.json()["code"] == "process_already_exists",
+        f"clone existing target: {resp.status_code} {resp.text}",
+    )
     admin("DELETE", f"/api/admin/processes/{target}")
 
 # ================= B. 正常流转 =================
@@ -1495,10 +1500,15 @@ def test_process_export_import():
     check(len(dpo_items) >= 2, f"dpo items for order: {len(dpo_items)}")
     admin("PUT", f"/api/admin/routing/items/{dpo_items[0]['item_id']}", {"sort_order": 20})
     admin("PUT", f"/api/admin/routing/items/{dpo_items[1]['item_id']}", {"sort_order": 10})
+    # 停用一项，验证导出→导入往返不复活
+    admin("PUT", f"/api/admin/routing/items/{dpo_items[0]['item_id']}", {"is_active": False})
     doc = admin("GET", f"/api/admin/routing/processes/{P_DPO}/export").json()
     exported_orders = {i["case_id"]: i.get("sort_order") for i in doc["items"]
                        if i["station_id"] == "CAL-PARAM"}
     check(exported_orders.get(dpo_items[0]["case_id"]) == 20, f"export sort_order: {exported_orders}")
+    exported_active = {i["case_id"]: i["is_active"] for i in doc["items"]
+                       if i["station_id"] == "CAL-PARAM"}
+    check(exported_active.get(dpo_items[0]["case_id"]) is False, f"export is_active: {exported_active}")
 
     imp = f"PROC-TEST-IMP-{STAMP}"
     doc["process"]["process_id"] = imp
@@ -1511,19 +1521,22 @@ def test_process_export_import():
     check(body["models_skipped"] == 1, f"机型冲突跳过: {body}")
 
     # 导入副本：显式序号与源一致（往返不丢失）；未编号项自动编号
-    imp_orders = {i["case_id"]: i.get("sort_order")
-                  for i in admin("GET", "/api/admin/routing/items",
-                                 params={"process_id": imp, "station_id": "CAL-PARAM"}).json()}
+    imp_rows = admin("GET", "/api/admin/routing/items",
+                     params={"process_id": imp, "station_id": "CAL-PARAM"}).json()
+    imp_orders = {i["case_id"]: i.get("sort_order") for i in imp_rows}
     for cid, so in exported_orders.items():
         if so is not None:
             check(imp_orders.get(cid) == so, f"roundtrip order {cid}: {imp_orders}")
     check(all(v is not None for v in imp_orders.values()), f"import auto numbered: {imp_orders}")
+    imp_active = {i["case_id"]: i["is_active"] for i in imp_rows}
+    check(imp_active.get(dpo_items[0]["case_id"]) is False, f"roundtrip is_active: {imp_active}")
 
     # 旧格式兼容：无 sort_order 的导出文件可导入，按导入顺序以步长 10 自动编号
     old = json.loads(json.dumps(doc))
     old["process"]["process_id"] = f"PROC-IMP-OLD-{STAMP}"
     for it in old["items"]:
         it.pop("sort_order", None)
+        it.pop("is_active", None)
     resp = admin("POST", "/api/admin/routing/processes/import", old)
     check(resp.status_code == 201, f"old-format import: {resp.status_code} {resp.text}")
     old_items = admin("GET", "/api/admin/routing/items",
@@ -1532,9 +1545,13 @@ def test_process_export_import():
     old_orders = [r["sort_order"] for r in old_items]
     check(old_orders == sorted(old_orders) and old_orders[0] == 10 and len(set(old_orders)) == len(old_orders),
           f"old-format auto numbering: {old_orders}")
+    check(all(r["is_active"] for r in old_items), "old-format defaults is_active=True")
 
     # 清理副本上的序号标记，避免影响其他用例
-    for it in dpo_items:
+    # 只复活本用例停用的那一项；清单里还可能有其他用例留下的停用项，不能一起点亮
+    admin("PUT", f"/api/admin/routing/items/{dpo_items[0]['item_id']}",
+          {"sort_order": None, "is_active": True})
+    for it in dpo_items[1:]:
         admin("PUT", f"/api/admin/routing/items/{it['item_id']}", {"sort_order": None})
 
     res = admin("GET", "/api/admin/routing/validate", params={"process_id": imp})
@@ -2654,6 +2671,217 @@ def test_passthrough_mode():
     resp = admin("PUT", f"/api/admin/product-models/{m_pass}", {"passthrough": True})
     check(resp.status_code == 200 and resp.json()["passthrough"] is True, f"switch to passthrough: {resp.text}")
 
+# ================= P0 回归 =================
+def test_p0_candidates_date_filter():
+    """候选设备日期筛选复用 date_range_bounds：合法日期不 500，非法格式 400。"""
+    resp = admin(
+        "GET",
+        "/api/admin/report-jobs/candidates",
+        params={"date_from": "2000-01-01", "date_to": "2099-12-31"},
+    )
+    check(resp.status_code == 200, f"candidates date filter: {resp.status_code} {resp.text}")
+    resp = admin("GET", "/api/admin/report-jobs/candidates", params={"date_from": "2026/01/01"})
+    check(
+        resp.status_code == 400 and resp.json()["code"] == "invalid_date_format",
+        f"invalid date: {resp.status_code} {resp.text}",
+    )
+
+def test_p0_report_rule_mes_void_url_roundtrip():
+    """MES 作废地址全链路：新建/清单/更新均需原样回传并进入规则注册表。"""
+    name = f"P0_VOID_{STAMP}"
+    model = f"P0MODEL{STAMP}"
+    url = "http://127.0.0.1:9/mes/void"
+    body = {"rule": name, "models": [model], "auto_trigger": False, "mes_void_url": url}
+    resp = admin("POST", "/api/admin/report-rules", body)
+    check(resp.status_code == 201, f"create rule: {resp.text}")
+    check(resp.json()["mes_void_url"] == url, f"create echo: {resp.text}")
+    resp = admin("GET", "/api/admin/report-rules")
+    row = next((r for r in resp.json() if r["rule"] == name), None)
+    check(row is not None and row["mes_void_url"] == url, f"list echo: {row}")
+    url2 = url + "?v=2"
+    resp = admin("PUT", f"/api/admin/report-rules/{name}", {**body, "mes_void_url": url2})
+    check(resp.status_code == 200 and resp.json()["mes_void_url"] == url2, f"update: {resp.text}")
+    from app.services.reports import registry
+
+    check(registry.get_rule(name).mes_void_url == url2, "registry rule missing mes_void_url")
+
+def test_p0_report_retry_status_guards():
+    """running/invalid 任务不得被重试复位（running 会重复生成，invalid 已作废）。"""
+    with SessionLocal() as db:
+        job = models.ReportJob(
+            job_id=str(uuid.uuid4()), sn=new_sn("P0RETRY"), model=M_DPO, status="running"
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.job_id
+    resp = admin("POST", f"/api/admin/report-jobs/{job_id}/retry")
+    check(resp.status_code == 409 and resp.json()["code"] == "job_running", f"running retry: {resp.text}")
+    with SessionLocal() as db:
+        job = db.get(models.ReportJob, job_id)
+        check(job.status == "running", "retry guard must not reset a running job")
+        job.status = models.REPORT_JOB_INVALID
+        db.commit()
+    resp = admin("POST", f"/api/admin/report-jobs/{job_id}/retry")
+    check(resp.status_code == 409 and resp.json()["code"] == "job_invalid", f"invalid retry: {resp.text}")
+
+def test_p0_abort_stale_session_keeps_live_lock():
+    """过期/已终止的旧会话被中止时，不得释放当前活会话持有的工位锁。"""
+    sn = new_sn("P0STALE")
+    resp = checkin("CAL-PARAM", sn)
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    live = resp.json()["data"]
+    stale_id = str(uuid.uuid4())
+    with SessionLocal() as db:
+        db.add(
+            models.TestSession(
+                session_id=stale_id,
+                sn=sn,
+                station_id="CAL-PARAM",
+                client_id=CLIENTS["CAL-PARAM"],
+                status=models.SESSION_EXPIRED,
+            )
+        )
+        db.commit()
+    resp = admin("POST", f"/api/admin/sessions/{stale_id}/abort", {"reason": "stale"})
+    check(resp.status_code == 200, f"abort stale: {resp.text}")
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.current_status == models.STATUS_TESTING, "stale abort released live lock")
+        check(product.lock_token == live["lock_token"], "stale abort rotated live lock")
+        check(
+            db.get(models.TestSession, live["session_id"]).status == models.SESSION_RUNNING,
+            "stale abort closed live session",
+        )
+        check(db.get(models.TestSession, stale_id).status == models.SESSION_ABORTED, "stale session not closed")
+
+def test_p0_added_columns_cover_optional_and_station_active():
+    """增量列迁移清单不得因重复字典键丢失 is_optional / station_items.is_active。"""
+    from app.database import _ADDED_COLUMNS
+
+    ps = _ADDED_COLUMNS["process_stations"]
+    check("is_optional" in ps and "invalidates_downstream" in ps, f"process_stations columns: {ps}")
+    check("is_active" in _ADDED_COLUMNS["station_items"], "station_items.is_active missing")
+
+def test_p0_scheduler_watchdog_reclaims_orphans():
+    """看门狗可正常判定崩溃遗留的 running 任务（缺 timedelta 导入时 NameError）。"""
+    from app.services.reports import scheduler
+
+    with SessionLocal() as db:
+        job = models.ReportJob(
+            job_id=str(uuid.uuid4()),
+            sn=new_sn("P0WATCH"),
+            model=M_DPO,
+            status="running",
+            started_at=datetime.utcnow() - timedelta(days=1),
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.job_id
+    scheduler._reclaim_stale_running()
+    with SessionLocal() as db:
+        check(db.get(models.ReportJob, job_id).status == "failed", "stale running job not reclaimed")
+
+def test_p0_scheduler_ticks_after_runtime_rule():
+    """运行期新增规则无需重启：tick 每轮重判 enabled（关闭时空转），register_rule 负责唤醒。"""
+    from app.services.reports import scheduler
+
+    calls = []
+    orig = (
+        scheduler.enabled,
+        scheduler._enqueue_completed,
+        scheduler._drain_queue,
+        scheduler._reclaim_stale_running,
+    )
+    try:
+        scheduler.enabled = lambda: False
+        scheduler._enqueue_completed = lambda: calls.append("enqueue")
+        scheduler._drain_queue = lambda: calls.append("drain")
+        scheduler._reclaim_stale_running = lambda: calls.append("reclaim")
+        scheduler.tick()
+        check(calls == [], f"disabled tick ran work: {calls}")
+
+        scheduler._wake.clear()
+        resp = admin(
+            "POST",
+            "/api/admin/report-rules",
+            {"rule": f"P0_RT_{STAMP}", "models": [f"P0RTMODEL{STAMP}"], "auto_trigger": False},
+        )
+        check(resp.status_code == 201, f"create runtime rule: {resp.text}")
+        check(scheduler._wake.is_set(), "register_rule did not wake scheduler")
+
+        scheduler.enabled = lambda: True
+        scheduler._wake.clear()
+        scheduler.tick()
+        check(calls == ["enqueue", "drain", "reclaim"], f"enabled tick work: {calls}")
+    finally:
+        (
+            scheduler.enabled,
+            scheduler._enqueue_completed,
+            scheduler._drain_queue,
+            scheduler._reclaim_stale_running,
+        ) = orig
+
+
+def test_p0_invalidation_marks_then_purges_after_commit():
+    """维修处置作废：先标记（随事务提交），提交后再清产物/MES；未配作废地址记 skipped。"""
+    from app.services.reports import engine as report_engine
+
+    rule = f"P0_INV_{STAMP}"
+    resp = admin(
+        "POST",
+        "/api/admin/report-rules",
+        {"rule": rule, "models": [f"P0INVMODEL{STAMP}"], "auto_trigger": False},
+    )
+    check(resp.status_code == 201, f"create rule: {resp.text}")
+    sn = new_sn("P0INV")
+    with SessionLocal() as db:
+        job = models.ReportJob(
+            job_id=str(uuid.uuid4()),
+            sn=sn,
+            model=M_DPO,
+            rule=rule,
+            status="success",
+            mes_status="success",
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.job_id
+        jobs = report_engine.invalidate_jobs_for_sn(db, sn)
+        check(len(jobs) == 1 and jobs[0].status == models.REPORT_JOB_INVALID, "job not marked invalid")
+        check(jobs[0].mes_void_status is None, "MES void must wait for commit")
+        db.commit()
+        report_engine.purge_invalidated_jobs(db, jobs)
+        check(
+            db.get(models.ReportJob, job_id).mes_void_status == "skipped",
+            "rule without mes_void_url should skip MES void",
+        )
+
+def test_p0_template_upload_without_minio():
+    """MinIO 未配置：模板落本地，template_path 回退本地文件而非报未登记。"""
+    from app.services.reports import registry, store
+
+    name = f"P0_TPL_{STAMP}"
+    resp = admin("POST", "/api/admin/report-rules",
+                 {"rule": name, "models": [f"P0TPL{STAMP}"], "auto_trigger": False})
+    check(resp.status_code == 201, f"create rule: {resp.text}")
+    fake = b"PK\x03\x04p0-template"
+    orig_enabled = store.enabled
+    store.enabled = lambda: False  # 强制走本地落盘分支（本机 .env 可能配了 MinIO）
+    try:
+        resp = client.post(
+            f"/api/admin/report-rules/{name}/templates",
+            files={"files": ("p0.xlsx", fake, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            headers={"Authorization": f"Bearer {token()}"},
+        )
+    finally:
+        store.enabled = orig_enabled
+    check(resp.status_code == 200, f"upload template: {resp.status_code} {resp.text}")
+    path = registry.get_rule(name).template_path("p0.xlsx")
+    check(path.is_file() and path.read_bytes() == fake, f"template local fallback: {path}")
+    path.unlink()
+    resp = admin("DELETE", f"/api/admin/report-rules/{name}")
+    check(resp.status_code == 204, f"cleanup rule: {resp.status_code} {resp.text}")
+
 TESTS = [
     test_sn_registry_status_api,
     test_sn_registry_import_export,
@@ -2714,6 +2942,15 @@ TESTS = [
     test_repair_list_filters,
     test_dependency_retest_cascade,
     test_item_sort_order,
+    test_p0_candidates_date_filter,
+    test_p0_report_rule_mes_void_url_roundtrip,
+    test_p0_report_retry_status_guards,
+    test_p0_abort_stale_session_keeps_live_lock,
+    test_p0_added_columns_cover_optional_and_station_active,
+    test_p0_scheduler_watchdog_reclaims_orphans,
+    test_p0_scheduler_ticks_after_runtime_rule,
+    test_p0_invalidation_marks_then_purges_after_commit,
+    test_p0_template_upload_without_minio,
 ]
 
 if __name__ == "__main__":

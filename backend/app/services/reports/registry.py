@@ -65,6 +65,7 @@ class Rule:
         self.models = entry.rule.models or []
         self.script_name = entry.rule.script_name
         self.mes_url = entry.rule.mes_url
+        self.mes_void_url = entry.rule.mes_void_url
         self.auto_trigger = entry.rule.auto_trigger
         self.enabled = entry.rule.enabled
 
@@ -84,6 +85,9 @@ class Rule:
         local = TEMPLATE_LOCAL_DIR / self.rule / name
         object_key = next((key for fn, key in self.entry.templates if fn == name), None)
         if object_key is None:
+            # MinIO 未配置时上传只落本地，登记 object_key=None
+            if local.exists():
+                return local
             raise FileNotFoundError(f"template {self.rule}/{name} not registered")
         if local.exists():
             remote_etag = store.stat_etag(object_key)
@@ -166,6 +170,7 @@ def register_rule(
     script_name: Optional[str] = None,
     templates: list = None,
     mes_url: Optional[str] = None,
+    mes_void_url: Optional[str] = None,
     auto_trigger: bool = True,
     enabled: bool = True,
     updated_by: str = None,
@@ -177,6 +182,7 @@ def register_rule(
         db.add(row)
     row.models = models_list
     row.mes_url = mes_url
+    row.mes_void_url = mes_void_url
     row.auto_trigger = auto_trigger
     row.enabled = enabled
     if script is not None:
@@ -193,4 +199,6 @@ def register_rule(
             existing.object_key = object_key
     db.commit()
     reset_cache()
+    from . import scheduler  # 局部导入避免循环依赖：规则变更立即唤醒调度线程
+    scheduler.kick()
     return row

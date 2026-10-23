@@ -134,8 +134,10 @@ def abort_session(
 
     reason = (payload.reason if payload else None) or "aborted by operator"
     product = db.get(models.ProductStatus, row.sn)
+    # 仅运行中的会话才持有锁：过期/已终止/被接管的旧会话不能释放当前活锁
     if (
-        product is not None
+        row.status == models.SESSION_RUNNING
+        and product is not None
         and product.current_status == models.STATUS_TESTING
         and product.current_client == row.client_id
     ):

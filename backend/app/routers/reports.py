@@ -4,7 +4,7 @@
 PDF Worker（外部 WPS 转换机）走 X-API-Key（api_caller）认领与回写。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -31,14 +31,6 @@ standards_router = APIRouter(prefix="/api/admin/report-standards", tags=["admin-
 
 # PDF 认领租约：Worker 领取后超过此时长未回传结果即视为失联，认领作废重新分发
 PDF_CLAIM_LEASE_SEC = 600
-
-def _parse_date(value: str, field: str):
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        raise bad_request(
-            "invalid_date_format", f"invalid_date_format: {field} should be YYYY-MM-DD, got {value}"
-        ) from None
 
 def _can_download(user) -> bool:
     return True  # 登录即可下载；生成/重试另有 require_operator 收口
@@ -102,16 +94,11 @@ def list_candidates(
     query = db.query(models.ProductStatus).filter(models.ProductStatus.is_completed.is_(True))
     if model:
         query = query.filter(models.ProductStatus.product_model == model)
-    if date_from:
-        query = query.filter(
-            models.ProductStatus.updated_at
-            >= sql_time(local_day_start_of_date(_parse_date(date_from, "date_from")))
-        )
-    if date_to:
-        query = query.filter(
-            models.ProductStatus.updated_at
-            < sql_time(local_day_start_of_date(_parse_date(date_to, "date_to") + timedelta(days=1)))
-        )
+    start, end = date_range_bounds(date_from, date_to)
+    if start:
+        query = query.filter(models.ProductStatus.updated_at >= start)
+    if end:
+        query = query.filter(models.ProductStatus.updated_at < end)
     total = query.count()
     rows = (
         query.order_by(models.ProductStatus.updated_at.desc())
@@ -169,6 +156,14 @@ def retry_job(job_id: str, db: Session = Depends(get_db), user=Depends(require_o
     job = db.get(models.ReportJob, job_id)
     if job is None:
         raise not_found("job_not_found", f"job_not_found: {job_id}")
+    if job.status == "running":
+        raise conflict_error("job_running", f"job_running: {job_id} is being generated")
+    if job.status == models.REPORT_JOB_INVALID:
+        raise conflict_error(
+            "job_invalid",
+            f"job_invalid: {job_id} was invalidated by repair disposition; "
+            "reports regenerate automatically after re-completion",
+        )
     job.status = "pending"
     job.artifacts = []
     job.failed_items = []
@@ -348,6 +343,7 @@ def _rule_out(db: Session, row: models.ReportRule) -> schemas.ReportRuleOut:
         rule=row.rule,
         models=row.models or [],
         mes_url=row.mes_url,
+        mes_void_url=row.mes_void_url,
         auto_trigger=row.auto_trigger,
         enabled=row.enabled,
         has_script=bool(row.script),
@@ -376,6 +372,7 @@ def create_rule(
         models_list=payload.models,
         script="",
         mes_url=payload.mes_url,
+        mes_void_url=payload.mes_void_url,
         auto_trigger=payload.auto_trigger,
         enabled=payload.enabled,
         updated_by=user.username,
@@ -399,6 +396,7 @@ def update_rule(
         script=row.script or "",
         script_name=row.script_name,
         mes_url=payload.mes_url,
+        mes_void_url=payload.mes_void_url,
         auto_trigger=payload.auto_trigger,
         enabled=payload.enabled,
         updated_by=user.username,

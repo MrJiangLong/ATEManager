@@ -123,7 +123,7 @@
       destroy-on-close
       class="form-dialog"
     >
-      <el-upload drag accept=".xlsx" multiple :auto-upload="false" :on-change="onTplChange" :file-list="tplFiles" :on-remove="(f, list) => (tplFiles = list)">
+      <el-upload drag accept=".xlsx" multiple :auto-upload="false" v-model:file-list="tplFiles">
         <div class="upload-hint">{{ t('rules.templatesHint') }}</div>
       </el-upload>
       <el-table :data="current?.templates || []" size="small" border max-height="220" class="tpl-table">
@@ -333,6 +333,7 @@ async function toggleFlag(row, key, value) {
       rule: row.rule,
       models: row.models,
       mes_url: row.mes_url,
+      mes_void_url: row.mes_void_url,
       auto_trigger: key === 'auto_trigger' ? value : row.auto_trigger,
       enabled: key === 'enabled' ? value : row.enabled,
     })
@@ -383,14 +384,10 @@ function openTemplates(row) {
   tplDialog.value = true
 }
 
-function onTplChange(_file, list) {
-  tplFiles.value = list.map((f) => f.raw)
-}
-
 async function submitTemplates() {
   saving.value = true
   try {
-    await ruleApi.uploadTemplates(current.value.rule, tplFiles.value)
+    await ruleApi.uploadTemplates(current.value.rule, tplFiles.value.map((f) => f.raw))
     ElMessage.success(t('common.saved'))
     tplDialog.value = false
     load()

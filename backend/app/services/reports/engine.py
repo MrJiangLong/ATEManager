@@ -216,12 +216,12 @@ def _void_mes_copies(jobs: list) -> None:
             logger.warning("MES 作废失败（可人工重试）：%s %s", job.sn, msg)
 
 
-def invalidate_jobs_for_sn(db, sn: str) -> int:
-    """维修处置破坏完工态时：作废该 SN 的全部报告任务并清除产物存储。
+def invalidate_jobs_for_sn(db, sn: str) -> list:
+    """维修处置破坏完工态时：标记该 SN 的全部报告任务作废（随调用方事务提交）。
 
-    曾上传 MES 的报告按规则配置的作废接口联动作废 MES 侧副本（未配置 →
-    标记 skipped 待人工）；作废任务记录永久保留；产品重新完工后由完工扫描
-    自动生成新报告。"""
+    产物清理与 MES 作废是外部副作用，必须等事务提交成功后再执行，
+    见 purge_invalidated_jobs；作废任务记录永久保留，产品重新完工后
+    由完工扫描自动生成新报告。"""
     jobs = (
         db.query(models.ReportJob)
         .filter(
@@ -231,11 +231,22 @@ def invalidate_jobs_for_sn(db, sn: str) -> int:
         .all()
     )
     for job in jobs:
-        _purge_artifacts(job, job.artifacts or [])
         job.status = models.REPORT_JOB_INVALID
         job.error = "invalidated by repair disposition"
-    _void_mes_copies(jobs)
-    return len(jobs)
+    return jobs
+
+def purge_invalidated_jobs(db, jobs: list) -> None:
+    """事务提交后清理作废任务的产物与 MES 副本（外部失败只告警，留待人工）。"""
+    for job in jobs:
+        try:
+            _purge_artifacts(job, job.artifacts or [])
+        except Exception as exc:
+            logger.warning("报告产物清理失败（可人工处理）：%s %s", job.sn, exc)
+    try:
+        _void_mes_copies(jobs)
+    except Exception as exc:
+        logger.warning("MES 作废异常（可人工处理）：%s", exc)
+    db.commit()
 
 def run_job(job_id: str) -> None:
     """执行一个报告任务（在调度线程池中运行，可阻塞）。"""

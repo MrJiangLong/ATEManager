@@ -553,6 +553,7 @@ class ExportItem(BaseModel):
     case_id: str
     item_name: str = ""
     is_mandatory: bool = True
+    is_active: bool = True
     sort_order: Optional[int] = None
 
 class ProcessExportOut(BaseModel):
@@ -613,6 +614,7 @@ class ImportItem(BaseModel):
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     is_mandatory: bool = True
+    is_active: bool = True  # 旧导出文件缺省 True → 与导出前行为一致
     sort_order: Optional[int] = None  # 旧导出文件缺省 None → 按导入顺序自动编号
 
 class ProcessImportIn(BaseModel):

@@ -12,6 +12,7 @@ import { onActivated, onBeforeUnmount, onDeactivated, onMounted } from 'vue'
  */
 export function usePolling(callback, intervalMs = 20000) {
   let timer = null
+  let running = false
 
   function stop() {
     if (timer) {
@@ -20,8 +21,16 @@ export function usePolling(callback, intervalMs = 20000) {
     }
   }
 
-  function tick() {
-    Promise.resolve(callback()).catch(() => {})
+  async function tick() {
+    if (running) return
+    running = true
+    try {
+      await callback()
+    } catch {
+      // 轮询失败静默，下一次继续
+    } finally {
+      running = false
+    }
   }
 
   function start() {

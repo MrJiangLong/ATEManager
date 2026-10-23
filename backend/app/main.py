@@ -70,8 +70,7 @@ def _bootstrap() -> None:
 async def lifespan(_: FastAPI):
     _bootstrap()
     sweeper.start()
-    if report_scheduler.enabled():
-        report_scheduler.start()
+    report_scheduler.start()  # 常驻线程；是否真正工作由每轮 enabled() 判定（运行期新增规则即时生效）
     try:
         yield
     finally:
