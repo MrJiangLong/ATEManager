@@ -68,23 +68,28 @@
           <span class="muted count">({{ session.item_count }})</span>
         </div>
         <el-table v-if="session.items?.length" :data="session.items" size="small" border max-height="260">
-          <el-table-column :label="$t('configs.caseId')" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">
-              <div class="case-cell">
-                <span class="code">{{ shortCaseId(row.case_id) }}</span>
-                <span v-if="caseOwner(row.case_id)" class="muted case-owner">{{ caseOwner(row.case_id) }}</span>
-              </div>
-            </template>
+          <el-table-column
+            :label="$t('configs.caseId')"
+            min-width="220"
+            show-overflow-tooltip
+            :tooltip-formatter="({ row }) => caseLabel(session.station_id, row.case_id)"
+          >
+            <template #default="{ row }"><span class="code">{{ row.case_id }}</span></template>
           </el-table-column>
-          <el-table-column :label="$t('common.result')" width="90" align="center">
+          <el-table-column :label="$t('common.result')" width="90" align="center" show-overflow-tooltip>
             <template #default="{ row }">
               <el-tag size="small" :type="resultTagType(row.result)">{{ row.result || '—' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('records.tableDuration')" width="100" align="right">
+          <el-table-column :label="$t('records.tableDuration')" width="100" align="right" show-overflow-tooltip>
             <template #default="{ row }">{{ fmtDurationMs(row.duration_ms) }}</template>
           </el-table-column>
-          <el-table-column prop="message" :label="$t('repairs.tableReason')" min-width="140" />
+          <el-table-column
+            prop="message"
+            :label="$t('repairs.tableReason')"
+            min-width="140"
+            show-overflow-tooltip
+          />
         </el-table>
         <EmptyState v-else :text="$t('sessions.noCheckpoint')" />
         <div v-if="cursorText" class="cursor-line muted">
@@ -115,12 +120,13 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../stores/auth'
 import { Close, SwitchButton, Unlock, View } from '@element-plus/icons-vue'
 import EmptyState from './EmptyState.vue'
-import { attemptTipText, caseOwner, fmtDateTime, fmtDurationMs, resultTagType, sessionTagType, shortCaseId } from '../utils/format'
+import { useDictionaries } from '../composables/useDictionaries'
+import { attemptTipText, fmtDateTime, fmtDurationMs, resultTagType, sessionTagType } from '../utils/format'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -130,6 +136,14 @@ const emit = defineEmits(['update:modelValue', 'abort', 'force-release', 'trace'
 
 const { t } = useI18n()
 const { canOperate } = useAuth()
+const { ensureCaseNames, caseLabel } = useDictionaries()
+
+watch(
+  () => props.session,
+  (s) => {
+    if (s) ensureCaseNames()
+  }
+)
 
 const visible = computed({
   get: () => props.modelValue,
@@ -182,8 +196,6 @@ const cursorText = computed(() => {
   word-break: break-word;
 }
 
-.case-cell { display: flex; flex-direction: column; line-height: 1.3; }
-.case-owner { font-size: 11px; }
 .cursor-line { margin-top: 8px; font-size: 12px; }
 
 .drawer-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

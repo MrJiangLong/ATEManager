@@ -185,7 +185,7 @@
                 <el-table :data="row.executed_items?.items || []" size="small" border>
                   <el-table-column :label="$t('configs.caseId')" min-width="220">
                     <template #default="{ row: it }">
-                      <el-tooltip :content="it.case_id" placement="top" :show-after="400">
+                      <el-tooltip :content="caseLabel(row.station_id, it.case_id)" placement="top" :show-after="400">
                         <CaseIdText :value="it.case_id" />
                       </el-tooltip>
                     </template>
@@ -333,7 +333,7 @@ import { downloadArtifact } from '../utils/artifacts'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { stationName, clientName, processName, ensureLoaded } = useDictionaries()
+const { stationName, clientName, processName, ensureLoaded, ensureCaseNames, caseLabel } = useDictionaries()
 
 const sn = ref(decodeURIComponent(route.params.sn || ''))
 const inputSn = ref(sn.value)
@@ -445,6 +445,7 @@ watch(() => route.params.sn, (v) => {
 })
 onMounted(() => {
   ensureLoaded()
+  ensureCaseNames()
   load()
 })
 </script>

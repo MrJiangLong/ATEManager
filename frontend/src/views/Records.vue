@@ -40,7 +40,7 @@
               <el-table :data="row.executed_items?.items || []" size="small" border>
                 <el-table-column :label="$t('configs.caseId')" min-width="220">
                   <template #default="{ row: it }">
-                    <el-tooltip :content="it.case_id" placement="top" :show-after="400">
+                    <el-tooltip :content="caseLabel(row.station_id, it.case_id)" placement="top" :show-after="400">
                       <CaseIdText :value="it.case_id" />
                     </el-tooltip>
                   </template>
@@ -157,7 +157,7 @@ import { downloadArtifact } from '../utils/artifacts'
 const { t } = useI18n()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
-const { stationName, clientName, ensureLoaded } = useDictionaries()
+const { stationName, clientName, ensureLoaded, ensureCaseNames, caseLabel } = useDictionaries()
 
 const items = ref([])
 const models = ref([])
@@ -208,6 +208,7 @@ watch(
 
 onMounted(async () => {
   await Promise.all([loadProcesses(), ensureLoaded()])
+  ensureCaseNames()
   try {
     const res = await modelApi.list({})
     models.value = res.data
