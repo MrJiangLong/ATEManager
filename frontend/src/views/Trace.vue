@@ -327,6 +327,7 @@ import StatTile from '../components/StatTile.vue'
 import CaseIdText from '../components/CaseIdText.vue'
 import CodeTip from '../components/CodeTip.vue'
 import { useDictionaries } from '../composables/useDictionaries'
+import { usePolling } from '../composables/usePolling'
 import { attemptTipText, fmtDateTime, fmtDurationMs, repairTagType, resultTagType, sessionTagType } from '../utils/format'
 import { downloadArtifact } from '../utils/artifacts'
 
@@ -372,17 +373,18 @@ async function download(row, index, variant) {
   }
 }
 
-async function load() {
+async function load(silent = false) {
   if (!sn.value) return
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     const res = await recordApi.trace(sn.value)
     data.value = res.data
   } catch (e) {
+    if (silent) return
     data.value = null
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
   try {
     const res = await productApi.sessions(sn.value)
@@ -448,6 +450,10 @@ onMounted(() => {
   ensureCaseNames()
   load()
 })
+
+usePolling(async () => {
+  await load(true)
+}, 20000)
 </script>
 
 <style scoped>

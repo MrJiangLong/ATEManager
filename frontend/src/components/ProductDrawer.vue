@@ -131,6 +131,7 @@ import { Close, Select, Tools, Unlock, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { recordApi } from '../api'
 import EmptyState from './EmptyState.vue'
+import { usePolling } from '../composables/usePolling'
 import { fmtDateTime, fmtDurationSec, resultTagType, statusTagType } from '../utils/format'
 
 const props = defineProps({
@@ -162,22 +163,32 @@ const statusKey = computed(() => {
 })
 const statusLabel = computed(() => t(`status.${statusKey.value}`))
 
-async function onOpen() {
+async function fetchDetail(silent = false) {
   if (!props.row?.sn) return
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     const res = await recordApi.trace(props.row.sn)
     detail.value = res.data.product
     steps.value = res.data.steps || []
     events.value = (res.data.records || []).slice(-EVENT_LIMIT).reverse()
   } catch (e) {
+    if (silent) return
     steps.value = []
     events.value = []
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
+
+function onOpen() {
+  fetchDetail()
+}
+
+// 20s 静默刷新工序进度与最近事件；抽屉关闭时空转（不请求），组件卸载自动停
+usePolling(async () => {
+  if (visible.value) await fetchDetail(true)
+}, 20000)
 
 watch(() => props.row?.sn, () => {
   steps.value = []
