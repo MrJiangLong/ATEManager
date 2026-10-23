@@ -10,7 +10,7 @@
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
-| 配套代码 | `tools/client/ate_client.py`（SDK + 演示）、`tools/client/line_simulator.py`（多机台并发验证） |
+| 配套代码 | `tools/atetest/api.py`（产线形态 SDK：`AteRun` 会话状态机）、`tools/client/ate_client.py`（契约参考 + CLI 演示）、`tools/client/line_simulator.py`（多机台并发验证） |
 
 ---
 
@@ -65,6 +65,11 @@
 ```
 
 首工位首次进站时，服务端用该结果**动态建档**（`product_status` 新增一行）。
+
+> **写 SN 工位是唯一例外**：被测件进站前还没有 SN。该工位的前置用例先离线自检
+> （结果只在本地累积），写 SN 用例扫码后再 `check-in`；服务端对重号/跳站/已锁/
+> 已报废/机型固件基线的拦截发生在烧录动作之前，进站成功后前置结果批量补报。
+> 接入方式见附录 A 的 `sn_burner`。
 
 ### 1.3 用例ID（case_id）
 
@@ -771,9 +776,12 @@ while not stop.wait(interval):          # interval = heartbeat_interval_sec / 2
 
 1. 会话被中止 → 工位锁释放、在制品回 `IDLE`（**不计失败**，这点与 `missing_mandatory` 的安全卡控不同）
 2. 上位机下一次心跳收到 `holding_lock=false`（≤ `heartbeat_interval_sec`）
-3. SDK 置 `cli.lost_lock = True`，并触发构造参数 `on_lost_lock` 回调
+3. SDK 心跳线程置位 `lost_lock`，并触发构造参数 `on_lost_lock` 回调
 4. 此后 `checkpoint` 会收到 `409 session_aborted`，`check-out` 会被 `lock_invalid` 拒绝
 5. **上位机必须自己停**：跑完当前用例后停止剩余用例，不要再尝试出站
+
+直接用 `AteClient`（低层参考实现）时，pytest 工程需自行实现如下停机判断；用 `AteRun`
+时 `gate` / `finish` 已内置同样判断（抛 `AteExit(3)`），宿主只需转 `pytest.exit`。
 
 pytest 工程接入示例：
 
@@ -829,21 +837,25 @@ cli = AteClient(url, key, client_id="SZ-L1-CAL-01", on_lost_lock=_on_lost_lock)
 
 ### 10.5 宿主职责分工与接入指引
 
-SDK（`tools/client/ate_client.py`，单文件零第三方依赖）已覆盖传输层全部职责（重试退避、
-断点队列、幂等重传、失锁感知、产物上传 `upload_artifact`），宿主只负责四件事：执行测试、
-调 `checkpoint`、失锁停机、出站重试。完整 conftest.py 骨架见**附录 A**。
+SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已覆盖传输层全部职责（重试退避、
+断点队列、幂等重传、失锁感知、产物上传），并把会话流程收敛为 `AteRun` 状态机
+（`start` / `collect` / `gate` / `finish`）。宿主只写 pytest 钩子与夹具：收集期进站
+（写 SN 工位由 `sn_burner` 扫码后延迟进站）、
+`makereport` 里调 `collect`、每用例 `gate`、会话结束 `finish`；`AteExit` 一律转
+`pytest.exit(message, returncode)`。`tools/client/ate_client.py` 是同一契约的最低层参考实现
+（无 `AteRun`，另有 CLI 演示），首次接入可对照两者。完整 conftest.py 骨架见**附录 A**。
 
 **断网重传各场景的分工**（宿主无需自己实现队列）：
 
 | 场景 | 处理者 |
 |---|---|
 | 秒级抖动 | SDK `HttpClient` 指数退避重试，对调用方透明 |
-| 断网数分钟继续测 | `checkpoint()` 失败自动进 `pending_items` 落盘，不抛异常 |
-| 网络恢复后补传 | 下次 `checkpoint` / `check_out` 自动合并队列，服务端按 `case_id` 去重 |
-| 出站瞬间断网 | 宿主按上例退避重试，复用同一 `checkout_id` |
+| 断网数分钟继续测 | `gate()` 内 `checkpoint` 失败自动进 `pending_items` 落盘，不抛异常 |
+| 网络恢复后补传 | 下次 `gate` / `finish` 自动合并队列，服务端按 `case_id` 去重 |
+| 出站瞬间断网 | `finish()` 内置 6 次退避重试，复用同一 `checkout_id` |
 | 服务端已落库但响应丢失 | 同 `checkout_id` 重试 → 幂等回放既有回执，不会双账 |
-| 断网 + 进程崩溃 | 断点文件恢复会话（同 `state_file` 路径重新进站） |
-| 断网太久锁被回收/接管 | `lost_lock` 置位 → `pytest.exit` 停机，重新进站 |
+| 断网 + 进程崩溃 | 断点文件恢复会话（同一 SN 的 `STATE_DIR` 文件重新进站） |
+| 断网太久锁被回收/接管 | `on_lost_lock` 注入 `KeyboardInterrupt`，`gate`/`finish` 抛 `AteExit(3)` 停机 |
 
 ---
 
@@ -995,207 +1007,149 @@ python tools\client\line_simulator.py --api-key <KEY> --mode chaos --crash-rate 
 
 ### 附录 A：完整接入示例（conftest.py）
 
-产线 pytest 工程只需把 `tools/client/ate_client.py` 拷为工程内模块（完整可运行的自测参考见 `tools/atetest/`），再写一个 conftest。
-职责分工（谁管断网重传、谁管停机）见 **10.5**，本附录给出完整骨架：
+产线 pytest 工程把 `tools/atetest/api.py`（产线形态：传输层 + `AteRun` 会话状态机，零第三方
+依赖）拷为工程内模块，再按本附录写一个 conftest；`tools/client/ate_client.py` 是同一契约的
+最低层参考实现（无 `AteRun`，另有 CLI 演示），`tools/atetest/` 是可直接运行的自测工程。
 
 ```python
 # conftest.py
-import json
-import threading
-import time
-from pathlib import Path
+import os
 
 import pytest
 
-from ate_client import AteClient, ApiError, identity_from_report, to_ate_items
+import api as ate                          # tools/atetest/api.py
 
-STATE_FILE = Path("D:/atedata")   # 断点目录：SDK 按 SN 分文件，多台件交替测试互不覆盖
+# ---------- 0. 连接参数与身份 ----------
+ate.ATE_URL = "http://10.0.0.10:8000"      # 留空 = 不对接，AteRun 全部旁路
+ate.ATE_KEY = os.environ["ATE_API_KEY"]    # 与服务端 V1_API_KEY 一致
+ate.CLIENT_ID = "SZ-L1-CAL-01"             # 与 Web 端「机台管理」的工位绑定一致
+
+WRITE_SN = os.environ.get("ATE_WRITE_SN") == "1"   # 写 SN 工位：延迟进站
 
 
-def pytest_addoption(parser):
-    parser.addoption("--ate-url", default="http://127.0.0.1:8000")
-    parser.addoption("--ate-key", default="")                  # 与服务端 V1_API_KEY 一致
-    parser.addoption("--ate-client", default="SZ-L1-CAL-01")   # 机台编号，Web 端绑定工位
+def read_identity():
+    """返回 (sn, model, fw)。普通工位 *IDN? 直读；写 SN 工位 SN 留空，扫码后再进站。
+
+    收集钩子早于所有会话夹具，身份必须在收集期可读。仪器只能在夹具里初始化的工程，
+    请改用 sn_burner 式延迟进站（由夹具返回 SN 后再调用 run.start）。
+    """
+    if WRITE_SN:
+        return "", "DPO4054B", "V3.20"     # 机型/固件来自工装配置
+    idn = inst.query("*IDN?")              # inst = 工程仪器实例
+    # TEKTRONIX,DPO4054B,C020001,CF:91.1CT,FV:V3.20
+    _vendor, model, serial, fw = [p.strip() for p in idn.split(",")]
+    return serial, model, fw
 
 
-# ---------- 1. 收集每个用例的结果（pytest 标准钩子） ----------
-# setup/teardown 失败也必须收集为 FAIL：若只收 call，异常用例会"凭空消失"，
-# 出站时触发 missing_mandatory 把整个工位卡死。
-_report_rows = []
-_round_results = {}   # 本轮已执行用例的结果表（nodeid → outcome），重跑判定用
-_t0 = 0.0
+SN, MODEL, FW = read_identity()
+_ate_run = None
 
+
+def _checked_in(run) -> bool:
+    """是否已进站，以 client.state 为准。run.sn 在 check_in 之前就已赋值，进站被
+    拦截时仍非空，据此出站会反复撞 check_out before check_in。"""
+    return bool(run is not None and run.client is not None and run.client.state is not None)
+
+
+# ---------- 1. 结果收集：setup/teardown 失败也要收 ----------
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
+    """异常用例若"凭空消失"，出站时 missing_mandatory 会把整个工位卡死。"""
     outcome = yield
-    rep = outcome.get_result()
-    if rep.when == "call" or (rep.when in ("setup", "teardown") and rep.failed):
-        _report_rows.append({
-            "nodeid": item.nodeid,
-            "duration": rep.duration,
-            "result": rep.outcome,   # setup 异常 outcome 为 error，SDK 映射为 FAIL
-            "exception": str(rep.longrepr) if rep.failed else "",
-        })
-        _round_results[item.nodeid] = rep.outcome
+    if _ate_run is not None:
+        _ate_run.collect(item, outcome.get_result())
 
 
-def _retry_failed(sn: str) -> list:
-    """上一轮失败清单（不出站留下的）。无文件 = 无需重跑。"""
-    rp = _retry_path(sn)
-    if not rp.exists():
-        return []
+# ---------- 2. 普通工位：收集结束即进站 + 续测跳过 ----------
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(session, config, items):
+    """必须早于任何用例的 setup：会话夹具里打 skip 会漏掉第一个用例。"""
+    global _ate_run
+    if not items or config.option.collectonly:
+        return
+    _ate_run = ate.AteRun(ate.create_client())
+    if not SN:
+        return                             # 写 SN 工位：等 sn_burner 扫码
     try:
-        return json.loads(rp.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
-# ---------- 2. 仪器身份与计时（按你的仪器层实现） ----------
-def read_idn():
-    """仪器 *IDN? 直读 → identity_from_report 所需字典。pyvisa 示例：
-        idn = inst.query("*IDN?")     # "Keysight,DSOX4104A,CN1234,03.00"
-        vendor, model, serial, fw = [p.strip() for p in idn.split(",")]
-        return {"model": model, "serialNumber": serial, "version": fw}
-    model / firmware 必须与 Web 端机型注册一致，否则 model_mismatch / firmware_mismatch 403。
-    """
-    raise NotImplementedError("read_idn(): 由工程仪器层实现")
+        # 必须携带完整 collection；-k 部分运行会被 case_id_mismatch 拦截（防漏测属预期）
+        done = _ate_run.start(items, sn=SN, model=MODEL, fw=FW)
+    except ate.AteExit as e:
+        pytest.exit(e.message, returncode=e.returncode)
+    for item in items:
+        if item.nodeid in done:            # 只跳过上轮已 PASS 的，FAIL 的照常重跑
+            item.add_marker(pytest.mark.skip(reason="ATE 续测：该用例已通过，跳过"))
 
 
-def elapsed_ms():
-    return int((time.monotonic() - _t0) * 1000)
-
-
-# ---------- 3. 客户端夹具 ----------
-@pytest.fixture(scope="session")
-def ate(request):
-    opt = request.config.getoption
-
-    def on_lost_lock(reason):
-        # 心跳线程调用：不能在回调里 pytest.exit（SystemExit 只会杀掉心跳线程），
-        # 必须 interrupt_main 把 KeyboardInterrupt 注入主线程，长用例也能被打断
-        threading.interrupt_main()
-
-    cli = AteClient(opt("--ate-url"), opt("--ate-key"),
-                    client_id=opt("--ate-client"),
-                    state_file=STATE_FILE, on_lost_lock=on_lost_lock)
-    yield cli
-    cli.stop_heartbeat()
-
-# ---------- 4. 会话级：进站 → 续测跳过 → 测试 → 出站/重跑 ----------
-def _retry_path(sn: str) -> Path:
-    """本轮失败清单（conftest 自管，与 SDK 断点文件同目录）。"""
-    if STATE_FILE.suffix == "":
-        return STATE_FILE / f".retry_{sn}.json"
-    return STATE_FILE.with_name(STATE_FILE.stem + ".retry.json")
-
-
+# ---------- 3. 会话收尾：判必测 + 出站 ----------
 @pytest.fixture(scope="session", autouse=True)
-def ate_session(ate, request):
-    global _t0
-    sn, model, fw = identity_from_report(read_idn())   # 仪器 *IDN? 直读，工程内实现
-
-    # 进站必须携带完整 collection（含已完成用例），否则 case_id_mismatch 拦截。
-    # 注意：pytest -k 的部分运行同样被拦（防漏测属预期），调试请跑全量，
-    # 或由运维临时关闭 ENFORCE_CASE_IDS。
-    case_ids = [item.nodeid for item in request.session.items]
-
-    # lock_conflict 按持有状态自适应处理，不做盲目长等待：
-    #   心跳新鲜（idle < 30s）= 该件正被其他机台正常测试 → 等到它测完遥遥无期，立即退出；
-    #   僵尸锁（idle 逼近 120s 宽限）= 只等"Sweeper 回收"所需的精确时间，再重试。
-    # 其余进站错误（防呆拦截等）直接失败。
-    state = None
-    for attempt in range(3):
-        try:
-            state = ate.check_in(sn, model, fw, case_ids=case_ids)
-            break
-        except ApiError as exc:
-            if exc.is_lock_conflict:
-                idle = exc.lock_idle_sec()
-                if idle is not None and idle < 30:
-                    pytest.exit("进站失败：该件正在其他机台测试中，请等待其完成或走维修处置", returncode=4)
-                wait = 15 if idle is None else min(max(120 - idle + 10, 10), 130)
-                time.sleep(wait)
-                continue
-            if exc.is_gate_blocked:
-                # 防呆拦截：件已盖章（重测需先走 RETEST 处置）/ 已锁定 / 已报废 / 机型固件不符
-                pytest.exit(f"进站被防呆拦截: {exc}", returncode=1)
-            if exc.is_network:
-                # 网络重试已在 HttpClient 内耗尽：干净退出而不是裸异常栈
-                pytest.exit(f"进站失败：服务端不可达（{exc}），请检查网络", returncode=4)
-            raise
-    if state is None:
-        pytest.exit("进站失败：锁一直未释放，请先做重测处置或强制解锁", returncode=4)
-    _t0 = time.monotonic()
-    _round_results.clear()   # 新一轮：清空结果表（重跑清单由 _retry_failed 提供）
-
-    # 续测跳过：只跳过"上次已 PASS"的用例；上次 FAIL 的（在重跑清单里）本轮重跑，
-    # 通过后 checkpoint 按 case_id 覆盖，FAIL 被新结果顶掉。
-    # 策略：必测没过 → 不出站，保留会话与断点，重跑时只执行未通过项（见收尾判定）。
-    mandatory = set(state.mandatory_case_ids)
-    done_pass = set(state.completed_case_ids) - set(_retry_failed(sn))
-    for item in request.session.items:
-        if item.nodeid in done_pass:
-            item.add_marker(pytest.mark.skip(reason=f"ATE 续测：第 {state.attempt} 轮已通过，跳过"))
-
+def project_session_start():
     yield
-
-    # 收尾判定：本轮必测是否有 FAIL。有 → 不出站（会话与断点原样保留），
-    # 记录失败清单退出；处置/修复后重跑将只执行未通过项。全绿 → 正常出站。
-    failed_now = {nid for nid, res in _round_results.items() if res != "passed"}
-    if failed_now & mandatory:
-        rp = _retry_path(sn)
-        rp.parent.mkdir(parents=True, exist_ok=True)
-        rp.write_text(json.dumps(sorted(failed_now)), encoding="utf-8")
-        pytest.exit(
-            f"必测未全过: {sorted(failed_now & mandatory)}；已保留断点不出站，"
-            f"重跑将只执行未通过项",
-            returncode=2,
-        )
-    _retry_path(sn).unlink(missing_ok=True)
-    items = to_ate_items(_report_rows)
-    for attempt in range(6):
+    if _checked_in(_ate_run):              # 未进站 = 没有会话，无需出站
         try:
-            ack = ate.check_out(items, duration_ms=elapsed_ms())
-            if not ack.get("acknowledged"):
-                pytest.exit("未拿到落库回执，禁止流转", returncode=1)
-            return
-        except ApiError as exc:
-            # 防呆拦截（漏测/跳站/清单不匹配等）：重试无意义，立即退出人工介入
-            if exc.is_gate_blocked:
-                pytest.exit(f"出站被防呆拦截: {exc}", returncode=1)
-            if ate.lost_lock or exc.is_lock_invalid:
-                pytest.exit("会话已被运维中止，停止测试", returncode=3)
-            time.sleep(min(2 ** attempt, 30))
-        except Exception:
-            if ate.lost_lock:
-                pytest.exit("会话已被运维中止，停止测试", returncode=3)
-            time.sleep(min(2 ** attempt, 30))
-    pytest.exit("出站重试后仍未成功，请检查网络或联系运维", returncode=4)
+            _ate_run.finish()              # 必测 FAIL → 保留会话不出站（退出码 2）
+        except ate.AteExit as e:
+            pytest.exit(e.message, returncode=e.returncode)
 
-# ---------- 5. 每个用例之间：上报断点 + 失锁自检 ----------
+
+# ---------- 4. 每用例收尾：checkpoint + 失锁自检 ----------
 @pytest.fixture(autouse=True)
-def ate_case_gate(ate):
+def ate_case_gate(request):
     yield
-    if _report_rows:
+    if not _checked_in(_ate_run):
+        return                             # 未进站阶段只本地累积，进站后首次 gate 补报
+    try:
+        # 可选产物：换成仪器截图/波形；上传失败只记日志，不阻断测试
+        # _ate_run.upload_artifact(request.node.nodeid, path="D:/ate/shots/shot.png")
+        _ate_run.gate()
+    except ate.AteExit as e:
+        pytest.exit(e.message, returncode=e.returncode)
+
+
+# ---------- 5. 写 SN 工位专用：前置检查 → 扫码 → 进站 → 才允许烧录 ----------
+@pytest.fixture
+def sn_burner(request):
+    def _scan_and_checkin(scan_func=None) -> str:
+        bad = [nid for nid, res in getattr(_ate_run, "results", {}).items() if res == "failed"]
+        if bad:
+            pytest.fail(f"前置自检未通过，禁止扫码写号：{bad}")
+        sn = (scan_func() if scan_func else input("\n[请扫描产品 SN]: ")).strip()
+        if not sn:
+            pytest.fail("扫码失败：SN 不能为空")
         try:
-            # 断网时自动进待补传队列，勿自行包重试；但 lock_invalid 必须抛出
-            # （锁已被接管/中止，结果作废）——接住后干净停机，否则后续每个用例
-            # 都会带着原始异常栈报 ERROR
-            ate.checkpoint(to_ate_items(_report_rows))
-        except ApiError as exc:
-            if exc.is_lock_invalid:
-                pytest.exit("锁已失效：会话被运维中止", returncode=3)
-            raise
-        _report_rows.clear()
-    if ate.lost_lock:
-        pytest.exit("锁已失效：会话被运维中止", returncode=3)
+            _ate_run.start(request.session.items, sn=sn, model=MODEL, fw=FW)
+        except ate.AteExit as e:
+            pytest.exit(f"防呆拦截（禁止烧录）: {e.message}", returncode=e.returncode)
+        return sn
+    return _scan_and_checkin
 ```
 
-既有产线工程接入时只需对齐三点：
+写 SN 用例：
 
-1. **参数注入**：URL / API-Key / 机台编号改走 `--ate-*` 命令行参数（见上方 `pytest_addoption`）；
-2. **身份来源**：SN / 机型 / 固件由仪器 `*IDN?` 直读，经 `identity_from_report()` 解析三要素；
-3. **结果来源**：既有报告字典（`report["data"]` 的 nodeid / duration / result / exception 列表）
-   经 `to_ate_items()` 转换后即可喂给 `checkpoint` / `check_out`，字段映射见附录 B。
+```python
+def test_burn_sn(sn_burner):
+    sn = sn_burner()                       # 服务端拦截在此中止，绝不烧录
+    hardware.write(sn)                     # 进站成功后才允许动烧录硬件
+    assert hardware.readback() == sn
+```
+
+关键点：
+
+1. **进站时机**：普通工位在 `pytest_collection_modifyitems`；写 SN 工位在前置用例跑完、
+   扫码取得 SN 后（`sn_burner`）。续测 skip 必须在任何用例 setup 之前打上。
+2. **身份时序**：收集钩子早于会话夹具，`*IDN?` 必须此时可读；否则改用延迟进站。
+3. **全量 collection**：`-k` / `--deselect` 部分运行会被 `case_id_mismatch` 拦截（防漏测）。
+4. **`AteExit` → `pytest.exit`**：SDK 只返回"干净停机决策"，结束进程由宿主执行。
+
+`AteExit.returncode` 约定（仅 ATE 主动终止时）：
+
+| returncode | 含义 | 服务端 |
+|---|---|---|
+| 1 | 进站/出站防呆拦截、未拿到 ACK、身份为空 | 进站被拦 = 不产生本轮会话；出站被拦 = 会话与断点保留 |
+| 2 | 必测项 FAIL，不出站 | 会话保留，`.retry_<SN>.json` 让重跑只执行未通过项 |
+| 3 | 会话被运维中止 / 锁失效 | 本轮结果作废，重新进站 |
+| 4 | 网络不可达、锁长期不释放、出站重试耗尽 | 断点文件保留，恢复后重新进站续测 |
+
+> pytest 自身的用例失败也返回 1，需区分时看退出消息或本地日志。
 
 ### 附录 B：字段映射表
 
@@ -1204,11 +1158,16 @@ def ate_case_gate(ate):
 | `report["serialNumber"]` / `["model"]` / `["version"]`（`*IDN?`） | check-in 的 `sn` / `product_model` / `firmware` |
 | `report["data"][*]["nodeid"]` | `case_id` |
 | `rep.outcome`（passed / failed / skipped） | `PASS` / `FAIL` / `SKIP` |
-| `pytest_runtest_makereport` | 逐用例 `checkpoint` 上报 |
-| `project_session_start`（session/autouse，依赖 `dst_instr`） | 进站（yield 前）/ 出站（yield 后） |
+| `pytest_runtest_makereport` | `AteRun.collect` 本地累积结果 |
+| `ate_case_gate`（function/autouse） | `AteRun.gate()`：批量 `checkpoint` + 失锁自检 |
+| `pytest_collection_modifyitems`（`trylast`） | 普通工位：`AteRun.start` 进站，并按返回的 `done` 打续测 skip |
+| `sn_burner`（写 SN 用例） | 写 SN 工位：前置检查 → 扫码 → `AteRun.start` 延迟进站 |
+| `project_session_start`（session/autouse） | 出站 `AteRun.finish()`（必测判定 + check-out） |
 | `action()` 线程收到 `abort` | `release` 主动放弃锁 |
 
 ### 附录 C：完整调用序列
+
+普通工位（SN 在收集期已知）：
 
 ```
 resolve ─▶ check-in ─┬─▶ heartbeat ─┐
@@ -1218,4 +1177,19 @@ resolve ─▶ check-in ─┬─▶ heartbeat ─┐
                               ├─▶ check-out ─▶ 201 ACK ─▶ 拔线流转
                               ├─▶ release    ─▶ 放弃本次测试（不计失败）
                               └─▶ ack        ─▶ 断网后确认落库
+```
+
+写 SN 工位（进站前没有 SN）：
+
+```
+离线前置用例 ─▶ 本地累积结果（不发请求、无会话）
+                     │  任一 FAIL → 禁止扫码
+                     ▼
+               扫码取得 SN ─▶ resolve + check-in
+                     │              │
+                     │              └─ 拦截（重号/跳站/极性/基线/锁）→ 退出码 1，不烧录
+                     ▼
+               写出硬件 SN ─▶ 首次 checkpoint 批量补报前置结果
+                     │
+                     └─▶ 后续用例与普通工位相同（heartbeat / gate / finish）
 ```

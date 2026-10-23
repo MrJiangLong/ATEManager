@@ -2,7 +2,7 @@
 仅把"仪器 *IDN? 读身份"替换为环境变量，机台编号可用 ATE_TEST_CLIENT 模拟不同物理机。
 
 两种进站模式（由 ATE_TEST_SN 是否置空决定）：
-    普通工位：ATE_TEST_SN=仪器/环境读到的 SN   → session 启动立即进站（全自动）
+    普通工位：ATE_TEST_SN=仪器/环境读到的 SN   → 收集结束立即进站（全自动）
     写 SN 工位：ATE_TEST_SN=（置空）           → 延迟进站：前置用例先离线自检，
         写 SN 用例通过 sn_burner 夹具扫码触发 check_in（防呆前置：服务端拦截
         发生在烧录硬件之前），进站后前置用例结果批量补报，全程入台账。
@@ -34,8 +34,32 @@ _SKIP = set(filter(None, os.environ.get("ATE_SKIP", "").split(",")))
 
 
 def _checked_in(run) -> bool:
-    """是否已完成进站（api.py 保持不动，由 conftest 依据 run.sn 兜底判断）。"""
-    return bool(run.sn)
+    """是否已完成进站：以 client.state 为准。run.sn 在 check_in 之前就已赋值，
+    进站被拦截时仍非空，据此出站会反复撞"check_out before check_in"。"""
+    return bool(run is not None and run.client is not None and run.client.state is not None)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(session, config, items):
+    """普通工位：收集完成即进站，并给上轮已 PASS 的用例打 skip。
+
+    必须早于任何用例的 setup（会话夹具里打标记会漏掉第一个用例）；
+    写 SN 工位（SN 置空）维持延迟进站，由 sn_burner 扫码触发。
+    """
+    global _ate_run
+    if not items or config.option.collectonly:
+        return
+    _ate_run = ate.AteRun(ate.create_client())
+    if not SN.strip():
+        return
+    try:
+        done = _ate_run.start(items, sn=SN, model=MODEL, fw=FW)
+    except ate.AteExit as e:
+        pytest.exit(e.message, returncode=e.returncode)
+    """续测：上次已 PASS 的本轮跳过"""
+    for item in items:
+        if item.nodeid in done:
+            item.add_marker(pytest.mark.skip(reason="ATE 续测：该用例已通过，跳过"))
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -60,27 +84,14 @@ def ate_inject(request):
     if slow > 0:
         time.sleep(slow)
 
-
 @pytest.fixture(scope="session", autouse=True)
-def ate_session(request):
-    global _ate_run
-    run = ate.AteRun(ate.create_client())   # ATE_URL 留空时 client=None，全部方法自动旁路
-    _ate_run = run
-
-    # 普通工位：启动即有 SN → 立即进站；写 SN 工位：SN 置空 → 延迟到 sn_burner 扫码后进站
-    if SN.strip():
-        try:
-            done = run.start(request.session.items, sn=SN, model=MODEL, fw=FW)
-        except ate.AteExit as e:
-            pytest.exit(e.message, returncode=e.returncode)
-        for item in request.session.items:      # 续测：上次已 PASS 的本轮跳过
-            if item.nodeid in done:
-                item.add_marker(pytest.mark.skip(reason="ATE 续测：该用例已通过，跳过"))
+def project_session_start(request):
+    """会话收尾：仅已进站的会话出站（未进站 = 服务器零痕迹，无需出站）。
+    进站在 pytest_collection_modifyitems 完成，此处负责 yield 后的出站。"""
     yield
-    # 收尾：仅已进站的会话出站（未进站 = 服务器零痕迹，无需出站）
-    if _checked_in(run):
+    if _checked_in(_ate_run):
         try:
-            run.finish()
+            _ate_run.finish()
         except ate.AteExit as e:
             pytest.exit(e.message, returncode=e.returncode)
 
