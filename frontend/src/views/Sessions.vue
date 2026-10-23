@@ -202,6 +202,10 @@ async function load(silent = false) {
       items.value = res.data.items
       total.value = res.data.total
     }
+    // 抽屉打开时跟随轮询刷新：按 session_id 换成本轮的新快照（会话已出列表则保留原数据）
+    if (current.value) {
+      current.value = items.value.find((i) => i.session_id === current.value.session_id) || current.value
+    }
   } catch (e) {
     if (silent) return
     items.value = []

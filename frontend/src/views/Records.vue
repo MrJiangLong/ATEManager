@@ -148,6 +148,7 @@ import EmptyState from '../components/EmptyState.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import { useProcesses } from '../composables/useProcesses'
 import { useDictionaries } from '../composables/useDictionaries'
+import { usePolling } from '../composables/usePolling'
 import CodeTip from '../components/CodeTip.vue'
 import { TEST_RESULTS } from '../utils/constants'
 import CaseIdText from '../components/CaseIdText.vue'
@@ -168,8 +169,8 @@ const pageSize = ref(20)
 const dateRange = ref(null)
 const filters = reactive({ sn: '', station_id: '', product_model: '', overall_result: '', is_valid: '' })
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize.value }
     if (filters.sn) params.sn = filters.sn
@@ -183,11 +184,12 @@ async function load() {
     items.value = res.data.items
     total.value = res.data.total
   } catch (e) {
+    if (silent) return
     items.value = []
     total.value = 0
     ElMessage.error(e.message || t('errors.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -218,6 +220,10 @@ onMounted(async () => {
   }
   await load()
 })
+
+usePolling(async () => {
+  await load(true)
+}, 20000)
 </script>
 
 <style scoped>
