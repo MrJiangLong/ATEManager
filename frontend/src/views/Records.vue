@@ -28,7 +28,15 @@
     </PageToolbar>
 
     <DataCard>
-      <el-table v-loading="loading" :data="items" stripe size="small" style="width:100%; table-layout:fixed">
+      <!-- row-key 让轮询整体替换 items 后仍按 record_id 保留展开行，不被 20s 刷新收起 -->
+      <el-table
+        v-loading="loading"
+        :data="items"
+        row-key="record_id"
+        stripe
+        size="small"
+        style="width:100%; table-layout:fixed"
+      >
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="items-panel">
