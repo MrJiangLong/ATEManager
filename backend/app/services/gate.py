@@ -563,6 +563,19 @@ def check_in(
                 exit_code=EXIT_CASE_ID_MISMATCH,
                 data={"missing_case_ids": absent},
             )
+        """ 执行顺序契约：rules 按 sort_order 下发，上位机须按此顺序执行。
+        case_ids 通常是整个工程的收集顺序，先滤出本工位用例再比相对顺序 """
+        configured = [i.case_id for i in graph.items_of.get(station_id, [])]
+        submitted = [c for c in case_ids if c in configured]
+        expected = [c for c in configured if c in covered]
+        if submitted != expected:
+            raise bad_request(
+                "case_order_mismatch",
+                f"用例执行顺序不符：工位 {_station_label(graph, station_id)} 期望 "
+                f"{' → '.join(expected)}，实际 {' → '.join(submitted)}",
+                exit_code=EXIT_CASE_ID_MISMATCH,
+                data={"expected_case_ids": expected, "actual_case_ids": submitted},
+            )
 
     # 记下"判定时"观察到的锁状态，供最终加锁做 CAS 校验（见步骤 12）
     observed_status = product.current_status

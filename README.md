@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，59 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，69 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -342,7 +342,7 @@ ATEManager/
 │   │       ├── metrics.py    仪表盘统计
 │   │       └── reports.py    出厂报告：任务 / 候选批量入队 / 规则 / 模板 / 标准器 / Worker 领取回传
 │   ├── tests/
-│   │   └── test_backend.py   端到端回归测试（59 项）
+│   │   └── test_backend.py   端到端回归测试（69 项）
 │   ├── data/                 运行时数据（SQLite / 上传文件，gitignore）
 │   ├── logs/                 滚动日志（gitignore）
 │   ├── reports/              报告引擎工作目录（产物中间态，上传 MinIO 后本地副本即删，gitignore）
@@ -599,6 +599,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 锁冲突 | 409 | `lock_conflict` | 11 | 等待或换机台 |
 | 工位不在流程 | 400 | `station_not_in_process` | 10 | 提示工艺不符 |
 | 用例ID清单不匹配 | 400 | `case_id_mismatch` | 15 | 提示脚本版本不符 |
+| 用例执行顺序不符 | 400 | `case_order_mismatch` | 15 | 调整工程/用例定义顺序 |
 | **漏测拦截** | **400** | `missing_mandatory` | 13 | 提示补齐必测用例 |
 | 出站成功 | 201 | `ok.checkout` | 0（PASS）/ 1（FAIL） | 收到 ACK 方可拔线 |
 
@@ -785,7 +786,7 @@ MES 的报告按规则配置的作废接口（`mes_void_url`）联动作废 MES 
 ## 13. 测试
 
 ```bash
-python tests/test_backend.py      # 59 项，覆盖全部卡控场景
+python tests/test_backend.py      # 69 项，覆盖全部卡控场景
 pytest tests/test_backend.py      # 亦可用 pytest 收集
 ```
 

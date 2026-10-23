@@ -653,6 +653,23 @@ def test_case_id_mismatch_400():
     resp = checkin("CAL-PARAM", sn, case_ids=list(ITEMS["CAL-PARAM"]))
     check(resp.status_code == 200, f"full case IDs should pass: {resp.text}")
 
+def test_case_order_mismatch_400():
+    """上报用例顺序与工位配置顺序不符 → 400 case_order_mismatch。"""
+    sn = new_sn("CASEORD")
+    reversed_ids = list(reversed(ITEMS["CAL-PARAM"]))
+    resp = checkin("CAL-PARAM", sn, case_ids=reversed_ids)
+    check(resp.status_code == 400, f"case order mismatch must be 400, got {resp.status_code} {resp.text}")
+    body = resp.json()
+    check(body["code"] == "case_order_mismatch", f"code: {body}")
+    check(body["exit_code"] == 15, f"exit_code: {body}")
+    check(body["data"]["expected_case_ids"] == ITEMS["CAL-PARAM"], f"expected: {body}")
+    check(body["data"]["actual_case_ids"] == reversed_ids, f"actual: {body}")
+
+    # 整工程收集顺序（含其他工位用例）不应误报
+    all_ids = [c for cases in ITEMS.values() for c in cases]
+    resp = checkin("CAL-PARAM", sn, case_ids=all_ids)
+    check(resp.status_code == 200, f"project-wide collection order should pass: {resp.text}")
+
 def test_first_station_required():
     """未建档的机器不得从中间工位开局。"""
     sn = new_sn("MIDDLE")
@@ -2902,6 +2919,7 @@ TESTS = [
     test_wrong_process_blocked_400,
     test_firmware_mismatch_403,
     test_case_id_mismatch_400,
+    test_case_order_mismatch_400,
     test_first_station_required,
     test_model_mismatch,
     test_ack_and_idempotent_replay,

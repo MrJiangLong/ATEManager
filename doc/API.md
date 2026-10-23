@@ -290,7 +290,8 @@ NULL ─────────────→ IDLE ─────────
                                        // 直接开始测试，跳过心跳/断点/出站（零写入）
   "rules": [                           // 服务端下发的执行规则，按 station_items.sort_order
                                        // 排序；上位机必须按此顺序执行用例（服务端契约，
-                                       // 未配置序号的用例由服务端按添加/导入顺序编号）
+                                       // 未配置序号的用例由服务端按添加/导入顺序编号）。
+                                       // 进站上报的 case_ids 顺序不符 → case_order_mismatch
     {"case_id": "tests/test_cal_param.py::TestAmp::test_amp_cal",
      "item_name": "CHn幅度校准", "is_mandatory": true}
   ],
@@ -324,6 +325,7 @@ NULL ─────────────→ IDLE ─────────
 | 200 | — | 放行（可能含 `takeover=true`） | 开始测试 |
 | 400 | `station_not_in_process` | 该工位不属于此机型的流程 | 工艺配置错误，报障 |
 | 400 | `case_id_mismatch` | 待执行清单缺少必测用例ID | 脚本版本与服务端规则不符 |
+| 400 | `case_order_mismatch` | 用例执行顺序与工位配置（`sort_order`）不符 | 调整工程/用例定义顺序，使收集顺序与规则一致 |
 | 403 | `client_not_bound` | 机台未绑定工位 | 联系运维绑定 |
 | 403 | `model_not_registered` | 机型未注册 | 联系工艺工程师 |
 | 403 | `sn_is_test_device` | SN 已登记为试验设备，生产服（`SERVER_ROLE=production`）禁止进站 | 生产件走产线，试验设备送测试服 |
@@ -600,6 +602,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 401 | `invalid_credentials` | 10 | 全部 | 缺少或无效的 `X-API-Key` |
 | 400 | `station_not_in_process` | 10 | check-in / check-out | 工位不属于该机型流程 |
 | 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID |
+| 400 | `case_order_mismatch` | 15 | check-in | 上报用例相对顺序与工位配置 `sort_order` 不符 |
 | 400 | `station_ambiguous` | 10 | 管理端保存绑定 / check-in | 同一流程内命中多个绑定工位（配置层拒绝或拓扑漂移兜底） |
 | 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP） |
 | 400 | `session_mismatch` | 10 | check-in / checkpoint / artifact | 会话与 SN/机台不匹配 |
@@ -850,12 +853,12 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 | 场景 | 处理者 |
 |---|---|
 | 秒级抖动 | SDK `HttpClient` 指数退避重试，对调用方透明 |
-| 断网数分钟继续测 | `gate()` 内 `checkpoint` 失败自动进 `pending_items` 落盘，不抛异常 |
+| 断网数分钟继续测 | `gate()` 内 `checkpoint` 仅对断网/5xx 自动进 `pending_items` 落盘；会话已终止/锁失效/其他 4xx 立即抛出停机 |
 | 网络恢复后补传 | 下次 `gate` / `finish` 自动合并队列，服务端按 `case_id` 去重 |
 | 出站瞬间断网 | `finish()` 内置 6 次退避重试，复用同一 `checkout_id` |
-| 服务端已落库但响应丢失 | 同 `checkout_id` 重试 → 幂等回放既有回执，不会双账 |
-| 断网 + 进程崩溃 | 断点文件恢复会话（同一 SN 的 `STATE_DIR` 文件重新进站） |
-| 断网太久锁被回收/接管 | `on_lost_lock` 注入 `KeyboardInterrupt`，`gate`/`finish` 抛 `AteExit(3)` 停机 |
+| 服务端已落库但响应丢失 | 同 `checkout_id` 重试 → 幂等回放既有回执；重试仍失败则 `ack()` 凭 `checkout_id` 查回执，命中即闭环并清断点，不会双账 |
+| 断网 + 进程崩溃 | 断点文件恢复会话；服务端拒绝旧会话（`session_completed/session_not_found/session_mismatch`）时丢弃断点，按全新进站重试一次，不再永久卡死 |
+| 断网太久锁被回收/接管 | `on_lost_lock` 注入 `KeyboardInterrupt`，`gate`/`finish` 抛 `AteExit(3)` 停机；会话被终止/不属于本机台（`session_aborted/completed/not_found`、`station_mismatch`）同按死会话停机 |
 
 ---
 
@@ -1137,7 +1140,8 @@ def test_burn_sn(sn_burner):
 1. **进站时机**：普通工位在 `pytest_collection_modifyitems`；写 SN 工位在前置用例跑完、
    扫码取得 SN 后（`sn_burner`）。续测 skip 必须在任何用例 setup 之前打上。
 2. **身份时序**：收集钩子早于会话夹具，`*IDN?` 必须此时可读；否则改用延迟进站。
-3. **全量 collection**：`-k` / `--deselect` 部分运行会被 `case_id_mismatch` 拦截（防漏测）。
+3. **全量 collection**：`-k` / `--deselect` 部分运行会被 `case_id_mismatch` 拦截（防漏测）；
+   pytest 收集顺序即上报顺序，须与 `rules`（`sort_order`）一致，否则 `case_order_mismatch`。
 4. **`AteExit` → `pytest.exit`**：SDK 只返回"干净停机决策"，结束进程由宿主执行。
 
 `AteExit.returncode` 约定（仅 ATE 主动终止时）：

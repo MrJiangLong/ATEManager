@@ -99,6 +99,7 @@ GATE_CODES = (
     "station_not_in_process",
     "station_ambiguous",
     "case_id_mismatch",
+    "case_order_mismatch",
     "missing_mandatory",
     "model_mismatch",
     "model_not_registered",

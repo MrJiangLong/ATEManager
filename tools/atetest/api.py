@@ -104,13 +104,23 @@ MAX_PENDING_ITEMS = 500
 """ 需要立即停机（结果作废、必须重新进站）的错误码 """
 FATAL_LOCK_CODES = ("lock_invalid", "lock_expired")
 
+""" 会话已终止/不属于当前机台：继续上报没有意义，必须停机重新进站 """
+DEAD_SESSION_CODES = (
+    "session_aborted", "session_completed", "session_not_found",
+    "session_mismatch", "station_mismatch",
+)
+
+""" 续测时服务端明确拒绝旧会话：丢弃本地断点，按全新进站重试一次 """
+STALE_RESUME_CODES = ("session_completed", "session_not_found", "session_mismatch")
+
 """ 防呆拦截：重试无意义，必须人工介入 """
 GATE_CODES = (
     "missing_prereq", "station_already_passed", "station_not_in_process",
-    "station_ambiguous", "case_id_mismatch", "missing_mandatory",
+    "station_ambiguous", "case_id_mismatch", "case_order_mismatch", "missing_mandatory",
     "model_mismatch", "model_not_registered", "firmware_mismatch", "app_version_mismatch",
     "product_locked", "product_scrapped", "client_not_bound", "client_not_registered",
     "sn_is_test_device", "sn_not_registered_test_device",
+    "process_not_found", "product_not_found",
 )
 
 
@@ -148,6 +158,10 @@ class ApiError(Exception):
     @property
     def is_gate_blocked(self) -> bool:
         return self.code in GATE_CODES
+
+    @property
+    def is_session_dead(self) -> bool:
+        return self.code in DEAD_SESSION_CODES
 
     @property
     def is_retryable(self) -> bool:
@@ -449,7 +463,8 @@ class AteClient:
                  case_ids: Optional[Sequence[str]] = None, resume: bool = True) -> SessionState:
         """进站：建档 + 防跳站/防复测/固件/用例ID 卡控 + 领取工位锁。
 
-        断点文件存在且 SN 一致时自动携带 resume_session_id（attempt+1，跳过已完成）。
+        断点文件存在且 SN 一致时自动携带 resume_session_id（attempt+1，跳过已完成）；
+        服务端拒绝旧会话（已出站/不存在/工位不符）时丢弃断点，按全新进站重试一次。
         """
         state_path = self._state_path_for(sn)
         """ 重复进站前先回收旧心跳线程，否则两个线程会同时给同一 state 打心跳 """
@@ -467,7 +482,20 @@ class AteClient:
         if previous is not None and previous.sn == sn and previous.session_id:
             payload["resume_session_id"] = previous.session_id
 
-        data = self.http.data("POST", "/api/v1/client/check-in", body=payload)
+        try:
+            data = self.http.data("POST", "/api/v1/client/check-in", body=payload)
+        except ApiError as exc:
+            if "resume_session_id" not in payload or exc.code not in STALE_RESUME_CODES:
+                raise
+            """ 旧会话已出站/不存在/工位不符：断点不可续测。丢弃后按全新进站
+            （否则每次启动都撞同一个 409，SN 永久卡死） """
+            LOGGER.warning("续测会话已失效（%s），丢弃本地断点重新进站", exc.code)
+            if state_path is not None:
+                try:
+                    state_path.unlink()
+                except OSError:
+                    pass
+            return self.check_in(sn, product_model, firmware, case_ids=case_ids, resume=False)
         resume_info = data.get("resume") or {}
 
         self.state = SessionState(
@@ -484,11 +512,12 @@ class AteClient:
             cursor=dict(resume_info.get("cursor") or {}),
             pending_items=list(previous.pending_items) if previous and previous.sn == sn else [],
         )
-        self._persist()
-
         if self.state.passthrough:
+            """ 直通会话无 session_id 可续测，断点文件反而会让下轮误带 resume """
+            self._clear_persisted()
             LOGGER.info("直通机型 %s：进站 ACK 零写入，跳过心跳/断点/出站", product_model)
             return self.state
+        self._persist()
 
         if data.get("takeover"):
             LOGGER.warning("本次进站接管了 %s 持有的锁", data.get("takeover_from"))
@@ -509,8 +538,8 @@ class AteClient:
     def checkpoint(self, items: Sequence[dict]) -> int:
         """增量上报已完成用例（按 case_id 幂等覆盖），返回服务端合并后的总数。
 
-        网络失败不抛异常：items 进入本地待补传队列落盘，下次上报或出站时自动补发。
-        锁失效（lock_invalid）必须抛出——结果作废，宿主应据此停机。
+        网络/5xx 失败不抛异常：items 进入本地待补传队列落盘，下次上报或出站时自动补发。
+        锁失效、会话已终止及其他不可重试错误必须抛出——继续测的结果不会被服务端接受。
         """
         if not self.state or not items:
             return 0
@@ -527,7 +556,7 @@ class AteClient:
                       "items": buffered, "cursor": self.state.cursor},
             )
         except ApiError as exc:
-            if exc.is_lock_invalid:
+            if not exc.is_retryable or exc.is_lock_invalid or exc.is_session_dead:
                 raise
             """ 断网/5xx：本地缓存，不阻断测试 """
             self.state.pending_items = buffered
@@ -627,9 +656,12 @@ class AteClient:
         try:
             self.http.request("GET", "/api/v1/client/ack",
                               params={"sn": target_sn, "checkout_id": target_id})
-            return True
         except ApiError:
             return False
+        """ 回执确认已落库：会话终结，断点不可再续测，清掉避免下轮误带 resume """
+        if self.state and target_sn == self.state.sn and target_id == self.state.checkout_id:
+            self._clear_persisted()
+        return True
 
     def stop_heartbeat(self) -> None:
         if self._hb is not None:
@@ -736,6 +768,7 @@ class AteRun:
         self.sn = ""
         self.mandatory: set = set()
         self.t0 = 0.0
+        self.passthrough = False
 
     """ ---- 进站 ---- """
 
@@ -790,8 +823,8 @@ class AteRun:
         self.mandatory = set(state.mandatory_case_ids)
         self.t0 = time.monotonic()
         # 受控直通：进站 ACK 零写入（无会话/无锁），全部用例照跑但不做断点与出站
-        if state.passthrough:
-            self.passthrough = True
+        self.passthrough = bool(state.passthrough)
+        if self.passthrough:
             return set()  # 空 done：无续测跳过
 
         """ 续测跳过：只跳过"上次已 PASS"的；FAIL 的（重跑清单里）本轮重跑，
@@ -805,7 +838,7 @@ class AteRun:
         """由 pytest_runtest_makereport 钩子调用（放在钩子末尾之前均可，内部自行过滤）。"""
         if self.client is None:
             return
-        if getattr(self, "passthrough", False):
+        if self.passthrough:
             return
 
         """ setup/teardown 失败也必须收集为 FAIL：异常用例若"凭空消失"，
@@ -836,13 +869,13 @@ class AteRun:
         """
         if self.client is None:
             return None
-        if getattr(self, "passthrough", False):
+        if self.passthrough:
             return None
         try:
             return self.client.upload_artifact(case_id, path, filename=filename, content=content)
         except ApiError as exc:
-            if exc.is_lock_invalid:
-                raise AteExit("ATE 锁已失效：会话被运维中止", returncode=3)
+            if exc.is_lock_invalid or exc.is_session_dead:
+                raise AteExit(f"ATE 会话已终止（{exc.code}），必须重新进站", returncode=3)
             LOGGER.warning("产物上传失败（%s），跳过（不影响测试判定）", exc.code)
             return None
 
@@ -850,7 +883,7 @@ class AteRun:
         """每用例收尾：checkpoint + 失锁自检。"""
         if self.client is None:
             return
-        if getattr(self, "passthrough", False):
+        if self.passthrough:
             return
         if self.rows:
             try:
@@ -859,8 +892,8 @@ class AteRun:
                 都会带原始异常栈报 ERROR """
                 self.client.checkpoint(_items_from(self.rows))
             except ApiError as exc:
-                if exc.is_lock_invalid:
-                    raise AteExit("ATE 锁已失效：会话被运维中止", returncode=3)
+                if exc.is_lock_invalid or exc.is_session_dead:
+                    raise AteExit(f"ATE 会话已终止（{exc.code}），必须重新进站", returncode=3)
                 raise
             self.rows.clear()
         if self.client.lost_lock:
@@ -872,7 +905,7 @@ class AteRun:
         """收尾判定：必测有 FAIL → 不出站，写重跑清单退出；全绿 → 出站（幂等重试）。"""
         if self.client is None:
             return
-        if getattr(self, "passthrough", False):
+        if self.passthrough:
             self._retry_path().unlink(missing_ok=True)
             return  # 直通：零写入，无出站
         failed_now = {nid for nid, res in self.results.items() if res != "passed"}
@@ -893,16 +926,25 @@ class AteRun:
                 if not ack.get("acknowledged"):
                     raise AteExit("ATE 未拿到落库回执，禁止流转", returncode=1)
                 return
+            except AteExit:
+                raise
             except ApiError as exc:
                 if exc.is_gate_blocked:
                     raise AteExit(f"ATE 出站被防呆拦截: {exc}", returncode=1)
+                """ 响应丢失但服务端已落库：凭同一 checkout_id 查回执，命中即闭环 """
+                if self.client.ack():
+                    return
                 if self.client.lost_lock or exc.is_lock_invalid:
                     raise AteExit("ATE 会话已被运维中止，停止测试", returncode=3)
                 time.sleep(min(2 ** attempt, 30))
             except Exception:
+                if self.client.ack():
+                    return
                 if self.client.lost_lock:
                     raise AteExit("ATE 会话已被运维中止，停止测试", returncode=3)
                 time.sleep(min(2 ** attempt, 30))
+        if self.client.ack():
+            return
         raise AteExit("ATE 出站重试后仍未成功，请检查网络或联系运维", returncode=4)
 
     """ ---- 重跑清单（与 SDK 断点文件同目录，conftest 无需关心） ---- """
