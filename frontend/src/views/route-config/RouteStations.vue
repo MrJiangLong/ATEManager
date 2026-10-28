@@ -67,6 +67,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { stationApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
@@ -151,6 +152,8 @@ async function onDelete(row) {
     ElMessage.error(e.message)
   }
 }
+
+useTabRefresh('stations', loadStations)
 
 onMounted(() => loadStations())
 </script>

@@ -14,7 +14,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { provide, ref } from 'vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import RouteProcesses from './route-config/RouteProcesses.vue'
 import RouteModels from './route-config/RouteModels.vue'
@@ -24,6 +24,8 @@ import RouteItems from './route-config/RouteItems.vue'
 import RouteSnRegistry from './route-config/RouteSnRegistry.vue'
 
 const activeTab = ref('processes')
+/** 下发当前 Tab 给各子页，供 useTabRefresh 在切回时刷新数据（组件常驻不重挂） */
+provide('configTab', activeTab)
 </script>
 
 <style scoped>

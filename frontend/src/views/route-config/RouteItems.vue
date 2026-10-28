@@ -60,9 +60,13 @@
             <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
             <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
-          <span v-else-if="canManage" class="muted" style="font-size: 12px">
-            {{ t('configs.itemsLockedHint') }}
-          </span>
+          <el-tooltip v-else-if="canManage" :content="t('configs.itemsLockedHint')" placement="top">
+            <span>
+              <el-icon :size="16" style="color: var(--el-text-color-secondary)">
+                <Lock />
+              </el-icon>
+            </span>
+          </el-tooltip>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -129,9 +133,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Lock, Plus, RefreshRight } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 import CaseIdText from '../../components/CaseIdText.vue'
@@ -275,6 +280,8 @@ watch([processId, stationFilter], () => {
   page.value = 1
   loadItems()
 })
+
+useTabRefresh('items', loadItems)
 
 onMounted(async () => {
   await loadProcesses()

@@ -162,6 +162,7 @@ import { reportApi } from '../../api'
 import { useAuth } from '../../stores/auth'
 import { usePolling } from '../../composables/usePolling'
 import { fmtDateTime } from '../../utils/format'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 
 const { t } = useI18n()
 const { role } = useAuth()
@@ -284,6 +285,8 @@ usePolling(() => {
   lastPollAt = now
   load(true)
 }, 8000)
+
+useTabRefresh('jobs', () => load(true))
 
 onMounted(async () => {
   try {

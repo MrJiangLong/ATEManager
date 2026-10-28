@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, provide, ref } from 'vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import ReportCandidatesPanel from './reports/ReportCandidatesPanel.vue'
 import ReportJobsPanel from './reports/ReportJobsPanel.vue'
@@ -10,6 +10,8 @@ const { role } = useAuth()
 // 报告规则为 admin 专属（脚本上传=服务器受信代码维护）；后端接口同样以 require_admin 收口
 const canManage = computed(() => ['manager', 'admin'].includes(role.value))
 const activeTab = ref('generate')
+/** 下发当前 Tab 给三个面板，供 useTabRefresh 在切回时刷新数据（与工艺配置页同一机制） */
+provide('configTab', activeTab)
 </script>
 
 <template>

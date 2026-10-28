@@ -96,6 +96,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Plus, RefreshRight, Upload } from '@element-plus/icons-vue'
 import { snRegistryApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useLocalPagination } from '../../composables/usePagination'
 import { fmtDateTime } from '../../utils/format'
 
@@ -220,6 +221,8 @@ async function onDelete(row) {
     ElMessage.error(e.message)
   }
 }
+
+useTabRefresh('snRegistry', loadRegistry)
 
 onMounted(loadRegistry)
 </script>

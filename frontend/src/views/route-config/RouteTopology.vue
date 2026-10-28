@@ -188,7 +188,9 @@
               {{ t('configs.baselineDiffAdded') }}（{{ lockDiff.added.length }}）
             </el-tag>
             <div class="bl-diff-list">
-              <span v-for="c in lockDiff.added" :key="c" class="code bl-diff-item">{{ c }}</span>
+              <el-tooltip v-for="c in lockDiff.added" :key="c" :content="c" placement="top">
+                <CaseIdText :value="c" class="bl-diff-item" />
+              </el-tooltip>
             </div>
           </div>
           <div v-if="lockDiff.removed.length" class="bl-diff-row">
@@ -196,7 +198,9 @@
               {{ t('configs.baselineDiffRemoved') }}（{{ lockDiff.removed.length }}）
             </el-tag>
             <div class="bl-diff-list">
-              <span v-for="c in lockDiff.removed" :key="c" class="code bl-diff-item bl-diff-del">{{ c }}</span>
+              <el-tooltip v-for="c in lockDiff.removed" :key="c" :content="c" placement="top">
+                <CaseIdText :value="c" class="bl-diff-item bl-diff-del" />
+              </el-tooltip>
             </div>
           </div>
         </template>
@@ -206,7 +210,9 @@
       <div v-if="nameTargets.length" class="bl-sec">
         <div class="bl-sec-title">{{ t('configs.baselineNamesTitle') }}</div>
         <div v-for="row in nameTargets" :key="row.case_id" class="bl-name-row">
-          <span class="code bl-name-code">{{ row.case_id }}</span>
+          <el-tooltip :content="row.case_id" placement="top">
+            <CaseIdText :value="row.case_id" class="bl-name-code" />
+          </el-tooltip>
           <el-input
             v-model="nameEdits[row.case_id]"
             size="small"
@@ -245,7 +251,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Lock, Plus, Unlock } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import CaseIdText from '../../components/CaseIdText.vue'
 import { fmtDateTime } from '../../utils/format'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
@@ -508,6 +516,8 @@ async function onValidate() {
 
 watch(processId, () => loadSteps())
 
+useTabRefresh('topology', loadSteps)
+
 onMounted(async () => {
   await loadProcesses()
   if (!processId.value && processes.value.length) processId.value = processes.value[0].process_id
@@ -549,7 +559,8 @@ onMounted(async () => {
 .bl-diff-item {
   font-size: 12px;
   line-height: 1.6;
-  word-break: break-all;
+  min-width: 0;
+  max-width: 100%;
 }
 .bl-name-row {
   display: flex;
@@ -562,7 +573,6 @@ onMounted(async () => {
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
-  word-break: break-all;
 }
 .bl-diff-del {
   text-decoration: line-through;

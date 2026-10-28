@@ -142,6 +142,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { modelApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
 
@@ -290,6 +291,8 @@ watch(processFilter, () => {
   page.value = 1
   loadModels()
 })
+useTabRefresh('models', loadModels)
+
 onMounted(async () => {
   await loadProcesses()
   await loadModels()

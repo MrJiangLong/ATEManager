@@ -218,6 +218,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { ruleApi, standardsApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import { fmtDateTime } from '../../utils/format'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 
 const { t } = useI18n()
 
@@ -455,6 +456,8 @@ async function onStdDelete(row) {
     ElMessage.error(e.message)
   }
 }
+
+useTabRefresh('rules', () => { load(); loadStandards() })
 
 onMounted(() => {
   load()

@@ -228,6 +228,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Document, Download, Plus, Upload } from '@element-plus/icons-vue'
 import { processApi, routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { useTabRefresh } from '../../composables/useTabRefresh'
 import ProcessDetailDrawer from '../../components/ProcessDetailDrawer.vue'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
@@ -445,6 +446,8 @@ async function submitClone() {
     cloneSaving.value = false
   }
 }
+
+useTabRefresh('processes', loadProcesses)
 
 onMounted(() => loadProcesses())
 </script>
