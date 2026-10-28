@@ -98,7 +98,7 @@ Content-Type: application/json
 >   仅供开发调试，**产线禁止**。
 > - 上位机与 Web 端的**四角色权限体系无关**：通道一只认 API Key，不存在角色概念。
 >   Web 端用户管理（viewer/operator/manager/admin）仅约束管理端接口；
->   `manager` = 业务/配置管理（工艺、测试登记、报告规则与标准器），不含用户管理。
+>   `manager` = 业务/配置管理（工艺、SN 登记、报告规则与标准器），不含用户管理。
 
 ### 2.2 注册机台并绑定工位
 
@@ -111,6 +111,7 @@ POST /api/admin/clients
 ```
 
 `bound_stations` 为绑定集合（一机可绑多个工位，但同一流程内只能绑定一个，否则保存即 `400 station_ambiguous`）。
+同一流程内的多个工位请分别登记为独立机台档案，档案编号按「电脑名-工位」命名并由上位机工程赋给 `CLIENT_ID`，不要共用一个跨工位档案。
 也可用 `POST /api/v1/client/resolve` 自动注册（此时绑定为空，仍需 Web 端补录绑定）。
 
 ### 2.3 确认识别用例清单
@@ -329,7 +330,7 @@ NULL ─────────────→ IDLE ─────────
 | 403 | `client_not_bound` | 机台未绑定工位 | 联系运维绑定 |
 | 403 | `model_not_registered` | 机型未注册 | 联系工艺工程师 |
 | 403 | `sn_is_test_device` | SN 已登记为试验设备，生产服（`SERVER_ROLE=production`）禁止进站 | 生产件走产线，试验设备送测试服 |
-| 403 | `sn_not_registered_test_device` | SN 未登记，研发服（`SERVER_ROLE=development`）白名单拒收 | 联系管理员在「测试登记」登记后重试 |
+| 403 | `sn_not_registered_test_device` | SN 未登记，研发服（`SERVER_ROLE=development`）白名单拒收 | 联系管理员在「SN 登记」登记后重试 |
 | 403 | `missing_prereq` | **跳站拦截**：前置工位未完成 | 弹告警、pytest 终止、治具不开电 |
 | 403 | `model_mismatch` | SN 已登记为其他机型 | 贴错机型/换线未清线 |
 | 403 | `firmware_mismatch` | 固件不满足基线（口径见机型 `fw_match_rule`） | 提示刷写基线固件 |
@@ -602,13 +603,17 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 401 | `invalid_credentials` | 10 | 全部 | 缺少或无效的 `X-API-Key` |
 | 400 | `station_not_in_process` | 10 | check-in / check-out | 工位不属于该机型流程 |
 | 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID |
-| 400 | `case_order_mismatch` | 15 | check-in | 上报用例相对顺序与工位配置 `sort_order` 不符 |
+| 400 | `case_order_mismatch` | 15 | check-in | 未锁定工位：上报用例相对顺序与工位配置 `sort_order` 不符；**锁定工位**：上报用例全列表与受控基线不一致（含顺序/增删，`data` 携带 `missing`/`extra`/`first_diff_index` 分诊），需工艺员在 Web 解锁重录 |
 | 400 | `station_ambiguous` | 10 | 管理端保存绑定 / check-in | 同一流程内命中多个绑定工位（配置层拒绝或拓扑漂移兜底） |
 | 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP） |
 | 400 | `session_mismatch` | 10 | check-in / checkpoint / artifact | 会话与 SN/机台不匹配 |
 | 400 | `station_mismatch` | 10 | checkpoint | 会话属于其他工位 |
 | 400 | `artifact_empty` | 10 | artifact | 产物文件内容为空 |
 | 400 | `artifact_too_large` | 10 | artifact | 产物文件超过 `ARTIFACT_MAX_BYTES` 上限 |
+| 409 | `baseline_locked` | 10 | 管理端 items 增删改/导入 | 工位基线已锁定：用例清单由基线固化，需先解锁再编辑 |
+| 409 | `baseline_already_locked` | 10 | 管理端 baseline/lock | 工位基线已处于锁定态 |
+| 409 | `baseline_not_locked` | 10 | 管理端 baseline/unlock | 工位基线未锁定，无需解锁 |
+| 400 | `baseline_empty` | 10 | 管理端 baseline/lock | 尚未捕获到用例序列草稿（该工位无进站记录），无法锁定 |
 | 403 | `client_not_bound` | 10 | 全部 | 机台未绑定工位 |
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
 | 403 | `sn_is_test_device` | 10 | check-in | 生产服黑名单：登记的试验设备禁止进生产流程（建档前拦截，零痕迹） |
@@ -888,7 +893,7 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 | `GET /api/admin/records/{record_id}/files/{index}` | 测试产物下载（结果文件/日志等；返回 MinIO 预签名 URL JSON；MinIO 未配置时 503） |
 | `GET /api/admin/sn-registry` | 试验设备登记清单（按登记时间倒序） |
 | `POST /api/admin/sn-registry` | 登记试验设备（body: `{"sn", "note"?}`；重复登记 409 `sn_already_registered`；`registered_by` 记操作人） |
-| `DELETE /api/admin/sn-registry/{sn}` | 注销测试登记：仅删除登记行、恢复进站资格，**不触碰任何生产/测试记录**。"是否曾运行研发代码"只有实验室知道，重流线由工艺员显式走维修处置 RESET（清印章/作废报告/履历留痕）；被动过的设备回产线会被固件基线 403 与用例判定自动拦下，无静默出货路径 |
+| `DELETE /api/admin/sn-registry/{sn}` | 注销SN 登记：仅删除登记行、恢复进站资格，**不触碰任何生产/测试记录**。"是否曾运行研发代码"只有实验室知道，重流线由工艺员显式走维修处置 RESET（清印章/作废报告/履历留痕）；被动过的设备回产线会被固件基线 403 与用例判定自动拦下，无静默出货路径 |
 
 ---
 
@@ -924,7 +929,7 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 - **机型双态（passthrough）**：直通机型进站直接 ACK 零写入（响应 `passthrough=true`，`station_id`/`rules`/`session_id` 为空），SDK 跳过心跳/断点/出站；身份卡控不豁免。
 - **模式切换**：关直通需拓扑齐备（409 `model_topology_missing`）+ 清线确认位 `confirm_drain=true`（409 `drain_confirm_required`）；开直通需无在制（409 `model_has_wip`）。
 - **注销义务链**：注销仅解除登记，不触碰任何记录；若设备曾运行研发测试代码，重新入库前由工艺员走维修处置 RESET 重新流线（被动过的设备回产线会被固件基线 403 与用例判定自动拦下）。
-- **上位机路由判定（V1 只读查询）**：`GET /api/v1/client/sn-registry/status?sn=XXX`（X-API-Key）→ `data.registered`（true = 试验设备，应走研发服；false = 产线件，走生产服）。只返回布尔值，不暴露登记清单与备注；两端的进站守卫（黑名单/白名单）仍是最终卡控，误路由只会得到 403。登记动作仍在管理端「测试登记」（require_manager），本端点不提供任何设置能力。
+- **上位机路由判定（V1 只读查询）**：`GET /api/v1/client/sn-registry/status?sn=XXX`（X-API-Key）→ `data.registered`（true = 试验设备，应走研发服；false = 产线件，走生产服）。只返回布尔值，不暴露登记清单与备注；两端的进站守卫（黑名单/白名单）仍是最终卡控，误路由只会得到 403。登记动作仍在管理端「SN 登记」（require_manager），本端点不提供任何设置能力。
 
 ---
 
@@ -1142,6 +1147,8 @@ def test_burn_sn(sn_burner):
 2. **身份时序**：收集钩子早于会话夹具，`*IDN?` 必须此时可读；否则改用延迟进站。
 3. **全量 collection**：`-k` / `--deselect` 部分运行会被 `case_id_mismatch` 拦截（防漏测）；
    pytest 收集顺序即上报顺序，须与 `rules`（`sort_order`）一致，否则 `case_order_mismatch`。
+   工位基线锁定后升级为全列表严格比对（含顺序与增删），与受控基线的任何差异均阻断，
+   `data` 携带缺失/多余/首个差异下标；解锁重录走管理端基线端点（延迟进站模式配合 `sn_burner`）。
 4. **`AteExit` → `pytest.exit`**：SDK 只返回"干净停机决策"，结束进程由宿主执行。
 
 `AteExit.returncode` 约定（仅 ATE 主动终止时）：

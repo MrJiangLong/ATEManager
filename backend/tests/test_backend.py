@@ -238,7 +238,7 @@ def test_topology_and_items():
         ]
         resp = admin("PUT", "/api/admin/routing/stations", payload, params={"process_id": pid})
         check(resp.status_code == 200, f"save topology {pid}: {resp.text}")
-        check(len(resp.json()) == len(topology), f"topology size {pid}: {resp.text}")
+        check(len(resp.json()["steps"]) == len(topology), f"topology size {pid}: {resp.text}")
 
         for sid, case_ids in ITEMS.items():
             if pid == P_DPO and sid in ("CAL-AWG", "TST-AWG"):
@@ -1967,7 +1967,7 @@ def test_optional_station_sampling():
     ]
     resp = put_topology(good)
     check(resp.status_code == 200, f"save opt topology: {resp.text}")
-    optional_flags = {s["station_id"]: s["is_optional"] for s in resp.json()}
+    optional_flags = {s["station_id"]: s["is_optional"] for s in resp.json()["steps"]}
     check(
         optional_flags == {"CAL-PARAM": False, "QA-CHECK": True, "CAL-XRAY": False},
         f"roundtrip flags: {resp.text}",
@@ -2088,6 +2088,108 @@ def test_sn_registry_import_export():
     resp = admin("POST", "/api/admin/sn-registry/import", {"items": []})
     check(resp.status_code == 400 and resp.json()["code"] == "items_required",
           f"empty import: {resp.status_code} {resp.text}")
+
+def test_station_baseline_lock():
+    """工位基线（黄金样本快照锁）：捕获草稿 → 运行中 409 → 锁定物化 → 锁定态严格比对 → 解锁恢复。"""
+    pid = f"PROC-TEST-BASE-{STAMP}"
+    mid = "DPO4054B-BASE"
+    st = "ST-BASE-01"
+    sn1 = f"SIMRS-BASE-A-{STAMP}"
+    sn2 = f"SIMRS-BASE-B-{STAMP}"
+    cases = [
+        "tests/test_base.py::test_write",
+        "tests/test_base.py::test_readback",
+        "tests/test_base.py::test_func",
+    ]
+
+    # ① 工位字典 + 流程 + 机型 + 单工位拓扑 + 机台
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "基线工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "基线流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"topology: {resp.text}")
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-BASE", "bound_stations": [st]})
+
+    def base_checkin(sn, case_ids=None):
+        return v1("check-in", {
+            "client_id": "SMOKE-BASE",
+            "sn": sn,
+            "product_model": mid,
+            "firmware": FW,
+            **({"case_ids": case_ids} if case_ids is not None else {}),
+        })
+
+    def base_checkout(sn, case_ids):
+        return v1("check-out", {
+            "client_id": "SMOKE-BASE",
+            "sn": sn,
+            "checkout_id": uuid.uuid4().hex,
+            "items": items_for(case_ids),
+            "duration_ms": 60000,
+        })
+
+    def steps_view():
+        return admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+
+    # ② 未锁定进站：捕获草稿（station_items 仍为空）
+    resp = base_checkin(sn1, cases)
+    check(resp.status_code == 200, f"checkin: {resp.text}")
+    step = next(s for s in steps_view() if s["station_id"] == st)
+    check(step["baseline_locked"] is False and step["baseline_manifest"] == cases,
+          f"capture draft: {json.dumps(step, ensure_ascii=False)}")
+
+    # ③ 运行中会话：锁定 409
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st})
+    check(resp.status_code == 409 and resp.json()["code"] == "running_session_block",
+          f"lock with running session: {resp.text}")
+
+    # ④ 出站盖章
+    resp = base_checkout(sn1, cases)
+    check(resp.status_code == 201, f"checkout: {resp.text}")
+
+    # ⑤ 锁定：草稿物化为 station_items（全部必测、序号 10/20/30），并随锁定补录名称
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "names": {cases[0]: "写号校验", cases[2]: "功能测试"}})
+    check(resp.status_code == 200 and resp.json()["locked"] is True, f"lock: {resp.text}")
+    check(resp.json()["items_count"] == len(cases), f"lock items: {resp.text}")
+    resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid, "station_id": st})
+    items = sorted(resp.json(), key=lambda r: r["sort_order"])
+    check([i["case_id"] for i in items] == cases and all(i["is_mandatory"] for i in items)
+          and [i["sort_order"] for i in items] == [10, 20, 30], f"materialized: {resp.text}")
+    check(items[0]["item_name"] == "写号校验" and items[2]["item_name"] == "功能测试",
+          f"materialized names: {resp.text}")
+    step = next(s for s in steps_view() if s["station_id"] == st)
+    check(step["baseline_locked"] is True, "locked flag")
+
+    # ⑥ 锁定态：清单手工编辑 409
+    resp = admin("POST", "/api/admin/routing/items",
+                 {"process_id": pid, "station_id": st, "case_id": "tests/x.py::test_new"})
+    check(resp.status_code == 409 and resp.json()["code"] == "baseline_locked",
+          f"items edit guard: {resp.text}")
+
+    # ⑦ 锁定态严格比对：一致放行；缺项 400（data.missing）；改序 400（first_diff_index）
+    resp = base_checkin(sn2, cases)
+    check(resp.status_code == 200, f"locked same list: {resp.text}")
+    resp = base_checkin(f"SIMRS-BASE-C-{STAMP}", cases[:2])
+    check(resp.status_code == 400 and resp.json()["code"] == "case_order_mismatch"
+          and len(resp.json()["data"]["missing"]) == 1 and resp.json()["data"]["extra"] == [],
+          f"missing case: {resp.text}")
+    resp = base_checkin(f"SIMRS-BASE-D-{STAMP}", [cases[0], cases[2], cases[1]])
+    check(resp.status_code == 400 and resp.json()["code"] == "case_order_mismatch"
+          and resp.json()["data"]["first_diff_index"] == 1, f"reorder: {resp.text}")
+
+    # ⑧ 解锁：回到录制态，清单恢复可编辑
+    resp = admin("POST", "/api/admin/routing/baseline/unlock",
+                 {"process_id": pid, "station_id": st})
+    check(resp.status_code == 200 and resp.json()["locked"] is False, f"unlock: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/items",
+                 {"process_id": pid, "station_id": st, "case_id": "tests/x.py::test_new"})
+    check(resp.status_code == 201, f"editable after unlock: {resp.text}")
+
 
 def test_sn_registry_status_api():
     """V1 只读登记状态查询：登记 true / 未登记 false / 无 SN 参数 422，供上位机路由判定。"""
@@ -2900,6 +3002,7 @@ def test_p0_template_upload_without_minio():
     check(resp.status_code == 204, f"cleanup rule: {resp.status_code} {resp.text}")
 
 TESTS = [
+    test_station_baseline_lock,
     test_sn_registry_status_api,
     test_sn_registry_import_export,
     test_health,

@@ -411,7 +411,7 @@ def check_in(
         if not is_registered:
             raise forbidden(
                 "sn_not_registered_test_device",
-                f"序列号 {sn} 未在测试登记中登记（本服务器为研发白名单模式），禁止进站测试",
+                f"序列号 {sn} 未在 SN 登记中登记（本服务器为研发白名单模式），禁止进站测试",
                 data={"sn": sn},
             )
     else:
@@ -552,30 +552,65 @@ def check_in(
             data={"missing": missing},
         )
 
-    # 9) 用例ID 防漏测前置校验
-    if case_ids is not None and settings.ENFORCE_CASE_IDS:
-        covered = set(case_ids)
-        absent = [c for c in mandatory_case_ids(graph, station_id) if c not in covered]
-        if absent:
-            raise bad_request(
-                "case_id_mismatch",
-                f"用例清单不符：工位 {_station_label(graph, station_id)} 的必测用例未全部收集：{'.、'.join(absent)}",
-                exit_code=EXIT_CASE_ID_MISMATCH,
-                data={"missing_case_ids": absent},
+    # 9) 用例序列校验：锁定工位 = 黄金样本全列表严格比对（含顺序、含查多，
+    #    替代必测覆盖与相对顺序两项检查——等式已蕴含覆盖性）；未锁定工位 =
+    #    现有必测覆盖 + 相对顺序校验（存量行为零变化），并在守卫通过后捕获草稿
+    ps_row = db.get(models.ProcessStation, (model_row.process_id, station_id))
+    baseline_locked = bool(ps_row and ps_row.baseline_locked)
+
+    if baseline_locked:
+        """ 黄金样本：进站上报的有序用例全集必须与受控基线逐项一致。
+        case_ids 未上报视为全部缺失（锁定工位强制客户端自证清单）；
+        独立于 ENFORCE_CASE_IDS——锁定是工艺员的显式承诺，不随全局开关失效。 """
+        incoming = [c.strip() for c in (case_ids or []) if c and c.strip()]
+        manifest = list(ps_row.baseline_manifest or [])
+        if incoming != manifest:
+            missing = [c for c in manifest if c not in incoming]
+            extra = [c for c in incoming if c not in manifest]
+            first_diff = next(
+                (i for i, (a, b) in enumerate(zip(incoming, manifest)) if a != b),
+                min(len(incoming), len(manifest)),
             )
-        """ 执行顺序契约：rules 按 sort_order 下发，上位机须按此顺序执行。
-        case_ids 通常是整个工程的收集顺序，先滤出本工位用例再比相对顺序 """
-        configured = [i.case_id for i in graph.items_of.get(station_id, [])]
-        submitted = [c for c in case_ids if c in configured]
-        expected = [c for c in configured if c in covered]
-        if submitted != expected:
+            detail = f"缺失 {len(missing)} 项、多余 {len(extra)} 项"
+            if not missing and not extra:
+                detail = f"自第 {first_diff + 1} 项起顺序不同"
             raise bad_request(
                 "case_order_mismatch",
-                f"用例执行顺序不符：工位 {_station_label(graph, station_id)} 期望 "
-                f"{' → '.join(expected)}，实际 {' → '.join(submitted)}",
+                f"用例序列与受控基线不一致：工位 {_station_label(graph, station_id)} "
+                f"{detail}（基线共 {len(manifest)} 项），请先在管理端审阅并解锁重录",
                 exit_code=EXIT_CASE_ID_MISMATCH,
-                data={"expected_case_ids": expected, "actual_case_ids": submitted},
+                data={"missing": missing, "extra": extra, "first_diff_index": first_diff},
             )
+    else:
+        if case_ids is not None and settings.ENFORCE_CASE_IDS:
+            covered = set(case_ids)
+            absent = [c for c in mandatory_case_ids(graph, station_id) if c not in covered]
+            if absent:
+                raise bad_request(
+                    "case_id_mismatch",
+                    f"用例清单不符：工位 {_station_label(graph, station_id)} 的必测用例未全部收集：{'.、'.join(absent)}",
+                    exit_code=EXIT_CASE_ID_MISMATCH,
+                    data={"missing_case_ids": absent},
+                )
+            """ 执行顺序契约：rules 按 sort_order 下发，上位机须按此顺序执行。
+            case_ids 通常是整个工程的收集顺序，先滤出本工位用例再比相对顺序 """
+            configured = [i.case_id for i in graph.items_of.get(station_id, [])]
+            submitted = [c for c in case_ids if c in configured]
+            expected = [c for c in configured if c in covered]
+            if submitted != expected:
+                raise bad_request(
+                    "case_order_mismatch",
+                    f"用例执行顺序不符：工位 {_station_label(graph, station_id)} 期望 "
+                    f"{' → '.join(expected)}，实际 {' → '.join(submitted)}",
+                    exit_code=EXIT_CASE_ID_MISMATCH,
+                    data={"expected_case_ids": expected, "actual_case_ids": submitted},
+                )
+        # 录制态捕获：全部守卫通过后覆盖基线草稿（内容变化才写库，避免每次进站徒增写放大）
+        if ps_row is not None and case_ids is not None:
+            normalized = [c.strip() for c in case_ids if c and c.strip()]
+            if ps_row.baseline_manifest != normalized:
+                ps_row.baseline_manifest = normalized
+                ps_row.baseline_captured_at = utcnow()
 
     # 记下"判定时"观察到的锁状态，供最终加锁做 CAS 校验（见步骤 12）
     observed_status = product.current_status

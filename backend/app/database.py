@@ -74,6 +74,10 @@ _ADDED_COLUMNS = {
         "is_optional": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
         # 依赖重测触发标记：存量行回填 false = 级联不触发，与旧版语义完全一致
         "invalidates_downstream": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
+        # 黄金样本基线：锁定态进站全列表严格比对；存量行回填 false = 不启用基线比对
+        "baseline_locked": "BOOLEAN DEFAULT 0" if IS_SQLITE else "BOOLEAN DEFAULT false",
+        "baseline_manifest": "JSON",
+        "baseline_captured_at": "TIMESTAMP" if IS_SQLITE else "TIMESTAMPTZ",
     },
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",

@@ -67,11 +67,65 @@
           <el-switch v-model="row.invalidates_downstream" size="small" />
         </template>
       </el-table-column>
+      <el-table-column :label="t('configs.baselineCol')" width="130" align="center">
+        <template #header>
+          <span :title="t('configs.baselineColTip')">{{ t('configs.baselineCol') }}</span>
+        </template>
+        <template #default="{ row }">
+          <el-tag v-if="row.baseline_locked" type="success" size="small" :title="baselineLockedTitle(row)">
+            {{ t('configs.baselineLocked') }}
+          </el-tag>
+          <el-tag
+            v-else-if="(row.baseline_manifest || []).length"
+            :type="baselineDrifted(row) ? 'warning' : 'primary'"
+            :effect="baselineDrifted(row) ? 'light' : 'plain'"
+            :title="baselineDrifted(row) ? t('configs.baselineDriftTip') : ''"
+          >
+            {{ t('configs.baselineDraftN', { n: row.baseline_manifest.length }) }}{{ baselineDrifted(row) ? ' *' : '' }}
+          </el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('configs.itemCount')" width="90" align="right">
         <template #default="{ row }">{{ itemCountOf(row.station_id) }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.action')" width="120" align="center">
-        <template #default="{ $index }">
+      <el-table-column :label="t('common.action')" width="140" align="center">
+        <template #default="{ row, $index }">
+          <el-tooltip
+            v-if="canManage && !row.baseline_locked"
+            :content="(row.baseline_manifest || []).length
+              ? t('configs.lockBaseline')
+              : t('configs.baselineNoDraftTip')"
+            placement="top"
+          >
+            <span>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :icon="Unlock"
+                style="font-size: 18px"
+                :disabled="!(row.baseline_manifest || []).length"
+                @click="openLock(row)"
+              />
+            </span>
+          </el-tooltip>
+          <el-tooltip
+            v-if="canManage && row.baseline_locked"
+            :content="t('configs.unlockBaseline')"
+            placement="top"
+          >
+            <span>
+              <el-button
+                link
+                type="warning"
+                size="small"
+                :icon="Lock"
+                style="font-size: 18px"
+                @click="unlockBaseline(row)"
+              />
+            </span>
+          </el-tooltip>
           <el-button v-if="canManage" link type="danger" size="small" @click="removeRow($index)">{{ t('common.delete') }}</el-button>
         </template>
       </el-table-column>
@@ -100,6 +154,86 @@
         <EmptyState v-else :text="t('configs.validateOk')" />
       </div>
     </el-drawer>
+
+    <!-- 锁定基线确认：分层展示（锁定对象 → 差异 → 锁定后效果） -->
+    <el-dialog
+      v-model="lockVisible"
+      :title="t('configs.baselineLockTitle')"
+      width="680px"
+      destroy-on-close
+      class="form-dialog"
+    >
+      <!-- ① 锁定对象 -->
+      <div class="bl-sec">
+        <div class="bl-sec-title">{{ t('configs.baselineTarget') }}</div>
+        <div class="bl-target">
+          <span class="code">{{ lockRow?.station_id }}</span>
+          <span v-if="lockRow?.station_name" class="muted">（{{ lockRow.station_name }}）</span>
+          <el-tag size="small" class="bl-count">
+            {{ t('configs.baselineDraftN', { n: (lockRow?.baseline_manifest || []).length }) }}
+          </el-tag>
+          <el-tag v-if="lockDiff.reordered" type="warning" size="small" effect="plain" class="bl-count">
+            {{ t('configs.baselineDiffOrder') }}
+          </el-tag>
+        </div>
+      </div>
+
+      <!-- ② 与现有用例清单的差异 -->
+      <div class="bl-sec">
+        <div class="bl-sec-title">{{ t('configs.baselineDiffTitle') }}</div>
+        <div v-if="diffEmpty" class="muted bl-none">{{ t('configs.baselineDiffNone') }}</div>
+        <template v-else>
+          <div v-if="lockDiff.added.length" class="bl-diff-row">
+            <el-tag type="success" size="small" effect="light">
+              {{ t('configs.baselineDiffAdded') }}（{{ lockDiff.added.length }}）
+            </el-tag>
+            <div class="bl-diff-list">
+              <span v-for="c in lockDiff.added" :key="c" class="code bl-diff-item">{{ c }}</span>
+            </div>
+          </div>
+          <div v-if="lockDiff.removed.length" class="bl-diff-row">
+            <el-tag type="danger" size="small" effect="light">
+              {{ t('configs.baselineDiffRemoved') }}（{{ lockDiff.removed.length }}）
+            </el-tag>
+            <div class="bl-diff-list">
+              <span v-for="c in lockDiff.removed" :key="c" class="code bl-diff-item bl-diff-del">{{ c }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ③ 为缺名称的用例补录（新增项 / 名称仍是 nodeid 的项） -->
+      <div v-if="nameTargets.length" class="bl-sec">
+        <div class="bl-sec-title">{{ t('configs.baselineNamesTitle') }}</div>
+        <div v-for="row in nameTargets" :key="row.case_id" class="bl-name-row">
+          <span class="code bl-name-code">{{ row.case_id }}</span>
+          <el-input
+            v-model="nameEdits[row.case_id]"
+            size="small"
+            maxlength="128"
+            :placeholder="t('configs.baselineNamePlaceholder')"
+            style="flex: 1"
+          />
+        </div>
+      </div>
+
+      <!-- ④ 锁定后的效果 -->
+      <div class="bl-sec">
+        <div class="bl-sec-title">{{ t('configs.baselineEffectTitle') }}</div>
+        <ul class="bl-effect">
+          <li>{{ t('configs.baselineEffect1') }}</li>
+          <li>{{ t('configs.baselineEffect2') }}</li>
+        </ul>
+        <el-alert :title="t('configs.baselineLockWarn2')" type="warning" :closable="false" style="margin-top: 8px" />
+      </div>
+
+      <template #footer>
+        <el-button @click="lockVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :icon="Lock" :loading="locking" @click="confirmLock">
+          {{ t('configs.lockBaseline') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -108,9 +242,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheck, Plus } from '@element-plus/icons-vue'
+import { CircleCheck, Lock, Plus, Unlock } from '@element-plus/icons-vue'
 import { routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
+import { fmtDateTime } from '../../utils/format'
 import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
@@ -208,7 +343,7 @@ async function save() {
 
   saving.value = true
   try {
-    await routingApi.saveSteps(
+    const res = await routingApi.saveSteps(
       processId.value,
       steps.value.map((s) => ({
         station_id: s.station_id,
@@ -219,11 +354,145 @@ async function save() {
       }))
     )
     ElMessage.success(t('configs.topologySaved'))
+    const residues = res.data?.removed_wip || []
+    if (residues.length) {
+      const detail = residues
+        .map((r) => `${r.station_id}：${r.wip_sns.join('、')}`)
+        .join('；')
+      ElMessage.warning({
+        message: t('configs.wipResidue', { list: detail }),
+        duration: 8000,
+        showClose: true,
+      })
+    }
     await loadSteps()
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
     saving.value = false
+  }
+}
+
+const lockVisible = ref(false)
+const lockRow = ref(null)
+const locking = ref(false)
+
+/** 工位当前生效用例的有序清单（按执行序号排序）。 */
+function activeCasesOf(stationId) {
+  return allItems.value
+    .filter((i) => i.station_id === stationId && i.is_active)
+    .sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9))
+    .map((i) => i.case_id)
+}
+
+/** 已锁定标签的悬停说明：基线项数与捕获时间（本地时区，走全站统一 fmtDateTime）。 */
+function baselineLockedTitle(row) {
+  const n = (row.baseline_manifest || []).length
+  return t('configs.baselineLockedTip', { n, time: fmtDateTime(row.baseline_captured_at) })
+}
+
+/** 草稿（进站捕获序列）与现有用例清单是否不一致：增删或顺序任一变化即为漂移。 */
+function baselineDrifted(row) {
+  const draft = row.baseline_manifest || []
+  const current = activeCasesOf(row.station_id)
+  if (draft.length !== current.length) return true
+  return draft.some((c, i) => c !== current[i])
+}
+
+/** 草稿（进站捕获序列）与现有用例清单的差异预览 */
+const lockDiff = computed(() => {
+  const row = lockRow.value
+  if (!row) return { added: [], removed: [], reordered: false }
+  const draft = row.baseline_manifest || []
+  const current = activeCasesOf(row.station_id)
+  return {
+    added: draft.filter((c) => !current.includes(c)),
+    removed: current.filter((c) => !draft.includes(c)),
+    reordered:
+      draft.filter((c) => current.includes(c)).join('|') !==
+      current.filter((c) => draft.includes(c)).join('|'),
+  }
+})
+
+const diffEmpty = computed(
+  () => !lockDiff.value.added.length && !lockDiff.value.removed.length && !lockDiff.value.reordered
+)
+
+/** 需要补录名称的草稿项：新增项，或现有名称为 nodeid 兜底的项。 */
+const nameTargets = computed(() => {
+  const row = lockRow.value
+  if (!row) return []
+  return nameTargetsList(row).map((cid) => ({ case_id: cid }))
+})
+
+/** nodeid 末段作为默认名称（tests/x.py::TestA::test_a → test_a）。 */
+function shortNameOf(caseId) {
+  const parts = String(caseId).split('::')
+  return parts[parts.length - 1] || caseId
+}
+
+const nameEdits = ref({})
+
+function openLock(row) {
+  lockRow.value = { ...row }
+  const edits = {}
+  for (const t2 of nameTargetsList(row)) edits[t2.case_id] = shortNameOf(t2.case_id)
+  nameEdits.value = edits
+  lockVisible.value = true
+}
+
+/** openLock 时按行数据构建补录目标（不依赖 computed 的刷新时机）。 */
+function nameTargetsList(row) {
+  const draft = row.baseline_manifest || []
+  const nameOf = {}
+  for (const it of allItems.value) {
+    if (it.station_id === row.station_id && it.is_active) nameOf[it.case_id] = it.item_name
+  }
+  return draft.filter((cid) => !nameOf[cid] || nameOf[cid] === cid)
+}
+
+async function confirmLock() {
+  if (!lockRow.value) return
+  locking.value = true
+  try {
+    const names = {}
+    for (const [cid, name] of Object.entries(nameEdits.value || {})) {
+      const v = (name || '').trim()
+      if (v && v !== cid) names[cid] = v
+    }
+    const res = await routingApi.lockBaseline({
+      process_id: processId.value,
+      station_id: lockRow.value.station_id,
+      names,
+    })
+    for (const w of res.data?.warnings || []) ElMessage.warning(w)
+    ElMessage.success(t('configs.baselineLockedDone'))
+    lockVisible.value = false
+    await loadSteps()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    locking.value = false
+  }
+}
+
+async function unlockBaseline(row) {
+  try {
+    await ElMessageBox.confirm(t('configs.baselineUnlockConfirm'), t('common.confirm'), {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await routingApi.unlockBaseline({
+      process_id: processId.value,
+      station_id: row.station_id,
+    })
+    ElMessage.success(t('configs.baselineUnlocked'))
+    await loadSteps()
+  } catch (e) {
+    ElMessage.error(e.message)
   }
 }
 
@@ -245,4 +514,68 @@ onMounted(async () => {
   await loadSteps()
 })
 </script>
+
+<style scoped>
+.bl-sec + .bl-sec {
+  margin-top: 14px;
+}
+.bl-sec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+}
+.bl-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bl-count {
+  margin-left: 4px;
+}
+.bl-none {
+  margin-top: 4px;
+}
+.bl-diff-row + .bl-diff-row {
+  margin-top: 10px;
+}
+.bl-diff-list {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bl-diff-item {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.bl-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.bl-name-code {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.bl-diff-del {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+.bl-effect {
+  margin: 0;
+  padding-left: 18px;
+}
+.bl-effect li {
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--el-text-color-regular);
+}
+</style>
 

@@ -386,6 +386,9 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
                 invalidates_downstream=bool(s.invalidates_downstream),
                 item_count=item_count.get(s.station_id, 0),
                 timeout_sec=timeouts.get(s.station_id, 1800),
+                baseline_locked=bool(s.baseline_locked),
+                baseline_manifest=_as_list(s.baseline_manifest),
+                baseline_captured_at=s.baseline_captured_at,
             )
             for s in steps
         ],

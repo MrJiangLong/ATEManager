@@ -58,7 +58,7 @@ def list_steps(
     get_or_404(db, models.Process, process_id, "process")
     return process_topology(db, process_id).steps
 
-@router.put("/stations", response_model=List[schemas.ProcessStationOut], summary="整体保存工步拓扑")
+@router.put("/stations", response_model=schemas.TopologySaveOut, summary="整体保存工步拓扑")
 def save_steps(
     process_id: str,
     payload: List[schemas.ProcessStationIn],
@@ -78,12 +78,13 @@ def save_steps(
         get_or_404(db, models.Station, step.station_id, "station")
 
     keep = {step.station_id for step in payload}
-    removed = {
-        row[0]
-        for row in db.query(models.ProcessStation.station_id)
+    prev_steps = {
+        row.station_id: row
+        for row in db.query(models.ProcessStation)
         .filter(models.ProcessStation.process_id == process_id)
         .all()
-    } - keep
+    }
+    removed = set(prev_steps) - keep
     if removed:
         db.query(models.StationItem).filter(
             models.StationItem.process_id == process_id,
@@ -92,6 +93,7 @@ def save_steps(
 
     db.query(models.ProcessStation).filter(models.ProcessStation.process_id == process_id).delete()
     for step in payload:
+        prev = prev_steps.get(step.station_id)
         db.add(
             models.ProcessStation(
                 process_id=process_id,
@@ -100,6 +102,10 @@ def save_steps(
                 depends_on=list(step.depends_on or []),
                 is_optional=step.is_optional,
                 invalidates_downstream=step.invalidates_downstream,
+                # 拓扑编辑不静默清空基线：锁定状态与草稿/基线清单按工位原样保留
+                baseline_locked=prev.baseline_locked if prev else False,
+                baseline_manifest=prev.baseline_manifest if prev else None,
+                baseline_captured_at=prev.baseline_captured_at if prev else None,
             )
         )
     # 先落库再校验，以便直接复用 validate_process 的完整规则；不通过则整体回滚
@@ -120,7 +126,32 @@ def save_steps(
             )
 
     db.commit()
-    return process_topology(db, process_id).steps
+
+    # 移除工位时，在制品上残留的该工位印章属历史事实——列出清单供工艺员决定
+    # 是否对在制品做维修处置（RESET/RETEST），系统不做静默清除
+    removed_wip_map: Dict[str, List[str]] = {}
+    if removed:
+        models_in = [
+            m.product_model
+            for m in db.query(models.ProductModel)
+            .filter(models.ProductModel.process_id == process_id)
+            .all()
+        ]
+        for p in db.query(models.ProductStatus).filter(
+            models.ProductStatus.product_model.in_(models_in or [""])
+        ).all():
+            stamped = [s for s in (p.passed_stations or []) if s in removed]
+            for sid in stamped:
+                removed_wip_map.setdefault(sid, []).append(p.sn)
+    removed_wip = [
+        schemas.WipResidue(station_id=sid, wip_sns=sns)
+        for sid, sns in sorted(removed_wip_map.items())
+    ]
+
+    return schemas.TopologySaveOut(
+        steps=process_topology(db, process_id).steps,
+        removed_wip=removed_wip,
+    )
 
 @router.delete("/stations/{station_id}", status_code=204, summary="移除工步(连带清理其测试项)")
 def delete_step(
@@ -164,6 +195,16 @@ def _running_sessions_on(db: Session, process_id: str, station_id: str) -> int:
         .count()
     )
 
+
+def _assert_baseline_unlocked(db: Session, process_id: str, station_id: str) -> None:
+    """锁定工位的用例清单由基线固化，禁止手工增删改（先解锁再编辑）。"""
+    ps = db.get(models.ProcessStation, (process_id, station_id))
+    if ps is not None and ps.baseline_locked:
+        raise conflict_error(
+            "baseline_locked",
+            f"baseline_locked: 工位 {station_id} 的用例清单已由基线固化，请先在拓扑页解锁",
+        )
+
 # ==================== 用例ID测试项 ====================
 @router.get("/items", response_model=List[schemas.StationItemOut], summary="测试项清单")
 def list_items(
@@ -187,6 +228,7 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
     """新增测试项；未指定 sort_order 时按步长 10 追加到该工位末尾（预留中间插入空间）。"""
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
+    _assert_baseline_unlocked(db, payload.process_id, payload.station_id)
     exists = (
         db.query(models.StationItem)
         .filter(
@@ -226,6 +268,7 @@ def update_item(
 ):
     """更新测试项；sort_order 显式传 null = 重置为未编号（排在已编号项之后按 case_id 队尾）。"""
     row = get_or_404(db, models.StationItem, item_id, "item")
+    _assert_baseline_unlocked(db, row.process_id, row.station_id)
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         if key == "sort_order":
@@ -240,6 +283,7 @@ def update_item(
 @router.delete("/items/{item_id}", status_code=204, summary="删除测试项")
 def delete_item(item_id: int, db: Session = Depends(get_db), user=Depends(require_manager)):
     row = get_or_404(db, models.StationItem, item_id, "item")
+    _assert_baseline_unlocked(db, row.process_id, row.station_id)
     db.delete(row)
     db.commit()
 
@@ -264,6 +308,7 @@ def import_items(
     """
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
+    _assert_baseline_unlocked(db, payload.process_id, payload.station_id)
     if payload.mode not in ("upsert", "replace"):
         raise bad_request("bad_mode", "bad_mode: mode must be 'upsert' or 'replace'")
 
@@ -379,6 +424,85 @@ def import_items(
         orphan_count=len(orphans),
         orphans=orphans[:20],
         warnings=warnings,
+    )
+
+# ==================== 工位基线（黄金样本快照锁） ====================
+@router.post("/baseline/lock", response_model=schemas.BaselineLockOut, summary="锁定工位基线（草稿物化为用例清单并开启严格比对）")
+def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db), user=Depends(require_manager)):
+    """黄金样本快照锁：把录制态捕获的用例序列草稿按 replace 模式物化为该工位
+    的用例清单（全部必测、执行序号按清单顺序步长 10 编号）并开启进站严格比对
+    （全列表含顺序精确一致，任何增删/改序进站即 400 case_order_mismatch）。
+
+    闸门：草稿为空 400 baseline_empty；该工位有运行中会话 409 running_session_block
+    （新基线必测集合与运行中断点不同，出站会被漏测误杀）。解锁走 /baseline/unlock。
+    """
+    get_or_404(db, models.Process, payload.process_id, "process")
+    _assert_station_in_process(db, payload.process_id, payload.station_id)
+    ps = get_or_404(db, models.ProcessStation, (payload.process_id, payload.station_id), "process_station")
+    if ps.baseline_locked:
+        raise conflict_error("baseline_already_locked", f"baseline_already_locked: {payload.station_id}")
+    manifest = [c for c in (ps.baseline_manifest or []) if c]
+    if not manifest:
+        raise bad_request(
+            "baseline_empty",
+            f"baseline_empty: 工位 {payload.station_id} 尚未捕获到用例序列草稿（无进站记录）",
+        )
+    running = _running_sessions_on(db, payload.process_id, payload.station_id)
+    if running:
+        raise conflict_error(
+            "running_session_block",
+            f"running_session_block: {running} RUNNING session(s) on "
+            f"{payload.process_id}/{payload.station_id}，锁定基线前请先中止会话",
+            data={"running_sessions": running},
+        )
+
+    # 物化 = 以草稿为载荷复用批量导入端点逻辑（replace 清空重建 + 步长 10 编号 + 全部必测）；
+    # names 为锁定弹窗内补录的名称（缺省空 → 导入逻辑沿用现有名称或 nodeid 兜底）
+    names = payload.names or {}
+    import_result = import_items(
+        schemas.StationItemImportIn(
+            process_id=payload.process_id,
+            station_id=payload.station_id,
+            items=[
+                schemas.StationItemImportRow(
+                    case_id=cid,
+                    item_name=(names.get(cid) or "").strip(),
+                    is_mandatory=True,
+                )
+                for cid in manifest
+            ],
+            mode="replace",
+            force=True,
+        ),
+        db=db,
+        user=user,
+    )
+    ps.baseline_locked = True
+    db.commit()
+
+    warnings = ["新增必测不追溯已盖章在制品：如需按新基线补测，请对在制品做维修处置"]
+    return schemas.BaselineLockOut(
+        locked=True,
+        items_count=import_result.total_active,
+        warnings=warnings,
+    )
+
+
+@router.post("/baseline/unlock", response_model=schemas.BaselineLockOut, summary="解锁工位基线（回到录制态）")
+def unlock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db), user=Depends(require_manager)):
+    """解锁后回到录制态：下次进站将以上位机当前执行序列覆盖基线草稿，
+    用例清单恢复可手工编辑。用于"改代码 → 重录 → 再锁定"的发版循环。"""
+    get_or_404(db, models.Process, payload.process_id, "process")
+    _assert_station_in_process(db, payload.process_id, payload.station_id)
+    ps = get_or_404(db, models.ProcessStation, (payload.process_id, payload.station_id), "process_station")
+    if not ps.baseline_locked:
+        raise conflict_error("baseline_not_locked", f"baseline_not_locked: {payload.station_id}")
+    ps.baseline_locked = False
+    db.commit()
+    return schemas.BaselineLockOut(
+        locked=False,
+        items_count=len(ps.baseline_manifest or []),
+        warnings=["已回到录制态：下次进站将以上位机当前执行序列覆盖基线草稿"],
     )
 
 # ==================== 校验与克隆 ====================

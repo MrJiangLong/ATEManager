@@ -439,6 +439,22 @@ class ProcessStationOut(ORMModel):
     invalidates_downstream: bool = False
     item_count: int = 0
     timeout_sec: int = 1800
+    baseline_locked: bool = False
+    baseline_manifest: Optional[List[str]] = None
+    baseline_captured_at: Optional[datetime] = None
+
+
+class BaselineLockIn(BaseModel):
+    process_id: TrimmedRequired = Field(max_length=64)
+    station_id: TrimmedRequired = Field(max_length=64)
+    """ 锁定物化时一并写入的用例名称（case_id → item_name）；未提供的沿用现有名称或 nodeid 兜底 """
+    names: Dict[str, str] = {}
+
+
+class BaselineLockOut(BaseModel):
+    locked: bool
+    items_count: int = 0
+    warnings: List[str] = []
 
 class ProcessStationIn(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
@@ -511,6 +527,16 @@ class TopologyOut(BaseModel):
     process_id: str
     steps: List[ProcessStationOut] = []
     items: List[StationItemOut] = []
+
+class WipResidue(BaseModel):
+    """从流程移除工位时，在制品上残留的该工位印章（历史事实，是否 RESET 由工艺员决定）。"""
+
+    station_id: str
+    wip_sns: List[str] = []
+
+class TopologySaveOut(BaseModel):
+    steps: List[ProcessStationOut] = []
+    removed_wip: List[WipResidue] = []
 
 class ValidateIssue(BaseModel):
     level: str

@@ -111,6 +111,9 @@ export const routingApi = {
   listSteps: (processId) => api.get('/admin/routing/stations', { params: { process_id: processId } }),
   saveSteps: (processId, steps) =>
     api.put('/admin/routing/stations', steps, { params: { process_id: processId } }),
+  /** 工位基线：锁定（草稿物化为用例清单）与解锁（回录制态） */
+  lockBaseline: (data) => api.post('/admin/routing/baseline/lock', data),
+  unlockBaseline: (data) => api.post('/admin/routing/baseline/unlock', data),
   listItems: (processId, stationId) =>
     api.get('/admin/routing/items', { params: { process_id: processId, station_id: stationId || undefined } }),
 

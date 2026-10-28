@@ -70,7 +70,7 @@
 - **SPC 良率看板**：产量/良率趋势、工位与流程良率、失效用例排行、机台在线
 - **出厂报告引擎**：盖章完成自动入队（60s 轮询，不触碰出站事务）→ 上传式插件产 Excel → MinIO 归档 → PDF 转换（服务端 LibreOffice 或外部 WPS Worker）→ MES 上传（multipart 字段名由插件 `mes_field` 声明）；报告规则（型号清单精确匹配 + 脚本 + 模板 + 标准器台账）全部 Web 端维护，后端零改动扩展新产品族
 - **报告产物存储语义**：产物上传 MinIO 成功后本地副本即删，**MinIO 与任务记录永久保留**（产物始终可预签名下载，无任何到期清理）；维修处置作废时该 SN 报告的 MinIO 对象与本地副本一并清除（报告不可再下载）；失败任务全量保留待重试；未配置 MinIO 时本地文件保留作为归档
-- **四角色权限**：viewer 只读 / operator 产线操作 / manager 配置管理（工艺+测试登记+报告规则，不含用户管理）/ admin 全部，后端逐端点收口
+- **四角色权限**：viewer 只读 / operator 产线操作 / manager 配置管理（工艺+SN 登记+报告规则，不含用户管理）/ admin 全部，后端逐端点收口
 
 ---
 
@@ -138,7 +138,7 @@ routers  ──▶  services  ──▶  models
 |---|---|
 | `viewer` | 只读全部：运营总览、在制/台账/追溯、工艺配置查看 |
 | `operator` | viewer + 机台注册/绑定/注销、维修处置、强制解锁、中止会话 |
-| `manager` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、测试登记、报告规则/模板/标准器台账（**不含用户管理**——账号权与业务权分离） |
+| `manager` | operator + 工艺/主数据配置（流程/工位/机型/用例清单）、流程导入导出克隆、SN 登记、报告规则/模板/标准器台账（**不含用户管理**——账号权与业务权分离） |
 | `admin` | manager + 用户管理 |
 
 防自锁守卫：系统中永远保证至少一个启用中的 admin——删除/停用/降权最后一个有效 admin 一律 `409 last_admin`，不能删除自己的账号。被停用账号登录拒绝且已有 token 立即失效。
@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，69 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，70 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -407,7 +407,7 @@ ATEManager/
 | `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定 |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；**基线锁定**：`baseline_locked/baseline_manifest/baseline_captured_at`（黄金样本快照锁——录制态进站自动捕获上位机用例序列为草稿，锁定后物化为 `station_items` 并对进站执行全列表严格比对）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
 | `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；`sort_order` 定工位内执行顺序（进站下发的用例清单按此排序；新增/导入未指定时按顺序以步长 10 自动编号，便于中间插入）；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
@@ -640,9 +640,9 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
 | 工艺流程 | view / mgr 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
 | 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
-| 测试登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
+| SN 登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order` 与 `invalidates_downstream`，旧导出文件缺省兼容）、`GET /api/admin/routing/item-summary` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order` 与 `invalidates_downstream`，旧导出文件缺省兼容）、`POST /api/admin/routing/baseline/lock`、`POST /api/admin/routing/baseline/unlock`（工位基线快照锁：录制态进站自动捕获用例序列草稿，锁定时自动物化为用例清单并开启进站全列表严格比对；锁定工位的用例清单禁止手工编辑）、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演与依赖重测确认 `confirm_downstream`，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/batch-undo`（按 `batch_id` 整批撤销，逐条独立生效走单条全部守卫）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
@@ -815,7 +815,7 @@ docker compose up -d --build     # 生产：单容器同源托管，http://local
 ### 14.1 双服务器部署（SN 准入极性）
 
 同一份代码部署生产/测试两台服务器，仅 `.env` 中 `SERVER_ROLE` 一行不同；试验设备 SN 由
-管理端「工艺配置 → 测试登记」Tab 维护（`/api/admin/sn-registry`，写操作 require_admin）。
+管理端「工艺配置 → SN 登记」Tab 维护（`/api/admin/sn-registry`，写操作 require_admin）。
 
 **存量机型渐进上线（passthrough）**：机型可设"直通放行"——进站直接 ACK，零写入
 （不建档/不领锁/不进台账与统计），用于存量机型灰度；身份卡控不受豁免（登记的试验
@@ -874,7 +874,7 @@ docker compose -f docker-compose.development.yml up -d   # 测试服：SERVER_RO
 | 进站 `409 station_already_passed` | 该工位已盖章 | 禁止复测；确认是否推错车，必要时走 RETEST 处置 |
 | 进站 `403 firmware_mismatch` | 固件非基线 | 刷写基线固件；调试期可临时 `ENFORCE_FW=false` |
 | 进站 `403 sn_is_test_device` | 生产服（production）拒绝登记的试验设备 | 试验设备走测试服；误登记请联系管理员注销 |
-| 进站 `403 sn_not_registered_test_device` | 研发服（development）白名单拒收未登记 SN | 管理端「工艺配置 → 测试登记」登记后重试 |
+| 进站 `403 sn_not_registered_test_device` | 研发服（development）白名单拒收未登记 SN | 管理端「工艺配置 → SN 登记」登记后重试 |
 | 进站 `403 app_version_mismatch` | 测试软件版本低于基线 | 升级机台测试程序；调试期可临时 `ENFORCE_APP_SW=false` |
 | 出站 `403 lock_invalid` | 锁已被其他机台接管 | 停机，重新进站；旧数据作废 |
 | 出站 `400 missing_mandatory` | 必测用例未执行或被报为 SKIP | 补齐用例；检查脚本与服务端清单是否同步 |

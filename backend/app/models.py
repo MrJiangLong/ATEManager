@@ -205,6 +205,11 @@ class ProcessStation(Base):
     invalidates_downstream: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    # 黄金样本基线：录制态 manifest = 进站捕获的最新用例序列草稿；
+    # 锁定态 manifest = 受控基线（进站全列表严格比对）。存量行回填 false = 不启用。
+    baseline_locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    baseline_manifest: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    baseline_captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     process = relationship("Process", back_populates="steps")
     station = relationship("Station")

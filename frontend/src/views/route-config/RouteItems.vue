@@ -56,8 +56,13 @@
       </el-table-column>
       <el-table-column :label="t('common.action')" width="120" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="canManage" link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-          <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          <template v-if="canManage && !isStationLocked(row.station_id)">
+            <el-button link type="primary" size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+            <el-button v-if="canManage" link type="danger" size="small" @click="onDelete(row)">{{ t('common.delete') }}</el-button>
+          </template>
+          <span v-else-if="canManage" class="muted" style="font-size: 12px">
+            {{ t('configs.itemsLockedHint') }}
+          </span>
         </template>
       </el-table-column>
       <template #empty><EmptyState :text="t('common.noData')" /></template>
@@ -87,7 +92,13 @@
           <el-col :span="12">
             <el-form-item :label="t('configs.tabStations')" required>
               <el-select v-model="form.station_id" filterable :disabled="isEdit" style="width:100%">
-                <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+                <el-option
+                  v-for="s in stations"
+                  :key="s.station_id"
+                  :value="s.station_id"
+                  :label="isStationLocked(s.station_id) ? `${s.station_id}（${t('configs.baselineLocked')}）` : s.station_id"
+                  :disabled="isStationLocked(s.station_id)"
+                />
               </el-select>
             </el-form-item>
           </el-col>
@@ -114,7 +125,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -132,8 +143,21 @@ const { processes, stations, loadProcesses } = useProcesses()
 const processId = ref('')
 const stationFilter = ref('')
 const items = ref([])
+const steps = ref([])
 const loading = ref(false)
 const { page, pageSize, paged } = useLocalPagination(items)
+
+/** 锁定工位的用例清单由基线固化（不可手工增删改） */
+const lockedMap = computed(() => {
+  const map = {}
+  for (const s of steps.value) {
+    if (s.baseline_locked) map[s.station_id] = true
+  }
+  return map
+})
+function isStationLocked(stationId) {
+  return !!lockedMap.value[stationId]
+}
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -154,8 +178,12 @@ async function loadItems() {
   }
   loading.value = true
   try {
-    const res = await routingApi.listItems(processId.value, stationFilter.value)
-    items.value = res.data
+    const [itemRes, stepRes] = await Promise.all([
+      routingApi.listItems(processId.value, stationFilter.value),
+      routingApi.listSteps(processId.value),
+    ])
+    items.value = itemRes.data
+    steps.value = stepRes.data
   } catch (e) {
     items.value = []
     ElMessage.error(e.message || t('errors.loadFailed'))
