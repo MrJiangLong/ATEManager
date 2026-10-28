@@ -2142,6 +2142,63 @@ def test_case_list_report():
           "locked manifest unchanged")
 
 
+def test_station_seq_guard():
+    """严格顺序（默认开）：已过首站后，跳站仍被前序必跑工位拦；关闭后恢复 DAG 语义。"""
+    pid = f"PROC-TEST-SEQ-{STAMP}"
+    mid = "DPO4054B-SEQ"
+    a, b, c = "ST-SEQ-01", "ST-SEQ-02", "ST-SEQ-03"
+    for sid in (a, b, c):
+        admin("POST", "/api/admin/stations", {"station_id": sid, "station_name": sid})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "顺序流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": a, "step_order": 10, "depends_on": [], "is_optional": False},
+                  {"station_id": b, "step_order": 20, "depends_on": [], "is_optional": False},
+                  {"station_id": c, "step_order": 30, "depends_on": [], "is_optional": False}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"seq topology: {resp.text}")
+    for i, sid in enumerate((a, b, c), 1):
+        admin("POST", "/api/admin/clients", {"client_id": f"SMOKE-SEQ-{i}", "bound_stations": [sid]})
+
+    sn = f"SIMRS-SEQ-{STAMP}"
+
+    def seq_checkin(client, sn_value):
+        return v1("check-in", {"client_id": client, "sn": sn_value, "product_model": mid,
+                               "firmware": FW, "case_ids": ["tests/seq.py::t1"]})
+
+    # ① 过首站 A（进站 + 出站盖章）
+    resp = seq_checkin("SMOKE-SEQ-1", sn)
+    check(resp.status_code == 200, f"seq first: {resp.text}")
+    resp = v1("check-out", {"client_id": "SMOKE-SEQ-1", "sn": sn,
+                            "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(["tests/seq.py::t1"]),
+                            "duration_ms": 1000})
+    check(resp.status_code == 201, f"seq checkout: {resp.text}")
+
+    # ② 严格顺序：A 已过但 B 未过 → 进 C 被拦（缺 B，且按工步序排列）
+    resp = seq_checkin("SMOKE-SEQ-3", sn)
+    check(resp.status_code == 403 and resp.json()["code"] == "missing_prereq"
+          and resp.json()["data"]["missing"] == [b], f"seq guard: {resp.text}")
+
+    # ③ 关闭严格顺序：C 无依赖 → 可直接进站（DAG 语义）
+    resp = admin("PUT", f"/api/admin/processes/{pid}", {"is_sequential": False})
+    check(resp.status_code == 200 and resp.json()["is_sequential"] is False, f"seq off: {resp.text}")
+    resp = seq_checkin("SMOKE-SEQ-3", sn)
+    check(resp.status_code == 200, f"dag allows skip: {resp.text}")
+
+    # ④ 关闭态随导出/克隆保留（导出文件携带字段、克隆复制源流程语义）
+    resp = admin("GET", f"/api/admin/routing/processes/{pid}/export")
+    check(resp.status_code == 200 and resp.json()["process"]["is_sequential"] is False,
+          f"export keeps seq: {resp.text[:160]}")
+    resp = admin("POST", "/api/admin/routing/clone",
+                 {"from_process": pid, "to_process": f"PROC-TEST-CLN-{STAMP}"})
+    check(resp.status_code in (200, 201), f"clone: {resp.text}")
+    procs = {p["process_id"]: p for p in admin("GET", "/api/admin/processes").json()}
+    check(procs[f"PROC-TEST-CLN-{STAMP}"]["is_sequential"] is False,
+          f"clone keeps seq: {procs.get(f'PROC-TEST-CLN-{STAMP}')}")
+
+
 def test_station_baseline_lock():
     """工位基线（黄金样本快照锁）：捕获草稿 → 运行中 409 → 锁定物化 → 锁定态严格比对 → 解锁恢复。"""
     pid = f"PROC-TEST-BASE-{STAMP}"
@@ -3056,6 +3113,7 @@ def test_p0_template_upload_without_minio():
 
 TESTS = [
     test_case_list_report,
+    test_station_seq_guard,
     test_station_baseline_lock,
     test_sn_registry_status_api,
     test_sn_registry_import_export,

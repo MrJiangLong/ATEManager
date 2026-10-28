@@ -304,6 +304,7 @@ class ProcessOut(ORMModel):
     process_id: str
     process_name: str
     is_active: bool = True
+    is_sequential: bool = True
     created_at: Optional[datetime] = None
 
 class ProcessStatOut(UTCSchema):
@@ -312,6 +313,7 @@ class ProcessStatOut(UTCSchema):
     process_id: str
     process_name: str
     is_active: bool = True
+    is_sequential: bool = True
     model_count: int = 0
     models: List[str] = []
     station_count: int = 0
@@ -322,6 +324,7 @@ class ProcessCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     process_name: Trimmed = Field(default="", max_length=128)
     is_active: bool = True
+    is_sequential: bool = True
 
     @field_validator("process_id")
     @classmethod
@@ -331,6 +334,7 @@ class ProcessCreateIn(BaseModel):
 class ProcessUpdateIn(BaseModel):
     process_name: Trimmed = Field(default=None, max_length=128)
     is_active: Optional[bool] = None
+    is_sequential: Optional[bool] = None
 
 class ProductModelOut(ORMModel):
     product_model: str
@@ -561,6 +565,8 @@ class ExportProcess(BaseModel):
     process_id: str
     process_name: str = ""
     is_active: bool = True
+    # 严格顺序（前序必跑工位兜底拦截）；旧导出文件缺省 true 与流程默认一致
+    is_sequential: bool = True
 
 class ExportStation(BaseModel):
     station_id: str
@@ -612,6 +618,7 @@ class ImportProcess(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     process_name: Trimmed = Field(default="", max_length=128)
     is_active: bool = True
+    is_sequential: bool = True
 
     @field_validator("process_id")
     @classmethod

@@ -2,12 +2,14 @@
   <div>
     <div class="tab-head">
       <div class="filter-row">
-        <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" style="width:220px">
+        <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" style="width:300px">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
         </el-select>
-        <el-button :icon="RefreshRight" size="small" @click="loadModels">{{ t('common.refresh') }}</el-button>
       </div>
-      <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      <div class="filter-row">
+        <el-button :icon="RefreshRight" size="small" @click="loadModels">{{ t('common.refresh') }}</el-button>
+        <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>
+      </div>
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">

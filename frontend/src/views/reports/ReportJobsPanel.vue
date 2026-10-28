@@ -16,6 +16,8 @@
           :start-placeholder="t('common.startDate')"
           :end-placeholder="t('common.endDate')"
         />
+      </div>
+      <div class="filter-row">
         <el-button :icon="RefreshRight" size="small" @click="load">{{ t('common.refresh') }}</el-button>
       </div>
     </div>

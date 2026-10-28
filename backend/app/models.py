@@ -121,6 +121,9 @@ class Process(Base):
 
     process_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     process_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 严格顺序（默认开）：进站时所有 step_order 更小的必跑工位必须先盖章（选检除外）；
+    # 关闭则仅按 depends_on 判定（并行分支流程用）。
+    is_sequential: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     # 否则一次停用就会打断正在这条流程上跑的产线。
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

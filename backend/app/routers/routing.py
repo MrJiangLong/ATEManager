@@ -537,6 +537,9 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
         models.Process(
             process_id=payload.to_process,
             process_name=f"{source.process_name} (副本)" if source else payload.to_process,
+            # 语义随源流程复制：并行分支流程的克隆不应被默认开启严格顺序
+            is_active=source.is_active if source else True,
+            is_sequential=source.is_sequential if source else True,
         )
     )
     db.flush()
@@ -595,6 +598,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
             process_id=process.process_id,
             process_name=process.process_name or "",
             is_active=process.is_active,
+            is_sequential=process.is_sequential,
         ),
         stations=[
             schemas.ExportStation(
@@ -694,6 +698,7 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
             process_id=proc_in.process_id,
             process_name=proc_in.process_name or proc_in.process_id,
             is_active=proc_in.is_active,
+            is_sequential=proc_in.is_sequential,
         )
     )
 

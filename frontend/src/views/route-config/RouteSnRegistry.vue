@@ -9,9 +9,9 @@
           style="width:220px"
           @input="page = 1"
         />
-        <el-button :icon="RefreshRight" size="small" @click="loadRegistry">{{ t('common.refresh') }}</el-button>
       </div>
       <div class="tab-actions">
+        <el-button :icon="RefreshRight" size="small" @click="loadRegistry">{{ t('common.refresh') }}</el-button>
         <el-button size="small" :icon="Download" @click="exportRegistry">{{ t('snRegistry.export') }}</el-button>
         <el-button v-if="canManage" size="small" :icon="Upload" :loading="importing" @click="importInput?.click()">{{ t('snRegistry.import') }}</el-button>
         <el-button v-if="canManage" type="primary" size="small" :icon="Plus" @click="openCreate">{{ t('common.add') }}</el-button>

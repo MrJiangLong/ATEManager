@@ -359,7 +359,7 @@ NULL ─────────────→ IDLE ─────────
 | 403 | `model_not_registered` | 机型未注册 | 联系工艺工程师 |
 | 403 | `sn_is_test_device` | SN 已登记为试验设备，生产服（`SERVER_ROLE=production`）禁止进站 | 生产件走产线，试验设备送测试服 |
 | 403 | `sn_not_registered_test_device` | SN 未登记，研发服（`SERVER_ROLE=development`）白名单拒收 | 联系管理员在「SN 登记」登记后重试 |
-| 403 | `missing_prereq` | **跳站拦截**：前置工位未完成 | 弹告警、pytest 终止、治具不开电 |
+| 403 | `missing_prereq` | **跳站拦截**：前置工位未完成（声明依赖 `depends_on` ∪ 严格顺序下的前序必跑工位；流程 `is_sequential` 关闭时仅按依赖判定） | 弹告警、pytest 终止、治具不开电 |
 | 403 | `model_mismatch` | SN 已登记为其他机型 | 贴错机型/换线未清线 |
 | 403 | `firmware_mismatch` | 固件不满足基线（口径见机型 `fw_match_rule`） | 提示刷写基线固件 |
 | 403 | `app_version_mismatch` | 测试软件版本不满足基线（口径见机型 `app_match_rule`；版本缺失/unknown 视为不满足） | 升级上位机测试程序 |
@@ -649,7 +649,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `model_topology_missing` | 10 | 管理端 | 关直通被拒：机型流程无拓扑，切严格卡控会进站 404 |
 | 409 | `model_has_wip` | 10 | 管理端 | 开直通被拒：机型存在在制件，不允许旁路件与卡控件混合态 |
 | 409 | `drain_confirm_required` | 10 | 管理端 | 关直通缺清线确认位（`confirm_drain`），防止直连 API 绕过清线弹窗 |
-| 403 | `missing_prereq` | 10 | check-in | 跳站拦截 |
+| 403 | `missing_prereq` | 10 | check-in | 跳站拦截（`depends_on` + 严格顺序前序必跑工位；`data.missing` 按工步序列出） |
 | 403 | `model_mismatch` | 10 | check-in | 机型与建档不符 |
 | 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
 | 403 | `app_version_mismatch` | 10 | check-in | 测试软件版本不满足基线（口径见机型 `app_match_rule`） |

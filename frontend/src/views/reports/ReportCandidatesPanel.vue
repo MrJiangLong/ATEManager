@@ -13,9 +13,9 @@
           :start-placeholder="t('common.startDate')"
           :end-placeholder="t('common.endDate')"
         />
-        <el-button :icon="RefreshRight" size="small" @click="load">{{ t('common.refresh') }}</el-button>
       </div>
       <div class="filter-row">
+        <el-button :icon="RefreshRight" size="small" @click="load">{{ t('common.refresh') }}</el-button>
         <span v-if="selected.length" class="selected-count">{{ t('reports.selected', { n: selected.length }) }}</span>
         <el-button size="small" @click="selectAll">{{ t('reports.selectAll') }}</el-button>
         <el-button size="small" @click="invertSelection">{{ t('reports.invert') }}</el-button>

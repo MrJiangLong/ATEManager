@@ -29,6 +29,7 @@ class ProcessGraph(NamedTuple):
     timeout_of: Dict[str, int]
     name_of: Dict[str, str]
     items_of: Dict[str, List[models.StationItem]]
+    sequential: bool = True  # 严格顺序：前序必跑工位未盖章即拦截（并行流程关闭）
     optional: Set[str] = frozenset()  # 选检工位（QA 抽查），不参与完工判定
     invalidates: Set[str] = frozenset()  # 依赖重测触发的工位（invalidates_downstream 配置）
 
@@ -73,6 +74,7 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
 
     return ProcessGraph(
         process_id=process_id,
+        sequential=bool(process.is_sequential),
         stations=[s.station_id for s in steps],
         step_of={s.station_id: s.step_order for s in steps},
         deps_of={
@@ -92,8 +94,22 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
     )
 
 def missing_prereq(graph: ProcessGraph, station_id: str, passed: Set[str]) -> List[str]:
-    """未满足的前置工步（防跳站闸门）。"""
-    return [d for d in graph.deps_of.get(station_id, []) if d not in passed]
+    """未满足的前置工步（防跳站闸门）。
+
+    声明的 depends_on 始终生效；流程开启严格顺序（is_sequential，默认开）时，
+    还要求所有 step_order 更小的**必跑**工位已盖章（选检工位不构成前置）。
+    返回按工步次序排列，便于提示文案阅读。
+    """
+    deps = set(graph.deps_of.get(station_id, []))
+    if graph.sequential:
+        order = graph.step_of.get(station_id, 0)
+        for sid in graph.stations:
+            if sid == station_id or sid in graph.optional:
+                continue
+            if graph.step_of.get(sid, 0) < order:
+                deps.add(sid)
+    lacking = [d for d in deps if d not in passed]
+    return sorted(lacking, key=lambda s: graph.step_of.get(s, 0))
 
 def next_stations(graph: ProcessGraph, passed: Set[str]) -> List[schemas.NextStation]:
     """前置已满足且尚未盖章的可进站工位。"""
@@ -318,6 +334,7 @@ def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
                 process_id=process.process_id,
                 process_name=process.process_name,
                 is_active=bool(process.is_active),
+                is_sequential=bool(process.is_sequential),
                 model_count=len(models_under),
                 models=[m.product_model for m in models_under],
                 station_count=len(steps),

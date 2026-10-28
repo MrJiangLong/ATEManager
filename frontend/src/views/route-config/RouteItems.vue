@@ -8,11 +8,13 @@
         <el-select v-model="stationFilter" clearable :placeholder="t('configs.filterStation')" style="width:180px">
           <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
         </el-select>
-        <el-button :icon="RefreshRight" size="small" @click="loadItems">{{ t('common.refresh') }}</el-button>
       </div>
-      <el-button v-if="canManage" type="primary" size="small" :icon="Plus" :disabled="!processId" @click="openCreate">
-        {{ t('configs.newItem') }}
-      </el-button>
+      <div class="filter-row">
+        <el-button :icon="RefreshRight" size="small" @click="loadItems">{{ t('common.refresh') }}</el-button>
+        <el-button v-if="canManage" type="primary" size="small" :icon="Plus" :disabled="!processId" @click="openCreate">
+          {{ t('configs.newItem') }}
+        </el-button>
+      </div>
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">

@@ -42,6 +42,7 @@ def create_process(payload: schemas.ProcessCreateIn, db: Session = Depends(get_d
         process_id=payload.process_id,
         process_name=payload.process_name or payload.process_id,
         is_active=payload.is_active,
+        is_sequential=payload.is_sequential,
     )
     db.add(row)
     db.commit()
@@ -56,6 +57,8 @@ def update_process(
         row.process_name = payload.process_name
     if payload.is_active is not None:
         row.is_active = payload.is_active
+    if payload.is_sequential is not None:
+        row.is_sequential = payload.is_sequential
     db.commit()
     return row
 

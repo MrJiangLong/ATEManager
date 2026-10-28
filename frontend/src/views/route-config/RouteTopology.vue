@@ -5,11 +5,30 @@
         <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:240px">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
         </el-select>
+        <div class="seq-group">
+          <el-switch
+            v-model="seqEnabled"
+            :disabled="!processId || !canManage"
+            @change="onToggleSequence"
+          />
+          <span class="seq-label">{{ t('configs.strictSequence') }}</span>
+          <el-popover placement="bottom" :width="340" trigger="hover">
+            <template #reference>
+              <el-icon class="seq-help"><QuestionFilled /></el-icon>
+            </template>
+            <div class="seq-help-body">
+              <div><b>{{ t('configs.seqHelpOnTitle') }}</b>{{ t('configs.seqHelpOn') }}</div>
+              <div style="margin-top: 6px"><b>{{ t('configs.seqHelpOffTitle') }}</b>{{ t('configs.seqHelpOff') }}</div>
+              <div class="muted" style="margin-top: 6px">{{ t('configs.seqHelpNote') }}</div>
+            </div>
+          </el-popover>
+        </div>
+      </div>
+      <div class="filter-row">
         <el-button size="small" :icon="CircleCheck" :disabled="!processId" @click="onValidate">
           {{ t('configs.validate') }}
         </el-button>
-      </div>
-      <div class="filter-row">
+
         <el-button size="small" :icon="Plus" :disabled="!processId" @click="addStep">{{ t('configs.addStep') }}</el-button>
         <el-button type="primary" size="small" :loading="saving" :disabled="!processId" @click="save">
           {{ t('configs.saveTopology') }}
@@ -248,8 +267,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheck, Lock, Plus, Unlock } from '@element-plus/icons-vue'
-import { routingApi } from '../../api'
+import { CircleCheck, Lock, Plus, QuestionFilled, Unlock } from '@element-plus/icons-vue'
+import { processApi, routingApi } from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import CaseIdText from '../../components/CaseIdText.vue'
 import { fmtDateTime } from '../../utils/format'
@@ -262,6 +281,7 @@ const { processes, stations, loadProcesses } = useProcesses()
 
 const processId = ref('')
 const steps = ref([])
+const seqEnabled = ref(true)
 const loading = ref(false)
 const saving = ref(false)
 const savedStations = ref([])
@@ -514,18 +534,80 @@ async function onValidate() {
   }
 }
 
-watch(processId, () => loadSteps())
+/** 从流程列表同步「严格顺序」开关状态（流程级语义，随工艺切换）。 */
+function syncSeqFlag() {
+  const p = processes.value.find((x) => x.process_id === processId.value)
+  seqEnabled.value = p ? p.is_sequential !== false : true
+}
 
-useTabRefresh('topology', loadSteps)
+async function onToggleSequence(value) {
+  // 关闭方向会弱化防呆（仅按依赖判定）：先确认，取消则回弹
+  if (!value) {
+    try {
+      await ElMessageBox.confirm(t('configs.seqConfirmOff'), t('common.confirm'), { type: 'warning' })
+    } catch {
+      seqEnabled.value = true
+      return
+    }
+  }
+  try {
+    await processApi.update(processId.value, { is_sequential: !!value })
+    ElMessage.success(
+      value ? t('configs.strictSequenceOn') : t('configs.strictSequenceOff')
+    )
+    // 流程/工位是全局共享缓存：落库后必须 force 刷新，否则本页开关会被旧值弹回
+    await loadProcesses({ force: true })
+    syncSeqFlag()
+  } catch (e) {
+    ElMessage.error(e.message)
+    syncSeqFlag()
+  }
+}
+
+watch(processId, () => {
+  syncSeqFlag()
+  loadSteps()
+})
+
+useTabRefresh('topology', async () => {
+  // 切回本页时同步流程字典（is_sequential 可能在别处被改）再刷新拓扑
+  await loadProcesses({ force: true })
+  syncSeqFlag()
+  await loadSteps()
+})
 
 onMounted(async () => {
   await loadProcesses()
   if (!processId.value && processes.value.length) processId.value = processes.value[0].process_id
+  syncSeqFlag()
   await loadSteps()
 })
 </script>
 
 <style scoped>
+.seq-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 与流程选择框（默认尺寸 32px）等高，避免开关视觉上“矮一截” */
+  height: 32px;
+}
+.seq-label {
+  font-size: 14px;
+  line-height: 32px;
+  color: var(--el-text-color-regular);
+  margin-left: 2px;
+}
+.seq-help {
+  color: var(--el-text-color-secondary);
+  cursor: help;
+  font-size: 18px;
+}
+.seq-help-body {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--el-text-color-regular);
+}
 .bl-sec + .bl-sec {
   margin-top: 14px;
 }

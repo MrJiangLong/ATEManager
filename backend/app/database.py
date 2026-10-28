@@ -81,6 +81,8 @@ _ADDED_COLUMNS = {
     },
     "processes": {
         "is_active": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
+        # 严格顺序：存量流程回填 true = 按工步顺序兜底拦截（并行分支流程需显式关闭）
+        "is_sequential": "BOOLEAN DEFAULT 1" if IS_SQLITE else "BOOLEAN DEFAULT true",
     },
     "station_items": {
         # 用例执行顺序（进站下发按此排序）
