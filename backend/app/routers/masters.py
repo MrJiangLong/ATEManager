@@ -213,7 +213,7 @@ def create_sn_registry(payload: schemas.SnRegistryIn, db: Session = Depends(get_
     db.commit()
     return row
 
-@sn_registry_router.delete("/{sn}", status_code=204, summary="注销测试登记(仅删除登记，不触碰生产/测试记录)")
+@sn_registry_router.delete("/{sn}", status_code=204, summary="注销 SN 登记(仅删除登记，不触碰生产/测试记录)")
 def delete_sn_registry(sn: str, db: Session = Depends(get_db), user=Depends(require_manager)):
     # 注销只做一件事：恢复进站资格。不自动重置——"是否曾运行研发测试代码"
     # 只有实验室知道，误判清零会摧毁真实产线历史；重流线由工艺员显式走
@@ -223,7 +223,7 @@ def delete_sn_registry(sn: str, db: Session = Depends(get_db), user=Depends(requ
     db.commit()
 
 
-@sn_registry_router.get("/export", response_model=schemas.SnRegistryExportOut, summary="导出测试登记清单")
+@sn_registry_router.get("/export", response_model=schemas.SnRegistryExportOut, summary="导出 SN 登记清单")
 def export_sn_registry(db: Session = Depends(get_db), user=Depends(current_user)):
     rows = db.query(models.SnRegistry).order_by(models.SnRegistry.created_at.desc()).all()
     return schemas.SnRegistryExportOut(
@@ -232,7 +232,7 @@ def export_sn_registry(db: Session = Depends(get_db), user=Depends(current_user)
     )
 
 
-@sn_registry_router.post("/import", response_model=schemas.SnRegistryImportOut, summary="导入测试登记清单（已存在的 SN 跳过）")
+@sn_registry_router.post("/import", response_model=schemas.SnRegistryImportOut, summary="导入 SN 登记清单（已存在的 SN 跳过）")
 def import_sn_registry(payload: schemas.SnRegistryImportIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     """事务式导入：登记人统一记为当前操作者（操作留痕），与清单内文件值无关；
     已存在的 SN 逐条跳过（幂等，重复导入安全），空清单 400 items_required。"""
