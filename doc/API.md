@@ -248,7 +248,35 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.2 `POST /api/v1/client/check-in` — 进站（领取工位锁）
+### 5.2 `POST /api/v1/client/case-list` — 用例清单上报（录制态草稿，check-in 前）
+
+把机台本次会话的**执行序列**（有序 `case_ids` 全集）上报为该工位的基线草稿。
+上位机应在 `check-in` **之前**调用：即使进站被拒（必测缺失/顺序不符/固件不符等），
+草稿也已留下机台真实序列，供工艺员在管理端审阅并锁定基线。
+
+- 录制态（`baseline_locked=false`）：内容变化才写库，返回 `recorded=true/false`
+- 锁定态：**不覆盖**草稿，返回 `recorded=false, locked=true, baseline_count`
+- 失败不影响测试：SDK 在 `start()` 内静默调用（异常吞掉），进站会给出真正的错误
+
+**请求**
+
+```json
+{
+  "client_id": "SZ-L9-CAL-99-PARAM",
+  "product_model": "DPO4054B",
+  "case_ids": ["tests/test_cal_param.py::TestAmp::test_amp_cal", "..."]
+}
+```
+
+**响应 data**
+
+```json
+{ "recorded": true, "locked": false, "station_id": "CAL-PARAM", "baseline_count": 5 }
+```
+
+---
+
+### 5.3 `POST /api/v1/client/check-in` — 进站（领取工位锁）
 
 进站是**全部防呆卡控的入口**：跳站、复测、固件基线、机型一致性、用例ID清单、锁竞争都在此判定。
 
@@ -376,7 +404,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.3 `POST /api/v1/client/heartbeat` — 保活
+### 5.4 `POST /api/v1/client/heartbeat` — 保活
 
 **请求**
 
@@ -402,7 +430,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.4 `POST /api/v1/client/checkpoint` — 续测断点上报
+### 5.5 `POST /api/v1/client/checkpoint` — 续测断点上报
 
 崩溃续测的核心。按 `case_id` **去重覆盖**，重复上报幂等。
 
@@ -456,7 +484,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.5 `POST /api/v1/client/check-out` — 出站落库（返回 ACK）
+### 5.6 `POST /api/v1/client/check-out` — 出站落库（返回 ACK）
 
 **需求 1 的落点**：必须拿到本接口的 201 回执，才允许拔线流转。
 
@@ -531,7 +559,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.6 `POST /api/v1/client/artifact` — 测试产物上传（结果文件/日志等）
+### 5.7 `POST /api/v1/client/artifact` — 测试产物上传（结果文件/日志等）
 
 **通用产物归档机制**：任何机台客户端（pytest 上位机、独立工控机程序等）均按此上传产物。
 文件落 MinIO（与出厂报告共用同一桶配置，仅前缀不同；MinIO 未配置时上传直接拒绝），
@@ -570,7 +598,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.7 `POST /api/v1/client/release` — 主动放弃锁
+### 5.8 `POST /api/v1/client/release` — 主动放弃锁
 
 ```jsonc
 {"client_id": "SZ-L1-CAL-01", "sn": "C020001", "lock_token": "b1c9...", "reason": "操作员取消"}
@@ -581,7 +609,7 @@ NULL ─────────────→ IDLE ─────────
 
 ---
 
-### 5.8 `GET /api/v1/client/ack` — 上传闭环校验
+### 5.9 `GET /api/v1/client/ack` — 上传闭环校验
 
 ```
 GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>

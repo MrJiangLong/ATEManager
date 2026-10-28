@@ -234,6 +234,14 @@ class ResumeInfo(BaseModel):
     completed_case_ids: List[str] = []
     cursor: Dict[str, Any] = {}
 
+class FlowManifestIn(BaseModel):
+    """录制态草稿上报：机台本次会话的执行序列（有序 case_ids 全集）。"""
+
+    client_id: TrimmedRequired = Field(max_length=128)
+    product_model: TrimmedRequired = Field(max_length=64)
+    case_ids: List[str] = []
+
+
 class CheckInData(BaseModel):
     sn: str
     product_model: str

@@ -2089,6 +2089,59 @@ def test_sn_registry_import_export():
     check(resp.status_code == 400 and resp.json()["code"] == "items_required",
           f"empty import: {resp.status_code} {resp.text}")
 
+def test_case_list_report():
+    """录制态草稿独立上报：不受进站校验影响；内容变化才写；锁定态只读不覆盖。"""
+    pid = f"PROC-TEST-MAN-{STAMP}"
+    mid = "DPO4054B-MAN"
+    st = "ST-MAN-01"
+    cases = ["tests/test_man.py::test_a", "tests/test_man.py::test_b"]
+
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "草稿工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "草稿流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+          params={"process_id": pid})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-MAN", "bound_stations": [st]})
+
+    def report(case_list):
+        return v1("case-list", {"client_id": "SMOKE-MAN", "product_model": mid, "case_ids": case_list})
+
+    # ① 首次上报：写入草稿
+    resp = report(cases)
+    check(resp.status_code == 200 and resp.json()["data"]["recorded"] is True,
+          f"report first: {resp.text}")
+    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+    step = next(s for s in steps if s["station_id"] == st)
+    check(step["baseline_manifest"] == cases and step["baseline_captured_at"],
+          f"manifest captured: {step}")
+
+    # ② 相同内容：recorded=false（不写库）
+    resp = report(cases)
+    check(resp.status_code == 200 and resp.json()["data"]["recorded"] is False,
+          f"report idempotent: {resp.text}")
+
+    # ③ 顺序变化也能录制（这正是独立上报的价值：进站校验拦不住它）
+    resp = report([cases[1], cases[0]])
+    check(resp.status_code == 200 and resp.json()["data"]["recorded"] is True,
+          f"report reorder: {resp.text}")
+    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+    check(next(s for s in steps if s["station_id"] == st)["baseline_manifest"] == [cases[1], cases[0]],
+          "manifest reordered")
+
+    # ④ 锁定后：只读返回，不覆盖草稿
+    resp = admin("POST", "/api/admin/routing/baseline/lock", {"process_id": pid, "station_id": st})
+    check(resp.status_code == 200, f"lock: {resp.text}")
+    resp = report([cases[0]])
+    check(resp.status_code == 200 and resp.json()["data"]["recorded"] is False
+          and resp.json()["data"]["locked"] is True,
+          f"locked read-only: {resp.text}")
+    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+    check(next(s for s in steps if s["station_id"] == st)["baseline_manifest"] == [cases[1], cases[0]],
+          "locked manifest unchanged")
+
+
 def test_station_baseline_lock():
     """工位基线（黄金样本快照锁）：捕获草稿 → 运行中 409 → 锁定物化 → 锁定态严格比对 → 解锁恢复。"""
     pid = f"PROC-TEST-BASE-{STAMP}"
@@ -3002,6 +3055,7 @@ def test_p0_template_upload_without_minio():
     check(resp.status_code == 204, f"cleanup rule: {resp.status_code} {resp.text}")
 
 TESTS = [
+    test_case_list_report,
     test_station_baseline_lock,
     test_sn_registry_status_api,
     test_sn_registry_import_export,

@@ -622,6 +622,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 方法 | 路径 | 说明 | 成功码 |
 |---|---|---|---|
 | POST | `/client/resolve` | 机台身份上报与工位反查（首次自动注册） | 200 |
+| POST | `/client/case-list` | 用例清单上报（录制态草稿）：check-in **前**上报本次执行序列（不受进站校验影响，锁定态只读返回 `recorded=false/locked=true`） | 200 |
 | GET | `/client/sn-registry/status` | SN 登记状态只读查询（上位机路由判定：true=试验设备走研发服 / false=产线件走生产服；布尔返回，不暴露清单） | 200 |
 | POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁；直通机型（`passthrough`）直接 ACK 零写入 | 200 |
 | POST | `/client/heartbeat` | 心跳保活（只刷新失联时间，不续硬超时） | 200 |

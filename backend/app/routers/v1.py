@@ -2,14 +2,16 @@
 
 调用顺序
     1. resolve     机台身份上报 + 工位反查（首次自动注册）
-    2. check-in    进站：`*IDN?` 直读结果建档 + 跳站/复测/固件/用例ID 卡控
+    2. case-list   用例清单上报：本次执行序列写为工位基线草稿（须先于 check-in，
+                   进站被拒时草稿仍已留下真实序列；锁定态只读返回）
+    3. check-in    进站：`*IDN?` 直读结果建档 + 跳站/复测/固件/用例ID 卡控
                    返回 session_id / lock_token；失联或硬超时的锁可被接管（takeover=true）
-    3. heartbeat   保活：只刷新 lock_last_seen_at，硬超时不续期
-    4. checkpoint  续测断点：增量上报已完成用例（按 case_id 幂等覆盖）
-    5. artifact    测试产物上传：结果文件/日志按 case_id 归档 MinIO，引用暂存进会话断点
-    6. check-out   出站：checkpoint 补齐 + 漏测拦截 + 落库并返回 ACK（需求 1）
-    7. ack         上传闭环校验：网络抖动后确认服务端已落库
-    8. release     主动放弃锁（优雅退出 / 放弃本次测试）
+    4. heartbeat   保活：只刷新 lock_last_seen_at，硬超时不续期
+    5. checkpoint  续测断点：增量上报已完成用例（按 case_id 幂等覆盖）
+    6. artifact    测试产物上传：结果文件/日志按 case_id 归档 MinIO，引用暂存进会话断点
+    7. check-out   出站：checkpoint 补齐 + 漏测拦截 + 落库并返回 ACK（需求 1）
+    8. ack         上传闭环校验：网络抖动后确认服务端已落库
+    9. release     主动放弃锁（优雅退出 / 放弃本次测试）
 
 崩溃续测
     上位机重启后 check-in 携带 resume_session_id（同机台亦可自动续），
@@ -37,6 +39,7 @@ from ..services import (
     get_client,
     heartbeat,
     release_lock,
+    report_manifest,
     save_checkpoint,
     stage_artifact,
     touch_client,
@@ -106,6 +109,28 @@ def sn_registry_status(
     登记清单；两端的进站守卫（黑名单/白名单）仍是最终卡控，误路由只会得到 403。"""
     registered = db.get(models.SnRegistry, sn.strip()) is not None
     return _ok("ok.sn_registry_status", {"sn": sn.strip(), "registered": registered})
+
+
+@router.post(
+    "/client/case-list",
+    response_model=schemas.EnvelopeOut,
+    summary="上报用例清单（录制态草稿，check-in 前调用；锁定态只读返回）",
+)
+def case_list_endpoint(
+    payload: schemas.FlowManifestIn,
+    _: str = Depends(api_caller),
+    db: Session = Depends(get_db),
+):
+    """把机台本次会话的执行序列上报为「工位基线草稿」（录制态，独立于进站）。
+
+    用途：先于 check-in 调用——即使进站被拒（必测缺失/顺序不符/固件不符等），
+    草稿也已留下机台真实序列，供工艺员在 Web 审阅并锁定。锁定态不覆盖草稿，
+    返回 recorded=false/locked=true 与当前基线项数。
+    """
+    return _ok(
+        "ok.flow_manifest",
+        report_manifest(db, payload.client_id, payload.product_model, payload.case_ids),
+    )
 
 
 @router.post("/client/check-in", response_model=schemas.EnvelopeOut, summary="进站：防跳站/防复测/固件/用例ID 卡控")

@@ -384,6 +384,79 @@ def _dict_station_label(db, station_id: str) -> str:
     return _label(station_id, st.station_name if st else None)
 
 
+def apply_manifest(ps_row, case_ids) -> bool:
+    """把上报的用例序列写入工位基线草稿（内容变化才写）；返回是否变更。
+
+    不做提交——进站路径由主事务统一提交，独立上报端点由调用方显式提交。
+    """
+    normalized = [c.strip() for c in (case_ids or []) if c and c.strip()]
+    if ps_row.baseline_manifest == normalized:
+        return False
+    ps_row.baseline_manifest = normalized
+    ps_row.baseline_captured_at = utcnow()
+    return True
+
+
+def report_manifest(db: Session, client_id: str, product_model: str, case_ids) -> dict:
+    """录制态草稿上报（独立于进站，不受任何进站校验影响）。
+
+    上位机在 check-in 之前上报本次会话的执行序列：即使进站被拒（必测缺失/
+    顺序不符/固件不符…），草稿也已留下机台真实序列。锁定态不覆盖草稿，
+    仅返回当前基线状态（供上位机感知已受控）。
+    """
+    client = get_client(db, client_id)
+    if client is None:
+        raise not_found(
+            "client_not_registered",
+            f"机台 {client_id} 未注册，请先在管理端登记机台",
+        )
+    model_row = db.get(models.ProductModel, product_model)
+    if model_row is None:
+        raise not_found(
+            "model_not_registered",
+            f"机型 {product_model} 未登记，请先在管理端注册机型",
+        )
+    graph = load_process(db, model_row.process_id)
+    if graph is None:
+        raise not_found(
+            "process_not_found",
+            f"机型 {product_model} 绑定的流程 {model_row.process_id} 不存在",
+        )
+    candidates = sorted(set(_as_list(client.bound_stations)) & set(graph.stations))
+    if not candidates:
+        raise forbidden(
+            "client_not_bound",
+            f"机台 {_label(client.client_id, client.client_name)} 的绑定工位均不在流程 "
+            f"{graph.process_id} 内",
+        )
+    if len(candidates) > 1:
+        raise bad_request(
+            "station_ambiguous",
+            f"机台 {_label(client.client_id, client.client_name)} 在流程内绑定了多个工位"
+            f"（{'、'.join(_station_label(graph, c) for c in candidates)}），请修正机台绑定",
+        )
+    station_id = candidates[0]
+    ps_row = db.get(models.ProcessStation, (model_row.process_id, station_id))
+    if ps_row is None:
+        raise not_found("step_not_found", f"{model_row.process_id}/{station_id}")
+    if ps_row.baseline_locked:
+        return {
+            "recorded": False,
+            "locked": True,
+            "station_id": station_id,
+            "baseline_count": len(ps_row.baseline_manifest or []),
+        }
+    changed = apply_manifest(ps_row, case_ids)
+    if changed:
+        db.commit()
+    return {
+        "recorded": changed,
+        "locked": False,
+        "station_id": station_id,
+        "baseline_count": len(ps_row.baseline_manifest or []),
+    }
+
+
 def check_in(
     db: Session,
     *,
@@ -607,10 +680,7 @@ def check_in(
                 )
         # 录制态捕获：全部守卫通过后覆盖基线草稿（内容变化才写库，避免每次进站徒增写放大）
         if ps_row is not None and case_ids is not None:
-            normalized = [c.strip() for c in case_ids if c and c.strip()]
-            if ps_row.baseline_manifest != normalized:
-                ps_row.baseline_manifest = normalized
-                ps_row.baseline_captured_at = utcnow()
+            apply_manifest(ps_row, case_ids)
 
     # 记下"判定时"观察到的锁状态，供最终加锁做 CAS 校验（见步骤 12）
     observed_status = product.current_status

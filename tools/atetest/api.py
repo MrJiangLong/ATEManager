@@ -464,6 +464,22 @@ class AteClient:
             LOGGER.warning("机台 %s 尚未绑定工位，请在 Web 端「机台管理」补录", self.client_id)
         return data
 
+    def report_case_list(self, client_id: str, product_model: str, case_ids: List[str]) -> dict:
+        """录制造稿上报：把本次执行序列写为工位基线草稿（锁定态只读返回）。
+
+        设计上在 check-in 之前调用——即使进站被拒（必测缺失/顺序不符等），
+        草稿也已留下机台真实序列。
+        """
+        return self.http.data(
+            "POST",
+            "/api/v1/client/case-list",
+            body={
+                "client_id": client_id,
+                "product_model": product_model,
+                "case_ids": case_ids,
+            },
+        )
+
     def check_in(self, sn: str, product_model: str, firmware: str,
                  case_ids: Optional[Sequence[str]] = None, resume: bool = True) -> SessionState:
         """进站：建档 + 防跳站/防复测/固件/用例ID 卡控 + 领取工位锁。
@@ -801,6 +817,14 @@ class AteRun:
         """ 进站必须携全量 collection（含已完成用例），否则 case_id_mismatch 拦截；
         pytest -k 的部分运行同样被拦（防漏测属预期），调试请跑全量 """
         case_ids = [item.nodeid for item in items]
+
+        """ 录制态草稿上报：先于 check-in，保证进站被拒时草稿也已留下真实序列；
+        失败静默（上报失败不影响测试，进站会给出真正的错误） """
+        try:
+            self.client.report_case_list(CLIENT_ID, model, case_ids)
+        except Exception:
+            pass
+
         state = None
         for _ in range(3):
             try:
