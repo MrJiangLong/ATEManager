@@ -357,16 +357,39 @@ async function save() {
 
   const dropped = removedStations()
   const droppedItems = allItems.value.filter((i) => dropped.includes(i.station_id)).length
-  if (droppedItems) {
-    try {
-      await ElMessageBox.confirm(
-        t('configs.removeStepWarn', { stations: dropped.join(', '), count: droppedItems }),
-        t('common.confirm'),
-        { type: 'warning' }
+  // 影响面预演（只读、非阻断）：移除工位/在制品受影响的提前提示；预演失败不阻断保存
+  try {
+    const impact = (
+      await routingApi.topologyImpact(
+        processId.value,
+        steps.value.map((s) => ({
+          station_id: s.station_id,
+          step_order: s.step_order,
+          depends_on: s.depends_on || [],
+          is_optional: !!s.is_optional,
+          invalidates_downstream: !!s.invalidates_downstream,
+        }))
       )
-    } catch {
-      return
+    ).data
+    if (impact.affected_count || impact.removed_items || impact.machines_lost.length || dropped.length) {
+      const lines = []
+      if (dropped.length) {
+        lines.push(t('configs.impactDropped', { stations: dropped.join(', '), count: droppedItems }))
+      }
+      if (impact.affected_count) {
+        lines.push(t('configs.impactWip', { count: impact.affected_count, blocked: impact.blocked_count }))
+      }
+      if (impact.machines_lost.length) {
+        lines.push(t('configs.impactMachines', { count: impact.machines_lost.length }))
+      }
+      try {
+        await ElMessageBox.confirm(lines.join('；'), t('common.confirm'), { type: 'warning' })
+      } catch {
+        return
+      }
     }
+  } catch {
+    // 预演失败（接口异常）不阻断保存
   }
 
   saving.value = true

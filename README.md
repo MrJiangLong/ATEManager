@@ -266,7 +266,7 @@ npm run build                   # 产物输出到 frontend/dist（Docker 镜像�
 | 服务存活 | `GET http://localhost:8000/api/health` → `{"status":"ok"}` |
 | 接口文档 | 浏览器打开 `http://localhost:8000/docs` |
 | 数据就绪 | 登录 Web 端，运营总览应有在制品与趋势数据 |
-| 契约回归 | 执行 `scripts\test-backend.bat`，70 项全部通过 |
+| 契约回归 | 执行 `scripts\test-backend.bat`，74 项全部通过 |
 | 上位机链路 | `python tools/client/ate_client.py --api-key <V1_API_KEY> demo` |
 
 ### 5.5 数据初始化
@@ -404,7 +404,7 @@ ATEManager/
 
 | 表 | 主键 | 作用 |
 |---|---|---|
-| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定；**`is_sequential`（默认 true）严格顺序**——进站要求所有 `step_order` 更小的必跑工位已盖章（选检除外），与 `depends_on` 并存（并行分支流程需显式关闭，如 MSO-AWG） |
+| `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定；**大改两档路径**：①**日常大改（默认）= 原地编辑**同一流程的拓扑/用例——保存时做结构校验、运行中会话拦截，并在确认框展示影响面预演（受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断），在制品由防跳站自动兜底（缺前置进站即拦，走 ROLLBACK/RETEST 处置闭环）；②**真换流程**（产线重构/机型转线）= 克隆新流程 → 影响面预演（在制品逐件判定：交集工位继承、被删工位仅作历史、新增必跑补测）→ 机型改绑（有在制品 409 需 `confirm_switch`）→ 旧流程归档（停用，不可绑定、历史可查）；**`is_sequential`（默认 true）严格顺序**——进站要求所有 `step_order` 更小的必跑工位已盖章（选检除外），与 `depends_on` 并存（并行分支流程需显式关闭，如 MSO-AWG） |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
 | `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；**基线锁定**：`baseline_locked/baseline_manifest/baseline_captured_at`（黄金样本快照锁——录制态进站自动捕获上位机用例序列为草稿，锁定后物化为 `station_items` 并对进站执行全列表严格比对）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
@@ -640,10 +640,10 @@ URL、SCPI 指令、日志文件名里都无需转义。
 |---|---|---|
 | 鉴权 | view | `POST /api/auth/login`、`GET /api/auth/me`、`POST /api/auth/change-password` |
 | 工艺流程 | view / mgr 写 | `GET/POST /api/admin/processes`、`PUT/DELETE /api/admin/processes/{id}` |
-| 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
+| 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`GET /api/admin/product-models/{id}/switch-impact`（改绑流程影响面预演：在制品印章继承/补测、失效机台、拓扑差异）；`PUT` 改绑流程时若有在制品需 `confirm_switch=true`（R2 交集结转，否则 409 `process_switch_wip_confirm_required`）；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
 | SN 登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order`、`invalidates_downstream` 与流程级 `is_sequential`（旧文件缺省 true）旧导出文件缺省兼容）、`POST /api/admin/routing/baseline/lock`、`POST /api/admin/routing/baseline/unlock`（工位基线快照锁：录制态进站自动捕获用例序列草稿，锁定时自动物化为用例清单并开启进站全列表严格比对；锁定工位的用例清单禁止手工编辑）、`GET /api/admin/routing/item-summary` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`POST /api/admin/routing/topology/impact`（保存前影响面预演：草案拓扑只读计算——受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order`、`invalidates_downstream` 与流程级 `is_sequential`（旧文件缺省 true）旧导出文件缺省兼容）、`POST /api/admin/routing/baseline/lock`、`POST /api/admin/routing/baseline/unlock`（工位基线快照锁：录制态进站自动捕获用例序列草稿，锁定时自动物化为用例清单并开启进站全列表严格比对；锁定工位的用例清单禁止手工编辑）、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演与依赖重测确认 `confirm_downstream`，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/batch-undo`（按 `batch_id` 整批撤销，逐条独立生效走单条全部守卫）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |

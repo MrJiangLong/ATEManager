@@ -662,6 +662,11 @@ export default {
     invalidatesDownstream: '依赖重测',
     invalidatesDownstreamTip: '勾选表示重测本工位会改变被测件状态，依赖本工位数据的下游已通过工位需一并重测（处置时需确认）',
     filterStation: '按工位筛选',
+    impactDropped: '移除工位 {stations}（{count} 项用例将停用）',
+    impactWip: '受影响在制品 {count} 件（其中 {blocked} 件缺前置，进站将被拦截）',
+    impactMachines: '{count} 台机台绑定将失效',
+    switchImpactConfirm:
+      '工艺切换影响面：当前有 {count} 件在制品，切换后按新流程判定——交集工位印章继承、新增必跑工位需补测（累计 {stations} 项）、{machines} 台机台绑定将失效。确认切换？',
     strictSequence: '顺序防呆',
     seqHelpOnTitle: '开启：',
     seqHelpOn: '进站要求所有「工步序号更小」的必跑工位已通过（选检工位除外），与依赖配置共同生效',

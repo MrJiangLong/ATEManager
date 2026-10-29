@@ -357,6 +357,61 @@ class ProductModelCreateIn(BaseModel):
     app_match_rule: str = Field(default=FW_RULE_EXACT, pattern=_FW_RULE_PATTERN)
     passthrough: bool = False
 
+class SwitchImpactWip(BaseModel):
+    """改绑预演：单件在制品在目标流程下的继承/补测判定（R2 交集结转口径）。"""
+
+    sn: str
+    current_status: str
+    passed_stations: List[str] = []
+    carried_stations: List[str] = []   # 目标流程仍存在的已盖章工位（印章继承）
+    dropped_stations: List[str] = []   # 旧流程有、目标流程无（历史保留，不参与新判定）
+    to_test_stations: List[str] = []   # 目标流程下需补测的必跑工位（按工步序）
+    completed: bool = False
+
+class SwitchImpactMachine(BaseModel):
+    """改绑后绑定失效的机台（绑定工位均不在目标流程内 → 进站 403 client_not_bound）。"""
+
+    client_id: str
+    client_name: Optional[str] = None
+    bound_stations: List[str] = []
+
+class ModelSwitchImpactOut(BaseModel):
+    """机型改绑流程的影响面预演（只读）。"""
+
+    product_model: str
+    from_process: str
+    from_process_name: Optional[str] = None
+    to_process: str
+    to_process_name: Optional[str] = None
+    wip_count: int = 0
+    wip: List[SwitchImpactWip] = []
+    machines_lost: List[SwitchImpactMachine] = []
+    added_stations: List[str] = []
+    removed_stations: List[str] = []
+    locked_stations: List[str] = []
+
+class TopologyImpactWip(BaseModel):
+    """原地改拓扑的影响面：单件在制品在新草案下的状态。"""
+
+    sn: str
+    product_model: str
+    current_status: str
+    passed_stations: List[str] = []
+    removed_stamps: List[str] = []      # 印章所在工位已被草案移除（历史保留，不参与新判定）
+    missing_prereq: List[str] = []      # 下一必跑工位缺的前置（进站会被拦）
+    blocked: bool = False
+
+class TopologyImpactOut(BaseModel):
+    """拓扑保存前的影响面预演（只读，非阻断）。"""
+
+    process_id: str
+    wip_count: int = 0
+    affected_count: int = 0
+    blocked_count: int = 0
+    removed_items: int = 0
+    machines_lost: List[SwitchImpactMachine] = []
+    wip: List[TopologyImpactWip] = []
+
 class ProductModelUpdateIn(BaseModel):
     process_id: Trimmed = Field(default=None, max_length=64)
     target_fw_version: Trimmed = Field(default=None, max_length=32)
@@ -366,6 +421,8 @@ class ProductModelUpdateIn(BaseModel):
     passthrough: Optional[bool] = None
     # 产线清线确认位：仅关直通（true→false）时消费，不落库
     confirm_drain: bool = False
+    # 工艺切换确认位：改绑流程且存在在制品时消费（R2 交集结转），不落库
+    confirm_switch: bool = False
 
 class SnRegistryOut(ORMModel):
     sn: str

@@ -309,6 +309,205 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     return schemas.ValidateOut(process_id=process_id, ok=ok, issues=issues)
 
 # ---------------------------------------------------------------------
+def topology_impact(
+    db: Session, process_id: str, draft_steps: List[schemas.ProcessStationIn]
+) -> schemas.TopologyImpactOut:
+    """原地改拓扑的影响面预演（只读，非阻断）：草案保留在内存，不落库。
+
+    判定口径：以草案拓扑构造内存流程图，逐件在制品计算
+    - removed_stamps：印章所在工位被草案移除（历史保留，不参与新判定）
+    - missing_prereq/blocked：草案下"下一条必跑工位"缺前置（进站会被防跳站拦）
+    """
+    process = db.get(models.Process, process_id)
+    if process is None:
+        raise not_found("process_not_found", f"流程 {process_id} 不存在")
+
+    saved = (
+        db.query(models.ProcessStation)
+        .filter(models.ProcessStation.process_id == process_id)
+        .all()
+    )
+    old_ids = {row.station_id for row in saved}
+    ordered = sorted(draft_steps, key=lambda x: (x.step_order, x.station_id))
+    draft_ids = {x.station_id for x in ordered}
+
+    names = {
+        row.station_id: row.station_name
+        for row in db.query(models.Station).filter(models.Station.station_id.in_(draft_ids or {""})).all()
+    }
+    graph = ProcessGraph(
+        process_id=process_id,
+        stations=[x.station_id for x in ordered],
+        step_of={x.station_id: x.step_order for x in ordered},
+        deps_of={x.station_id: list(x.depends_on or []) for x in ordered},
+        timeout_of={},
+        name_of=names,
+        items_of={},
+        sequential=bool(process.is_sequential),
+        optional=frozenset(x.station_id for x in ordered if x.is_optional),
+    )
+
+    removed_items = 0
+    removed_ids = old_ids - draft_ids
+    if removed_ids:
+        removed_items = (
+            db.query(models.StationItem)
+            .filter(
+                models.StationItem.process_id == process_id,
+                models.StationItem.station_id.in_(removed_ids),
+                models.StationItem.is_active.is_(True),
+            )
+            .count()
+        )
+
+    model_ids = [
+        row.product_model
+        for row in db.query(models.ProductModel)
+        .filter(models.ProductModel.process_id == process_id)
+        .all()
+    ]
+    wip_rows = (
+        db.query(models.ProductStatus)
+        .filter(
+            models.ProductStatus.product_model.in_(model_ids or [""]),
+            models.ProductStatus.is_completed.is_(False),
+            models.ProductStatus.current_status != models.STATUS_SCRAPPED,
+        )
+        .order_by(models.ProductStatus.sn)
+        .all()
+    )
+
+    required = [s for s in graph.stations if s not in graph.optional]
+    wip: List[schemas.TopologyImpactWip] = []
+    affected = blocked_total = 0
+    for product in wip_rows:
+        passed = set(_as_list(product.passed_stations))
+        removed_stamps = sorted(s for s in old_ids if s not in draft_ids and s in passed)
+        unpassed = [s for s in required if s not in passed]
+        missing = missing_prereq(graph, unpassed[0], passed) if unpassed else []
+        blocked = bool(missing)
+        if blocked or removed_stamps:
+            affected += 1
+        if blocked:
+            blocked_total += 1
+        wip.append(
+            schemas.TopologyImpactWip(
+                sn=product.sn,
+                product_model=product.product_model,
+                current_status=product.current_status,
+                passed_stations=sorted(passed),
+                removed_stamps=removed_stamps,
+                missing_prereq=missing,
+                blocked=blocked,
+            )
+        )
+
+    machines_lost = []
+    for client in db.query(models.StationClient).all():
+        bound = _as_list(client.bound_stations)
+        if bound and (set(bound) & old_ids) and not (set(bound) & draft_ids):
+            machines_lost.append(
+                schemas.SwitchImpactMachine(
+                    client_id=client.client_id,
+                    client_name=client.client_name,
+                    bound_stations=bound,
+                )
+            )
+
+    return schemas.TopologyImpactOut(
+        process_id=process_id,
+        wip_count=len(wip_rows),
+        affected_count=affected,
+        blocked_count=blocked_total,
+        removed_items=removed_items,
+        machines_lost=machines_lost,
+        wip=wip[:50],
+    )
+
+
+def model_switch_impact(db: Session, product_model: str, target_process_id: str) -> schemas.ModelSwitchImpactOut:
+    """机型改绑流程的影响面预演（只读，R2 交集结转口径）。
+
+    - 印章继承：目标流程仍存在的同 ID 工位印章保留（carried）
+    - 历史保留：旧流程有、目标流程无的工位印章仅作历史，不参与新流程判定（dropped）
+    - 补测义务：目标流程的必跑工位中尚未盖章的（to_test，按工步序）
+    - 机台风险：绑定工位与目标流程零交集的机台，切换后将 403 client_not_bound
+    """
+    model_row = db.get(models.ProductModel, product_model)
+    if model_row is None:
+        raise not_found("model_not_registered", f"机型 {product_model} 未登记，请先在管理端注册机型")
+    target = load_process(db, target_process_id)
+    if target is None:
+        raise not_found("process_not_found", f"流程 {target_process_id} 不存在或尚未配置工步")
+    source = load_process(db, model_row.process_id)
+    old_stations = set(source.stations) if source else set()
+    target_set = set(target.stations)
+    target_required = [s for s in target.stations if s not in target.optional]
+
+    wip_rows = (
+        db.query(models.ProductStatus)
+        .filter(
+            models.ProductStatus.product_model == product_model,
+            models.ProductStatus.is_completed.is_(False),
+            models.ProductStatus.current_status != models.STATUS_SCRAPPED,
+        )
+        .order_by(models.ProductStatus.sn)
+        .all()
+    )
+    wip: List[schemas.SwitchImpactWip] = []
+    for product in wip_rows:
+        passed = set(_as_list(product.passed_stations))
+        wip.append(
+            schemas.SwitchImpactWip(
+                sn=product.sn,
+                current_status=product.current_status,
+                passed_stations=sorted(passed),
+                carried_stations=[s for s in target.stations if s in passed],
+                dropped_stations=sorted(s for s in old_stations if s not in target_set and s in passed),
+                to_test_stations=[s for s in target_required if s not in passed],
+                completed=bool(product.is_completed),
+            )
+        )
+
+    machines_lost: List[schemas.SwitchImpactMachine] = []
+    for client in db.query(models.StationClient).all():
+        bound = _as_list(client.bound_stations)
+        # 仅统计“当前服务于本流程”的机台：与旧流程有交集、且与目标流程零交集 → 切换后失效
+        if bound and (set(bound) & old_stations) and not (set(bound) & target_set):
+            machines_lost.append(
+                schemas.SwitchImpactMachine(
+                    client_id=client.client_id,
+                    client_name=client.client_name,
+                    bound_stations=bound,
+                )
+            )
+
+    locked_stations = [
+        row.station_id
+        for row in db.query(models.ProcessStation)
+        .filter(
+            models.ProcessStation.process_id == target_process_id,
+            models.ProcessStation.baseline_locked.is_(True),
+        )
+        .all()
+    ]
+    src_proc = db.get(models.Process, model_row.process_id)
+    tgt_proc = db.get(models.Process, target_process_id)
+    return schemas.ModelSwitchImpactOut(
+        product_model=product_model,
+        from_process=model_row.process_id,
+        from_process_name=src_proc.process_name if src_proc else None,
+        to_process=target_process_id,
+        to_process_name=tgt_proc.process_name if tgt_proc else None,
+        wip_count=len(wip_rows),
+        wip=wip[:50],
+        machines_lost=machines_lost,
+        added_stations=[s for s in target.stations if s not in old_stations],
+        removed_stations=sorted(old_stations - target_set),
+        locked_stations=sorted(locked_stations),
+    )
+
+
 def process_overview(db: Session) -> List[schemas.ProcessStatOut]:
     """流程清单 + 机型数 / 工位数 / 测试项数。"""
     result = []

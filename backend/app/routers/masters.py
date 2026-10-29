@@ -12,7 +12,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404
 from ..security import current_user, require_manager
-from ..services.routing import process_overview, load_process
+from ..services.routing import load_process, model_switch_impact, process_overview
 from ..services.timeutil import utcnow
 
 router = APIRouter()
@@ -66,9 +66,17 @@ def update_process(
 def delete_process(process_id: str, db: Session = Depends(get_db), user=Depends(require_manager)):
     get_or_404(db, models.Process, process_id, "process")
     if db.query(models.ProductModel).filter(models.ProductModel.process_id == process_id).count():
-        raise conflict_error("process_has_models", "process_has_models: reassign its models first")
+        raise conflict_error(
+            "process_has_models",
+            f"删除拦截：流程 {process_id} 仍有机型绑定，不能删除。"
+            f"日常调整请直接原地编辑该流程的拓扑与用例；确需换流程时走「克隆 → 影响面预演 → "
+            f"机型改绑（在制品交集结转）→ 旧流程归档（停用）」路径",
+        )
     if db.query(models.ProcessStation).filter(models.ProcessStation.process_id == process_id).count():
-        raise conflict_error("process_has_steps", "process_has_steps: remove its topology first")
+        raise conflict_error(
+            "process_has_steps",
+            f"删除拦截：流程 {process_id} 仍有工步拓扑，不能删除。如需废弃请归档（停用），保留历史可追溯",
+        )
     # 否则存量孤儿项会让流程永远删不掉。
     db.query(models.StationItem).filter(models.StationItem.process_id == process_id).delete(
         synchronize_session=False
@@ -108,6 +116,53 @@ def update_model(
     row = get_or_404(db, models.ProductModel, product_model, "model")
     if payload.process_id:
         _get_active_process(db, payload.process_id)
+        # 工艺切换（改绑流程）：存在在制品时必须显式确认（R2 交集结转——
+        # 印章按新流程判定：交集工位继承、被删工位仅作历史、新增必跑需补测）
+        if payload.process_id != row.process_id:
+            # 测试中的件：改绑后出站会按新流程校验工位 → station_not_in_process，
+            # 必须先完成或中止，因此不做“确认放行”
+            testing = (
+                db.query(models.ProductStatus)
+                .filter(
+                    models.ProductStatus.product_model == row.product_model,
+                    models.ProductStatus.current_status == models.STATUS_TESTING,
+                )
+                .count()
+            )
+            if testing:
+                raise conflict_error(
+                    "process_switch_blocked_by_running",
+                    f"改绑拦截：机型 {row.product_model} 有 {testing} 个序列号正在测试中，"
+                    f"改绑后出站会因工位不在新流程被拒。请先完成或中止这些会话再切换",
+                    data={"testing": testing},
+                )
+            wip = (
+                db.query(models.ProductStatus)
+                .filter(
+                    models.ProductStatus.product_model == row.product_model,
+                    models.ProductStatus.is_completed.is_(False),
+                    models.ProductStatus.current_status != models.STATUS_SCRAPPED,
+                )
+                .count()
+            )
+            if wip and not payload.confirm_switch:
+                src = db.get(models.Process, row.process_id)
+                tgt = db.get(models.Process, payload.process_id)
+                src_label = (
+                    f"{row.process_id}（{src.process_name}）" if src and src.process_name else row.process_id
+                )
+                tgt_label = (
+                    f"{payload.process_id}（{tgt.process_name}）"
+                    if tgt and tgt.process_name
+                    else payload.process_id
+                )
+                raise conflict_error(
+                    "process_switch_wip_confirm_required",
+                    f"工艺切换确认：机型 {row.product_model} 当前有 {wip} 件在制品，"
+                    f"从流程 {src_label} 切换到 {tgt_label} 后将按新流程判定"
+                    f"（交集工位印章继承、新增必跑工位需补测），确认切换？",
+                    data={"wip": wip, "from_process": row.process_id, "to_process": payload.process_id},
+                )
     # 模式切换校验（直通 ⇄ 严格卡控）
     new_mode = payload.passthrough
     if new_mode is not None and new_mode != row.passthrough:
@@ -139,17 +194,36 @@ def update_model(
             if wip:
                 raise conflict_error("model_has_wip", f"model_has_wip: {wip} units in flight")
     for key, value in payload.model_dump(exclude_unset=True, exclude_none=True).items():
-        if key == "confirm_drain":  # 确认位仅消费不落库
+        if key in ("confirm_drain", "confirm_switch"):  # 确认位仅消费不落库
             continue
         setattr(row, key, value)
     db.commit()
     return row
 
+@model_router.get(
+    "/{product_model}/switch-impact",
+    response_model=schemas.ModelSwitchImpactOut,
+    summary="改绑流程影响面预演（在制品继承/补测、失效机台、拓扑差异）",
+)
+def model_switch_impact_endpoint(
+    product_model: str,
+    target_process_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    """只读预演：改绑到目标流程后，在制品逐件的印章继承/补测判定与机台绑定风险。"""
+    return model_switch_impact(db, product_model, target_process_id)
+
+
 @model_router.delete("/{product_model}", status_code=204, summary="删除机型(存在在制品或台账时拒绝)")
 def delete_model(product_model: str, db: Session = Depends(get_db), user=Depends(require_manager)):
     get_or_404(db, models.ProductModel, product_model, "model")
     if db.query(models.ProductStatus).filter(models.ProductStatus.product_model == product_model).count():
-        raise conflict_error("model_in_use", "model_in_use: WIP products reference this model")
+        raise conflict_error(
+            "model_in_use",
+            f"删除拦截：机型 {product_model} 已有在制品/台账记录，不能删除（历史需可追溯）。"
+            f"如需退出使用，请改绑到归档流程或停止下发",
+        )
     db.delete(db.get(models.ProductModel, product_model))
     db.commit()
 

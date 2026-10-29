@@ -660,6 +660,11 @@ export default {
     invalidatesDownstream: 'Dependency Retest',
     invalidatesDownstreamTip: 'Retesting this station changes the UUT state; passed downstream stations that depend on it must be retested together (confirmation required at disposition)',
     filterStation: 'Filter by station',
+    impactDropped: 'Removed stations {stations} ({count} cases will be deactivated)',
+    impactWip: '{count} WIP units affected ({blocked} lack prerequisites and will be blocked at check-in)',
+    impactMachines: '{count} machines lose their binding',
+    switchImpactConfirm:
+      'Process switch impact: {count} WIP units will be evaluated by the new flow — shared stations keep their stamps, new mandatory stations need retest ({stations} in total), and {machines} machines lose their binding. Switch now?',
     strictSequence: 'Sequence guard',
     seqHelpOnTitle: 'On: ', 
     seqHelpOn: 'check-in requires every earlier non-optional station to be passed (optional stations excluded); works together with depends_on',

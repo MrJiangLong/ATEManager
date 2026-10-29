@@ -161,6 +161,8 @@ const isEdit = ref(false)
 const saving = ref(false)
 // 编辑起点是否为直通：关直通时触发清线确认，确认后才携带 confirm_drain
 const wasPassthrough = ref(false)
+// 编辑起点的流程：改绑时先做影响面预演，确认后才携带 confirm_switch
+const originalProcessId = ref('')
 const form = reactive({
   product_model: '',
   process_id: '',
@@ -210,6 +212,7 @@ function openCreate() {
 function openEdit(row) {
   isEdit.value = true
   wasPassthrough.value = !!row.passthrough
+  originalProcessId.value = row.process_id
   Object.assign(form, {
     product_model: row.product_model,
     process_id: row.process_id,
@@ -256,6 +259,28 @@ async function submit() {
     }
     if (isEdit.value) {
       if (wasPassthrough.value && !form.passthrough) payload.confirm_drain = true
+      // 工艺切换：改绑流程且存在在制品时，先预演影响面并要求显式确认（R2 交集结转）
+      if (form.process_id !== originalProcessId.value) {
+        const impact = (await modelApi.switchImpact(form.product_model, form.process_id)).data
+        if (impact.wip_count > 0) {
+          const toTest = impact.wip.reduce((n, w) => n + w.to_test_stations.length, 0)
+          try {
+            await ElMessageBox.confirm(
+              t('configs.switchImpactConfirm', {
+                count: impact.wip_count,
+                stations: toTest,
+                machines: impact.machines_lost.length,
+              }),
+              t('common.confirm'),
+              { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+            )
+          } catch {
+            saving.value = false
+            return
+          }
+          payload.confirm_switch = true
+        }
+      }
       await modelApi.update(form.product_model, payload)
     } else {
       await modelApi.create({ product_model: form.product_model.trim(), ...payload })

@@ -77,6 +77,11 @@ export const modelApi = {
   create: (data) => api.post('/admin/product-models', data),
   update: (productModel, data) => api.put(`/admin/product-models/${enc(productModel)}`, data),
   remove: (productModel) => api.delete(`/admin/product-models/${enc(productModel)}`),
+  /** 改绑流程影响面预演：在制品印章继承/补测判定、失效机台、拓扑差异 */
+  switchImpact: (productModel, targetProcessId) =>
+    api.get(`/admin/product-models/${enc(productModel)}/switch-impact`, {
+      params: { target_process_id: targetProcessId },
+    }),
 }
 
 /** 主数据：试验设备登记（SN 准入极性的事实来源，语义由部署环境解释） */
@@ -111,6 +116,9 @@ export const routingApi = {
   listSteps: (processId) => api.get('/admin/routing/stations', { params: { process_id: processId } }),
   saveSteps: (processId, steps) =>
     api.put('/admin/routing/stations', steps, { params: { process_id: processId } }),
+  /** 拓扑保存前影响面预演（只读、非阻断）：草案不落库 */
+  topologyImpact: (processId, steps) =>
+    api.post('/admin/routing/topology/impact', steps, { params: { process_id: processId } }),
   /** 工位基线：锁定（草稿物化为用例清单）与解锁（回录制态） */
   lockBaseline: (data) => api.post('/admin/routing/baseline/lock', data),
   unlockBaseline: (data) => api.post('/admin/routing/baseline/unlock', data),

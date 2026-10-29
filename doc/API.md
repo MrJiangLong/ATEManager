@@ -638,6 +638,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 400 | `station_mismatch` | 10 | checkpoint | 会话属于其他工位 |
 | 400 | `artifact_empty` | 10 | artifact | 产物文件内容为空 |
 | 400 | `artifact_too_large` | 10 | artifact | 产物文件超过 `ARTIFACT_MAX_BYTES` 上限 |
+| 409 | `process_switch_wip_confirm_required` | 10 | 管理端机型改绑流程 | 存在在制品，需显式确认（`data.wip`/`from_process`/`to_process`）——切换后印章按新流程判定（交集工位继承、新增必跑补测） |
 | 409 | `baseline_locked` | 10 | 管理端 items 增删改/导入 | 工位基线已锁定：用例清单由基线固化，需先解锁再编辑 |
 | 409 | `baseline_already_locked` | 10 | 管理端 baseline/lock | 工位基线已处于锁定态 |
 | 409 | `baseline_not_locked` | 10 | 管理端 baseline/unlock | 工位基线未锁定，无需解锁 |

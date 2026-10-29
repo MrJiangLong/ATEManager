@@ -2142,6 +2142,137 @@ def test_case_list_report():
           "locked manifest unchanged")
 
 
+def test_topology_impact_preview():
+    """原地改拓扑的影响面预演（只读）：草案下在制品受阻 / 失效用例 / 失效机台。"""
+    pid = f"PROC-TEST-IPT-{STAMP}"
+    mid = "DPO4054B-IMP"
+    s1, s2 = "SIC-01", "SIC-02"
+    for sid in (s1, s2):
+        admin("POST", "/api/admin/stations", {"station_id": sid, "station_name": sid})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "影响面流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": s1, "step_order": 10, "depends_on": []},
+           {"station_id": s2, "step_order": 20, "depends_on": [s1]}],
+          params={"process_id": pid})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-IMP-1", "bound_stations": [s1]})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-IMP-2", "bound_stations": [s2]})
+    # 首站配一条用例（供失效统计）
+    admin("POST", "/api/admin/routing/items",
+          {"process_id": pid, "station_id": s1, "case_id": "tests/imp.py::t1", "item_name": "t1"})
+
+    # 造一件未完工在制品（只过首站）
+    sn = f"SIMRS-IMP-{STAMP}"
+    resp = v1("check-in", {"client_id": "SMOKE-IMP-1", "sn": sn, "product_model": mid,
+                           "firmware": FW, "case_ids": ["tests/imp.py::t1"]})
+    check(resp.status_code == 200, f"imp check-in: {resp.text}")
+    resp = v1("check-out", {"client_id": "SMOKE-IMP-1", "sn": sn, "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(["tests/imp.py::t1"]), "duration_ms": 1000})
+    check(resp.status_code == 201, f"imp check-out: {resp.text}")
+
+    # 草案移除首站 s1：在制品 s1 印章成为“仅历史”（不再参与判定），因已过 s1 故不阻断
+    draft = [{"station_id": s2, "step_order": 20, "depends_on": [s1]}]
+    resp = admin("POST", "/api/admin/routing/topology/impact", draft, params={"process_id": pid})
+    check(resp.status_code == 200, f"impact: {resp.text}")
+    imp = resp.json()
+    check(imp["wip_count"] == 1 and imp["affected_count"] == 1 and imp["blocked_count"] == 0,
+          f"impact counts: {imp}")
+    check(imp["removed_items"] == 1, f"impact removed items: {imp}")
+    w = imp["wip"][0]
+    check(w["sn"] == sn and w["removed_stamps"] == [s1] and w["blocked"] is False,
+          f"impact wip: {w}")
+    check([m["client_id"] for m in imp["machines_lost"]] == ["SMOKE-IMP-1"],
+          f"impact machines: {imp['machines_lost']}")
+
+    # 草案让下一必跑工位依赖一个未过工位 → 该件在草案下会被防跳站拦住
+    blocked_draft = [{"station_id": s1, "step_order": 10, "depends_on": []},
+                     {"station_id": s2, "step_order": 20, "depends_on": ["SIC-99"]}]
+    resp = admin("POST", "/api/admin/routing/topology/impact", blocked_draft, params={"process_id": pid})
+    check(resp.status_code == 200, f"impact blocked: {resp.text}")
+    imp_b = resp.json()
+    check(imp_b["blocked_count"] == 1 and imp_b["wip"][0]["missing_prereq"] == ["SIC-99"],
+          f"impact blocked detail: {imp_b}")
+
+    # 草案与原样一致 → 无影响（非阻断预演的自检）
+    same = [{"station_id": s1, "step_order": 10, "depends_on": []},
+            {"station_id": s2, "step_order": 20, "depends_on": [s1]}]
+    resp = admin("POST", "/api/admin/routing/topology/impact", same, params={"process_id": pid})
+    check(resp.status_code == 200 and resp.json()["affected_count"] == 0
+          and resp.json()["blocked_count"] == 0, f"impact no-op: {resp.text}")
+
+
+def test_model_switch_impact_and_confirm():
+    """改绑流程（工艺切换）：影响面预演 + 在制品存在时强制显式确认（R2 交集结转）。"""
+    pa = f"PROC-TEST-SWA-{STAMP}"
+    pb = f"PROC-TEST-SWB-{STAMP}"
+    mid = "DPO4054B-SW"
+    s1, s2, s3 = "SIA-01", "SIA-02", "SIB-01"
+    for sid in (s1, s2, s3):
+        admin("POST", "/api/admin/stations", {"station_id": sid, "station_name": sid})
+    admin("POST", "/api/admin/processes", {"process_id": pa, "process_name": "切换源流程"})
+    admin("POST", "/api/admin/processes", {"process_id": pb, "process_name": "切换目标流程"})
+    # 源流程：SIA-01 → SIA-02；目标流程：SIA-01 → SIB-01（SIA-02 被移除、SIB-01 为新增）
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": s1, "step_order": 10, "depends_on": []},
+           {"station_id": s2, "step_order": 20, "depends_on": [s1]}],
+          params={"process_id": pa})
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": s1, "step_order": 10, "depends_on": []},
+           {"station_id": s3, "step_order": 20, "depends_on": [s1]}],
+          params={"process_id": pb})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pa, "target_fw_version": FW})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-SW-1", "bound_stations": [s1]})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-SW-2", "bound_stations": [s2]})
+
+    # 造一件在制品：只过首站（未完工）
+    sn = f"SIMRS-SW-{STAMP}"
+    cases = ["tests/sw.py::t1"]
+    resp = v1("check-in", {"client_id": "SMOKE-SW-1", "sn": sn, "product_model": mid,
+                           "firmware": FW, "case_ids": cases})
+    check(resp.status_code == 200, f"sw check-in: {resp.text}")
+    resp = v1("check-out", {"client_id": "SMOKE-SW-1", "sn": sn, "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(cases), "duration_ms": 1000})
+    check(resp.status_code == 201, f"sw check-out: {resp.text}")
+
+    # ① 预演：继承 SIA-01、补测 SIB-01、移除 SIA-02 不参与判定、SMOKE-SW-2 绑定失效
+    resp = admin("GET", f"/api/admin/product-models/{mid}/switch-impact", params={"target_process_id": pb})
+    check(resp.status_code == 200, f"impact: {resp.text}")
+    imp = resp.json()
+    check(imp["wip_count"] == 1, f"impact wip count: {imp}")
+    item = imp["wip"][0]
+    check(item["sn"] == sn and item["carried_stations"] == [s1]
+          and item["to_test_stations"] == [s3] and item["dropped_stations"] == [],
+          f"impact carry: {item}")
+    check([m["client_id"] for m in imp["machines_lost"]] == ["SMOKE-SW-2"],
+          f"impact machines: {imp['machines_lost']}")
+    check(imp["added_stations"] == [s3] and imp["removed_stations"] == [s2],
+          f"impact diff: {imp}")
+
+    # ② 未确认 → 409
+    resp = admin("PUT", f"/api/admin/product-models/{mid}", {"process_id": pb})
+    check(resp.status_code == 409 and resp.json()["code"] == "process_switch_wip_confirm_required"
+          and resp.json()["data"]["wip"] == 1, f"switch guard: {resp.text}")
+
+    # ③ 存在测试中（TESTING）件 → 改绑硬拦截（出站会因工位不在新流程被拒）
+    sn2 = f"SIMRS-SW2-{STAMP}"
+    resp = v1("check-in", {"client_id": "SMOKE-SW-1", "sn": sn2, "product_model": mid,
+                           "firmware": FW, "case_ids": cases})
+    check(resp.status_code == 200, f"sw2 check-in: {resp.text}")
+    resp = admin("PUT", f"/api/admin/product-models/{mid}", {"process_id": pb, "confirm_switch": True})
+    check(resp.status_code == 409 and resp.json()["code"] == "process_switch_blocked_by_running",
+          f"switch blocked by running: {resp.text}")
+    v1("release", {"client_id": "SMOKE-SW-1", "sn": sn2})
+
+    # ④ 确认后放行
+    resp = admin("PUT", f"/api/admin/product-models/{mid}", {"process_id": pb, "confirm_switch": True})
+    check(resp.status_code == 200 and resp.json()["process_id"] == pb, f"switch confirmed: {resp.text}")
+    # 确认位不落库：再查机型仍为 pb 且无残留字段报错
+    rows = admin("GET", "/api/admin/product-models").json()
+    check(next(m for m in rows if m["product_model"] == mid)["process_id"] == pb, "switch persisted")
+
+
 def test_station_seq_guard():
     """严格顺序（默认开）：已过首站后，跳站仍被前序必跑工位拦；关闭后恢复 DAG 语义。"""
     pid = f"PROC-TEST-SEQ-{STAMP}"
@@ -3113,6 +3244,8 @@ def test_p0_template_upload_without_minio():
 
 TESTS = [
     test_case_list_report,
+    test_topology_impact_preview,
+    test_model_switch_impact_and_confirm,
     test_station_seq_guard,
     test_station_baseline_lock,
     test_sn_registry_status_api,

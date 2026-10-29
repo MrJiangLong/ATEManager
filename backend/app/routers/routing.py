@@ -14,7 +14,12 @@ from .. import models, schemas
 from ..database import get_db
 from ..errors import bad_request, conflict_error, get_or_404, not_found
 from ..security import current_user, require_manager
-from ..services.routing import process_topology, station_item_summary, validate_process
+from ..services.routing import (
+    process_topology,
+    station_item_summary,
+    topology_impact,
+    validate_process,
+)
 from ..services.timeutil import utcnow
 
 router = APIRouter(prefix="/api/admin/routing", tags=["admin-工艺拓扑"])
@@ -57,6 +62,23 @@ def list_steps(
 ):
     get_or_404(db, models.Process, process_id, "process")
     return process_topology(db, process_id).steps
+
+@router.post(
+    "/topology/impact",
+    response_model=schemas.TopologyImpactOut,
+    summary="拓扑保存前影响面预演（只读、非阻断：草案不落库）",
+)
+def topology_impact_endpoint(
+    payload: List[schemas.ProcessStationIn],
+    process_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    """用请求体里的**草案拓扑**计算影响面：受影响在制品（缺前置将被拦）、
+    被移除工位上的失效用例数、绑定失效的机台。仅提示，不阻断保存。"""
+    get_or_404(db, models.Process, process_id, "process")
+    return topology_impact(db, process_id, payload)
+
 
 @router.put("/stations", response_model=schemas.TopologySaveOut, summary="整体保存工步拓扑")
 def save_steps(
