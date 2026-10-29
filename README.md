@@ -351,7 +351,7 @@ ATEManager/
 │   ├── client/               上位机接入：ate_client.py（SDK 参考实现 + 演示）
 │   │                           line_simulator.py（多机台并发模拟）/ sim_local.py（一键仿真）
 │   ├── atetest/              上位机契约自测工程（pytest 全场景：防呆/漏测/崩溃续测/锁冲突）
-│   │   └── cli.py            **ate-cli**：非 Python 程序的命令行接入（一次性子命令 + `serve` 常驻 JSON-lines；stdout JSON + 退出码 0/10/11/12）
+│   │   └── cli.py            **ate-cli**：非 Python 程序的常驻接入（逐行 JSON；stdout JSON + 退出码 0/10/11/12/130）
 │   ├── cases/                用例清单：sync_cases.py（全量同步）+ cases.example.json（输入模板）
 │   └── reports/              出厂报告域：report_test.py（E2E）
 │                               pdf_worker/（PDF 外部转换 Worker）/ plugin/（插件开发包）
@@ -685,7 +685,7 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | 文件 | 定位 |
 |---|---|
 | `tools/client/ate_client.py` | 参考实现 SDK + 演示脚本（仅标准库，非产线执行器） |
-| `tools/atetest/cli.py` | **ate-cli**：任意语言经子进程接入（check-in/checkpoint/artifact/check-out/status/sn-status/serve 常驻等 13 个命令），`build_cli.bat` 可打单文件 exe |
+| `tools/atetest/cli.py` | **ate-cli**：任意语言经常驻子进程接入（逐行 JSON：check-in/checkpoint/artifact/check-out/status/sn-status 等 14 个命令），`build_cli.bat` 可打单文件 exe |
 | `tools/client/line_simulator.py` | 多机台并发验证（锁竞争 / 崩溃续测 / 失联接管） |
 
 ---

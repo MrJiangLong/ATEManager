@@ -1,22 +1,20 @@
-# -*- coding: utf-8 -*-
-"""ate-cli：非 Python 程序的命令行接入通道（stdout 纯 JSON，退出码即契约）。
+"""ate-cli：给非 Python 程序的**常驻**接入通道（stdin/stdout JSON-lines）。
 
-任何语言/独立程序都可以通过"子进程 + 读 stdout + 看退出码"接入 ATE，
-无需实现 HTTP 与心跳：会话状态（session/lock/断点）由本 CLI 落盘复用。
+只提供一种形态：进程常驻，按行收发 JSON。宿主（C#/LabVIEW/bat/任意语言）只需：
+    1. 启动一次：ate-cli --url ... --key ... --client ... --state ...
+    2. 写一行 JSON 请求 → 读一行 JSON 响应（按 id 配对，事件行看 event 字段）
+    3. 非 0 的 exit 即代表业务拦截/网络不可达，宿主据此停机
 
-典型用法（一个工位 = 一次会话，多个子流程 = 多个 checkpoint）：
+启动即探测服务端（GET /api/health，1s）：不可达直接退出码 12（fail-fast）。
 
-    ate-cli --state ./ate-state.json check-in --sn C020001 --model DPO4054B --fw V3.20
-    ate-cli --state ./ate-state.json heartbeat --loop          # 后台保活
-    ate-cli --state ./ate-state.json checkpoint --case cal_dc --result PASS --values '{"gain":1.02}'
-    ate-cli --state ./ate-state.json artifact --case cal_dc --file ./logs/dc.log
-    ate-cli --state ./ate-state.json check-out --duration 120000
+请求示例：
+    {"id": 1, "cmd": "check-in", "sn": "C020001", "model": "DPO4054B", "fw": "V3.20"}
+    {"id": 2, "cmd": "checkpoint", "case": "cal_dc", "result": "PASS"}
+    {"id": 3, "cmd": "check-out"}
+    {"cmd": "quit"}
 
-约定：
-    - stdout 只输出 JSON（日志走 stderr），一行一个对象
-    - 退出码：0 = 放行；10 = 业务拦截（重号/跳站/固件/漏测…）；12 = 网络不可达；1 = 其它错误
-    - 服务端拦截时 stdout 形如 {"ok": false, "code": "missing_prereq", "message": "...", "data": {...}}
-    - API Key 走环境变量 ATE_API_KEY（命令行参数会出现在进程列表）
+约定：stdout 只输出 JSON（日志走 stderr）；退出码 0 放行 / 10 业务拦截 / 11 失锁 /
+12 网络不可达 / 130 被中断（Ctrl+C）。
 """
 from __future__ import annotations
 
@@ -179,18 +177,6 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _read_cases_file(path: str) -> List[str]:
-    """从文件读用例序列：JSON 数组，或每行一个（# 开头为注释）。"""
-    text = Path(path).expanduser().read_text(encoding="utf-8").strip()
-    if text.startswith("["):
-        try:
-            data = json.loads(text)
-        except ValueError as exc:
-            raise SystemExit(_fail("invalid_cases", f"--cases-file JSON 解析失败：{exc}"))
-        return [str(c).strip() for c in data if str(c).strip()]
-    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
-
-
 def _as_cases(value: Any) -> List[str]:
     """用例序列兼容单值/数组（CLI: --case 多次；serve: "case": ["a","b"]）。"""
     if not value:
@@ -200,19 +186,10 @@ def _as_cases(value: Any) -> List[str]:
     return [str(value)]
 
 
-def _cases_from_args(args: argparse.Namespace) -> List[str]:
-    """--case 与 --cases-file 合并（nodeid 长/数量多时用文件，避免命令行长度上限）。"""
-    cases = _as_cases(getattr(args, "case", None))
-    path = getattr(args, "cases_file", None)
-    if path:
-        cases.extend(_read_cases_file(path))
-    return cases
-
-
 def cmd_case_list(args: argparse.Namespace) -> int:
-    cases = _cases_from_args(args)
+    cases = _as_cases(getattr(args, "case", None))
     if not cases:
-        return _fail("invalid_cases", "至少需要一个 --case", EXIT_USAGE)
+        return _fail("invalid_cases", "至少需要一个 case", EXIT_USAGE)
     client = build_client(args)
     data = client.report_case_list(args.client, args.model, cases)
     emit({"ok": True, "command": "case-list", "data": data})
@@ -221,11 +198,11 @@ def cmd_case_list(args: argparse.Namespace) -> int:
 
 def cmd_check_in(args: argparse.Namespace) -> int:
     if not (args.sn and args.model and args.fw):
-        return _fail("missing_args", "check-in 需要 --sn/--model/--fw", EXIT_USAGE)
+        return _fail("missing_args", "check-in 需要 sn/model/fw", EXIT_USAGE)
     client = build_client(args)
     state = client.check_in(
         args.sn, args.model, args.fw,
-        case_ids=_cases_from_args(args) or None,
+        case_ids=_as_cases(getattr(args, "case", None)) or None,
         resume=not getattr(args, "no_resume", False),
     )
     if getattr(args, "no_heartbeat", False):
@@ -250,41 +227,18 @@ def cmd_check_in(args: argparse.Namespace) -> int:
 
 
 def cmd_heartbeat(args: argparse.Namespace) -> int:
+    """单次保活（常驻模式下 check-in 已自动起后台心跳，这里用于宿主要求即时续期）。"""
     client = build_client(args)
     load_session(client, args)
-    if not args.loop:
-        data = client.heartbeat()
-        emit({"ok": True, "command": "heartbeat", "data": data})
-        return EXIT_OK
-    """ 循环保活：每次 beat 输出一行 JSON；失锁/会话终止即退出（宿主据此停机） """
-    interval = max(5.0, float(args.interval))
-    log(f"heartbeat loop started (interval={interval}s, state={args.state})")
-    while True:
-        try:
-            data = client.heartbeat()
-        except ate.ApiError as exc:
-            emit({"ok": False, "command": "heartbeat", "code": exc.code, "message": str(exc)})
-            if exc.is_network:
-                time.sleep(interval)
-                continue
-            return EXIT_LOCK_LOST
-        emit({"ok": True, "command": "heartbeat", "data": data})
-        if data.get("holding_lock") is False:
-            return EXIT_LOCK_LOST
-        time.sleep(interval)
+    data = client.heartbeat()
+    emit({"ok": True, "command": "heartbeat", "data": data})
+    return EXIT_OK
 
 
 def cmd_checkpoint(args: argparse.Namespace) -> int:
     client = build_client(args)
     load_session(client, args)
-    items_raw = getattr(args, "items", None)
-    items_file = getattr(args, "items_file", None)
-    if items_file:
-        try:
-            items_raw = json.loads(Path(items_file).expanduser().read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            return _fail("invalid_items", f"--items-file 读取失败：{exc}", EXIT_USAGE)
-    batch = _items_from_json(items_raw)
+    batch = _items_from_json(getattr(args, "items", None))
     case_id = _as_cases(args.case)
     if case_id:
         item: Dict[str, Any] = {"case_id": case_id[0], "result": _result(args.result)}
@@ -300,7 +254,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
                     return _fail("invalid_values", f"--values 必须是 JSON：{exc}", EXIT_USAGE)
         batch.append(item)
     if not batch:
-        return _fail("missing_args", "checkpoint 需要 --case（或 --items）", EXIT_USAGE)
+        return _fail("missing_args", "checkpoint 需要 case（或 items）", EXIT_USAGE)
     merged = client.checkpoint(batch)
     emit({"ok": True, "command": "checkpoint", "data": {"merged_count": merged, "reported": len(batch)}})
     return EXIT_OK
@@ -320,14 +274,7 @@ def cmd_artifact(args: argparse.Namespace) -> int:
 def cmd_check_out(args: argparse.Namespace) -> int:
     client = build_client(args)
     load_session(client, args)
-    items_raw = getattr(args, "items", None)
-    items_file = getattr(args, "items_file", None)
-    if items_file:
-        try:
-            items_raw = json.loads(Path(items_file).expanduser().read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            return _fail("invalid_items", f"--items-file 读取失败：{exc}", EXIT_USAGE)
-    items = _items_from_json(items_raw)
+    items = _items_from_json(getattr(args, "items", None))
     data = client.check_out(items, duration_ms=getattr(args, "duration", None) or 0,
                             reason=getattr(args, "reason", None) or "")
     emit({
@@ -360,7 +307,7 @@ def cmd_sn_status(args: argparse.Namespace) -> int:
     """SN 登记状态（只读）：宿主据 registered 决定连测试服还是生产服。"""
     sn = (getattr(args, "sn", "") or "").strip()
     if not sn:
-        return _fail("missing_args", "sn-status 需要 --sn", EXIT_USAGE)
+        return _fail("missing_args", "sn-status 需要 sn", EXIT_USAGE)
     registered = ate.sn_registered(args.url, args.key, sn, timeout=args.timeout)
     emit({"ok": True, "command": "sn-status", "data": {"sn": sn, "registered": bool(registered)}})
     return EXIT_OK
@@ -414,7 +361,7 @@ def cmd_release(args: argparse.Namespace) -> int:
 
 def cmd_state(args: argparse.Namespace) -> int:
     if not args.state:
-        return _fail("no_session", "缺少 --state", EXIT_USAGE)
+        return _fail("no_session", "缺少 state（--state 或 ATE_STATE_FILE）", EXIT_USAGE)
     path = Path(args.state).expanduser()
     if args.clear:
         try:
@@ -446,7 +393,7 @@ def cmd_state(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-""" serve 模式可路由的命令（一次性子命令与常驻模式共用同一批处理器） """
+""" 常驻模式可路由的命令表 """
 SERVE_COMMANDS = {
     "resolve": cmd_resolve,
     "case-list": cmd_case_list,
@@ -465,7 +412,7 @@ SERVE_COMMANDS = {
 """ 请求字段 → 处理器参数（serve 用 JSON 覆盖全局参数） """
 _SERVE_FIELDS = (
     "sn", "model", "fw", "case", "result", "duration", "values", "items",
-    "reason", "checkout_id", "client", "app", "timeout", "url",
+    "reason", "checkout_id", "file", "client", "app", "timeout", "url",
 )
 
 
@@ -473,8 +420,8 @@ _SERVE_FIELDS = (
 _SERVE_DEFAULTS = {
     "sn": "", "model": "", "fw": "", "case": None, "result": "PASS",
     "duration": None, "values": None, "items": None, "reason": None,
-    "checkout_id": None, "no_resume": False, "clear": False,
-    "cases_file": None, "items_file": None, "no_heartbeat": False,
+    "checkout_id": None, "file": None, "no_resume": False, "clear": False,
+    "no_heartbeat": False,
 }
 
 
@@ -483,17 +430,15 @@ def _serve_namespace(req: Dict[str, Any], base: argparse.Namespace) -> argparse.
     for key, value in _SERVE_DEFAULTS.items():
         if not hasattr(ns, key):
             setattr(ns, key, value)
-    ns.loop = False
     ns.no_resume = bool(req.get("no_resume", False))
     ns.clear = bool(req.get("clear", False))
-    ns.interval = float(req.get("interval") or 30.0)
     for key in _SERVE_FIELDS:
         if key in req and req[key] is not None:
             setattr(ns, key, req[key])
     return ns
 
 
-def cmd_serve(args: argparse.Namespace) -> int:
+def run_server(args: argparse.Namespace) -> int:
     """常驻模式：stdin 每行一个 JSON 请求，stdout 每行一个 JSON 响应（含 id/exit）。
 
     好处：进程只起一次（省掉每次 ~170ms 的启动开销），会话、心跳线程、连接全部常驻；
@@ -677,111 +622,29 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """只保留全局连接参数——没有子命令，启动即常驻。"""
     parser = argparse.ArgumentParser(
         prog="ate-cli",
-        description="ATE 命令行接入（stdout 纯 JSON，退出码 0/10/11/12 即契约）",
+        description="ATE 常驻接入：stdin 每行一个 JSON 请求，stdout 每行一个 JSON 响应",
     )
     parser.add_argument("--url", default=os.getenv("ATE_URL", ate.ATE_URL), help="服务端地址（env ATE_URL）")
-    parser.add_argument("--key", default=os.getenv("ATE_API_KEY", ate.ATE_KEY), help="X-API-Key（建议用 env ATE_API_KEY）")
-    parser.add_argument("--client", default=os.getenv("ATE_CLIENT_ID", ate.CLIENT_ID), help="机台编号（env ATE_CLIENT_ID）")
-    parser.add_argument("--app", default=os.getenv("ATE_APP_VERSION", ate.APP_VERSION), help="上位机版本（env ATE_APP_VERSION）")
-    parser.add_argument("--state", default=os.getenv("ATE_STATE_FILE", DEFAULT_STATE), help="会话状态文件（env ATE_STATE_FILE）")
+    parser.add_argument("--key", default=os.getenv("ATE_API_KEY", ate.ATE_KEY),
+                        help="X-API-Key（建议走 env ATE_API_KEY，命令行会暴露在进程列表）")
+    parser.add_argument("--client", default=os.getenv("ATE_CLIENT_ID", ate.CLIENT_ID),
+                        help="机台编号（env ATE_CLIENT_ID）")
+    parser.add_argument("--app", default=os.getenv("ATE_APP_VERSION", ate.APP_VERSION),
+                        help="上位机版本（env ATE_APP_VERSION）")
+    parser.add_argument("--state", default=os.getenv("ATE_STATE_FILE", DEFAULT_STATE),
+                        help="会话状态文件（env ATE_STATE_FILE）")
     parser.add_argument("--timeout", type=float, default=ate.DEFAULT_TIMEOUT, help="单次请求超时（秒）")
     parser.add_argument("--version", action="version", version=f"ate-cli {CLI_VERSION}")
-
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    sub.add_parser("resolve", help="机台身份上报与工位反查").set_defaults(func=cmd_resolve)
-
-    p = sub.add_parser("case-list", help="录制态草稿上报：本次执行序列（check-in 之前调用）")
-    p.add_argument("--model", required=True)
-    p.add_argument("--case", action="append", help="用例 ID（可重复）")
-    p.add_argument("--cases-file", help="用例序列文件（JSON 数组或每行一个），用于 nodeid 长/数量多")
-    p.set_defaults(func=cmd_case_list)
-
-    p = sub.add_parser("check-in", help="进站：防呆卡控 + 领锁（返回 session_id/lock_token）")
-    p.add_argument("--sn", required=True)
-    p.add_argument("--model", required=True)
-    p.add_argument("--fw", required=True)
-    p.add_argument("--case", action="append", help="本次会话用例序列（可重复）")
-    p.add_argument("--cases-file", help="用例序列文件（JSON 数组或每行一个）")
-    p.add_argument("--no-resume", action="store_true", help="忽略本地断点，按全新会话进站")
-    p.add_argument("--no-heartbeat", action="store_true", help="不自动启动心跳线程（宿主自行按需 heartbeat）")
-    p.set_defaults(func=cmd_check_in)
-
-    p = sub.add_parser("heartbeat", help="保活（--loop 常驻，失锁即退出码 11）")
-    p.add_argument("--loop", action="store_true")
-    p.add_argument("--interval", type=float, default=30.0, help="循环间隔秒（最小 5）")
-    p.set_defaults(func=cmd_heartbeat)
-
-    p = sub.add_parser("checkpoint", help="增量上报已完成用例（每个子流程落一次断点）")
-    p.add_argument("--case", help="用例 ID")
-    p.add_argument("--result", default="PASS", help="PASS/FAIL/SKIP（默认 PASS）")
-    p.add_argument("--duration", type=int, help="耗时毫秒")
-    p.add_argument("--values", help="测量值 JSON，如 '{\"gain\":1.02}'")
-    p.add_argument("--items", help="批量 JSON 数组（替代 --case）")
-    p.add_argument("--items-file", help="批量 items 的 JSON 文件（规避命令行长度上限）")
-    p.set_defaults(func=cmd_checkpoint)
-
-    p = sub.add_parser("artifact", help="上传产物（日志/波形/截图）")
-    p.add_argument("--case", required=True)
-    p.add_argument("--file", required=True)
-    p.set_defaults(func=cmd_artifact)
-
-    p = sub.add_parser("check-out", help="出站落库（服务端补齐断点 + 漏测拦截 + 盖章）")
-    p.add_argument("--items", help="出站一次性提交的 items JSON 数组（可选）")
-    p.add_argument("--items-file", help="出站 items 的 JSON 文件（可选）")
-    p.add_argument("--duration", type=int, help="整站总耗时毫秒")
-    p.add_argument("--reason", help="备注")
-    p.set_defaults(func=cmd_check_out)
-
-    p = sub.add_parser("ack", help="出站闭环校验（网络抖动后确认已落库）")
-    p.add_argument("--sn")
-    p.add_argument("--checkout-id")
-    p.set_defaults(func=cmd_ack)
-
-    p = sub.add_parser("release", help="主动放弃工位锁（异常退出）")
-    p.add_argument("--reason")
-    p.set_defaults(func=cmd_release)
-
-    p = sub.add_parser("serve", help="常驻模式：stdin/stdout JSON-lines（进程只起一次）")
-    p.set_defaults(func=cmd_serve)
-
-    p = sub.add_parser("status", help="聚合状态：本地会话 + 服务端持锁情况")
-    p.set_defaults(func=cmd_status)
-
-    p = sub.add_parser("sn-status", help="SN 登记状态（只读；用于测试服/生产服路由判定）")
-    p.add_argument("--sn", required=True)
-    p.set_defaults(func=cmd_sn_status)
-
-    p = sub.add_parser("state", help="查看/清除本地会话状态")
-    p.add_argument("--clear", action="store_true")
-    p.set_defaults(func=cmd_state)
-
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return int(args.func(args))
-    except SystemExit:
-        raise
-    except ate.ApiError as exc:
-        """ 业务拦截：把服务端 code/data 原样交给宿主，退出码用服务端 exit_code """
-        emit({
-            "ok": False,
-            "command": args.command,
-            "status": exc.status,
-            "code": exc.code,
-            "message": str(exc),
-            "data": exc.data,
-        })
-        if exc.is_network:
-            return EXIT_NETWORK
-        if exc.is_lock_invalid:
-            return EXIT_LOCK_LOST
-        return int(exc.exit_code) or EXIT_BLOCKED
+        return run_server(args)
     except KeyboardInterrupt:
         log("interrupted (Ctrl+C): 已中止")
         return EXIT_SIGINT

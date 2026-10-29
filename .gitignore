@@ -49,3 +49,4 @@ tools/atetest/ate-cli.spec
 .DS_Store
 Thumbs.db
 *.log
+tools/atetest/demo_flow.py
