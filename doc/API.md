@@ -896,6 +896,189 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 
 ---
 
+### 10.6 非 Python 程序接入（`ate-cli`）
+
+`api.py` 只是省事的客户端封装，**接入点是 HTTP 契约**。对不希望实现网络协议/心跳的独立程序（LabVIEW、C#/Delphi 上位机、bat、厂商自带软件），用 `ate-cli`
+（`tools/atetest/cli.py`，可用 PyInstaller 打成单文件 exe）以"子进程 + stdout JSON + 退出码"的方式接入。
+
+#### 10.6.1 三种形态与选型
+
+| 形态 | 适用 | 开销 |
+|---|---|---|
+| **直连 HTTP** | 程序自带 HTTP 库（C#/Delphi/LabVIEW/C++）、调用频繁 | 最优（无子进程，连接复用） |
+| **`ate-cli <子命令>`** | 脚本/运维/低频调用（每工位 3~5 次） | ~170ms/次（进程启动） |
+| **`ate-cli serve`** | 能起子进程但不想写 HTTP、调用较频繁 | 仅首次启动，后续每条 ~30ms |
+
+#### 10.6.2 启动与就绪
+
+```bat
+set ATE_URL=http://10.1.1.4:8000
+set ATE_API_KEY=<V1 API Key>
+set ATE_CLIENT_ID=SZ-L9-CAL-99-PARAM
+set ATE_STATE_FILE=D:\ate\cal-state.json
+
+ate-cli serve
+```
+
+进程启动即输出一行就绪信号（宿主据此判定可发命令）：
+
+```json
+{"ok": true, "command": "serve",
+ "data": {"ready": true, "state": "D:\\ate\\cal-state.json", "commands": ["..."],
+          "resumable": true, "sn": "C020001", "station_id": "CAL-PARAM"}}
+```
+
+- `resumable: true` = 上次有未完成会话，直接 `check-in` 即按续测处理（服务端 attempt+1、回传已完成用例）
+- 全局参数也可走命令行：`--url/--key/--client/--app/--state/--timeout`；密钥建议只走环境变量（命令行会暴露在进程列表）
+
+#### 10.6.3 协议：一行请求 → 一行响应
+
+**请求**（stdin，每行一个 JSON 对象）：
+
+| 字段 | 说明 |
+|---|---|
+| `cmd` | `resolve` / `case-list` / `check-in` / `heartbeat` / `checkpoint` / `artifact` / `check-out` / `ack` / `release` / `status` / `sn-status` / `state` / `ping` / `quit` |
+| `id` | 任意标识，响应原样回显（用于请求/响应配对） |
+| 业务参数 | `sn` `model` `fw` `case`（字符串或数组）`result` `values`（对象或 JSON 串）`duration` `file` `items`（数组或 JSON 串）`reason` `release` `auto_heartbeat` `cases_file` `items_file` |
+
+**响应**（stdout，每行一个 JSON 对象）：
+
+```json
+{"ok": true,  "id": 1, "command": "check-in", "exit": 0, "data": {"station_id": "CAL-PARAM", "session_id": "..."}}
+{"ok": false, "id": 2, "code": "missing_prereq", "message": "防跳站拦截：...", "data": {"missing": ["CAL-IFACE"]}, "exit": 10}
+```
+
+**事件行**（无 `id`，带 `event` 字段，由后台线程主动推送——宿主必须先判 `event`）：
+
+```json
+{"event": "lock_lost", "code": "lock_invalid", "exit": 11}
+{"event": "released_on_eof", "sn": "C020001", "exit": 0}
+```
+
+**退出码语义**（响应里的 `exit` 与一次性子命令的进程退出码一致）：
+
+| 码 | 含义 | 宿主动作 |
+|---|---|---|
+| `0` | 放行 | 继续 |
+| `10` | 业务拦截（重号/跳站/固件/漏测/序列不符…） | 停机、禁止烧录/校准，按 `code` 分支提示 |
+| `11` | 锁失效（被接管/运维中止） | **立即停机**，结果作废 |
+| `12` | 网络不可达 | 可重试 |
+| `1`/`2` | 其它错误 / 参数错误 | 检查调用 |
+
+#### 10.6.4 完整示例（DC/AC 校准工位）
+
+一个工位 = 一次会话；DC/AC 是**同一会话的两个用例**（各自进站会被 `station_already_passed` 复测拦截）。
+
+```
+→ {"id":1,"cmd":"check-in","sn":"C020001","model":"DPO4054B","fw":"V3.20","case":["cal_dc","cal_ac"]}
+← {"ok":true,"id":1,"exit":0,"data":{"station_id":"CAL-PARAM","session_id":"...","completed_case_ids":[]}}
+
+（DC 校准完成后）
+→ {"id":2,"cmd":"checkpoint","case":"cal_dc","result":"PASS","duration":1200,"values":{"gain":1.02}}
+← {"ok":true,"id":2,"exit":0,"data":{"merged_count":1,"reported":1}}
+→ {"id":3,"cmd":"artifact","case":"cal_dc","file":"D:\\logs\\dc.csv"}
+← {"ok":true,"id":3,"exit":0,"data":{"object_key":"...","size":1024}}
+
+（AC 校准完成后）
+→ {"id":4,"cmd":"checkpoint","case":"cal_ac","result":"PASS"}
+← {"ok":true,"id":4,"exit":0}
+
+→ {"id":5,"cmd":"status"}
+← {"ok":true,"id":5,"exit":0,"data":{"active":true,"holding_lock":true,"remaining_sec":120,"completed_count":2}}
+
+→ {"id":6,"cmd":"check-out","duration":120000}
+← {"ok":true,"id":6,"exit":0,"data":{"acknowledged":true,"record_id":411,"overall_result":"PASS"}}
+
+→ {"cmd":"quit","release":true}
+← {"ok":true,"exit":0,"data":{"released":false,"active_session":false}}
+```
+
+任一响应 `exit != 0` → 宿主立即中断（尤其是 `check-in` 被拦时，**绝不能**再写 SN/EEPROM）。
+
+#### 10.6.5 宿主代码（C#）
+
+```csharp
+var psi = new ProcessStartInfo("ate-cli.exe", "serve") {
+    RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+    UseShellExecute = false, StandardOutputEncoding = Encoding.UTF8 };
+var p = Process.Start(psi);
+p.OutputDataReceived += (s, e) => { if (e.Data != null) Handle(e.Data); };
+p.BeginOutputReadLine();
+
+void Send(string json) { p.StandardInput.WriteLine(json); p.StandardInput.Flush(); }
+
+void Handle(string line) {
+    var doc = JsonDocument.Parse(line);
+    if (doc.RootElement.TryGetProperty("event", out _)) { OnEvent(doc); return; }   // 事件行
+    var id   = doc.RootElement.GetProperty("id").GetInt32();
+    var exit = doc.RootElement.GetProperty("exit").GetInt32();
+    if (exit != 0) Abort(line);                                   // 拦截即停机
+    OnResponse(id, doc);
+}
+```
+
+一次性形态（脚本/低频）直接看进程退出码：
+
+```csharp
+var r = Run("ate-cli", "check-in --sn S1 --model DPO4054B --fw V3.20");
+if (r.ExitCode != 0) Abort(r.Stdout);     // 10 = 业务拦截，12 = 网络不可达
+```
+
+#### 10.6.6 心跳生命周期（serve 自动保活，宿主无需干预）
+
+| 阶段 | 行为 |
+|---|---|
+| 启动 | `check-in` 成功后**自动**启动后台心跳线程（daemon），间隔 = 服务端 `heartbeat_interval_sec × 0.5`（默认 15s）；无需再发 `heartbeat` |
+| 运行 | 线程持续 `POST /heartbeat`；网络抖动自动重试；**不写 state 文件**（与主线程无写冲突） |
+| 失锁 | `holding_lock=false` 或 403 `lock_invalid` → 线程退出并**主动推事件** `{"event":"lock_lost","exit":11}`；此后每条响应附 `"lock_lost": true` |
+| 停止 | `check-out`/`release` 内部先停线程再出站；`quit` 显式停线程；进程退出时 daemon 线程随之结束（服务端由租约兜底判失联） |
+| 换件 | 再次 `check-in` 先回收旧线程，避免双心跳 |
+| 直通机型 | 不建会话、不启动心跳（零写入） |
+| 自管心跳 | `check-in` 带 `"auto_heartbeat": false`（命令行为 `--no-heartbeat`），由宿主按需发 `heartbeat` |
+
+实测：`check-in` 后 15s 服务端 `lock_heartbeat_count` 0→1；`quit` 后再等 15s 计数与 `lock_last_seen_at` 不变（心跳已停）；`--no-heartbeat` 进站 17s 后计数保持 0。
+
+#### 10.6.7 退出语义（三种情况必须区分）
+
+| 场景 | 行为 | 服务端结果 |
+|---|---|---|
+| `{"cmd":"quit"}`（默认） | 停心跳、**保留会话与 `--state`**，响应带 `active_session:true` + 提示 | 会话仍 TESTING（可续测），锁超时后失效 |
+| `{"cmd":"quit","release":true}` | 先 `release` 再退出 | 锁立即释放，state 文件清理 |
+| stdin 关闭（宿主崩溃/被杀） | **自动 `release`** 并推 `{"event":"released_on_eof"}` | 锁立即释放，避免僵尸锁 |
+
+实测：`quit` 默认后 DB 仍 `TESTING` 且 state 保留，重启 serve 的 ready 行返回 `resumable:true`；`quit(release)` 后状态回 `IDLE` 并清理 state；stdin 关闭触发 `released_on_eof`。
+
+#### 10.6.8 命令与参数总表
+
+| 命令 | 关键参数 | 说明 |
+|---|---|---|
+| `resolve` | — | 机台身份上报与工位反查（首次自动注册） |
+| `case-list` | `--model`、`--case`/`--cases-file` | 录制态草稿上报（check-in 之前） |
+| `check-in` | `--sn --model --fw`、`--case`/`--cases-file`、`--no-resume`、`--no-heartbeat` | 进站领锁；返回 `session_id/lock_token/station_id` |
+| `heartbeat` | `--loop --interval` | 单次或循环保活（失锁退出码 11） |
+| `checkpoint` | `--case --result --duration --values`，或 `--items`/`--items-file` | 增量上报已完成用例（可逐段落断点） |
+| `artifact` | `--case --file` | 上传产物（日志/波形/截图） |
+| `check-out` | `--items`/`--items-file`、`--duration`、`--reason` | 出站：补齐断点 + 漏测拦截 + 盖章 |
+| `ack` | `--sn --checkout-id` | 出站闭环校验（网络抖动补确认） |
+| `release` | `--reason` | 主动放弃锁 |
+| `status` | — | 聚合：本地会话 + 服务端 `holding_lock`/剩余租约 |
+| `sn-status` | `--sn` | 登记状态（测试服/生产服路由判定） |
+| `state` | `--clear` | 查看/清除本地会话状态 |
+| `serve` | 全局参数同上 | 常驻 JSON-lines 模式 |
+| `--version` | — | 打印 CLI 版本 |
+
+#### 10.6.9 实用要点
+
+1. **一个进程一个会话**：多工位并行 = 启动多个 `ate-cli serve`，各用不同 `--state`（不做进程内多会话）
+2. **崩溃恢复**：重启 serve → ready `resumable:true` → 再发 `check-in` 即续测（已完成用例回传跳过）
+3. **编码**：CLI 启动时把 stdin/stdout/stderr 重配为 UTF-8；宿主按 UTF-8 读取即可
+4. **复测约束**：同一工位一次会话只能 `check-in` 一次，子流程（DC/AC…）必须作为同会话的多个用例
+5. **防呆前置**：`check-in` 的 `exit != 0` 必须视为"禁止烧录/校准"，服务端拦截在写硬件之前
+6. **参数体积**：nodeid 多或 items 大时用 `--cases-file` / `--items-file`，规避 Windows 命令行 8191 字符上限
+
+打单文件 exe：`cd tools\atetest; pyinstaller -F -n ate-cli cli.py`（生成 `dist/ate-cli.exe`）；
+若嫌 onefile 每次解包慢，改用 `-D`（目录模式）分发。
+
 ## 11. 管理端运维接口（JWT）
 
 前置：`POST /api/auth/login {"username","password"}` → `access_token`，
