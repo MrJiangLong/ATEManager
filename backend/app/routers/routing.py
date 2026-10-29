@@ -455,7 +455,12 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
     的用例清单（全部必测、执行序号按清单顺序步长 10 编号）并开启进站严格比对
     （全列表含顺序精确一致，任何增删/改序进站即 400 case_order_mismatch）。
 
-    闸门：草稿为空 400 baseline_empty；该工位有运行中会话 409 running_session_block
+    来源（`source`）：
+    - `draft`（默认）：以机台录制草稿为基线——设备实证过的真实序列
+    - `items`：以该工位**现有启用中的清单**为基线——规格书/Excel 导入后无需再让机台跑一遍
+      （顺序即当前 `sort_order`；停用项不进基线）
+
+    闸门：来源为空 400 baseline_empty；该工位有运行中会话 409 running_session_block
     （新基线必测集合与运行中断点不同，出站会被漏测误杀）。解锁走 /baseline/unlock。
     """
     get_or_404(db, models.Process, payload.process_id, "process")
@@ -463,12 +468,38 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
     ps = get_or_404(db, models.ProcessStation, (payload.process_id, payload.station_id), "process_station")
     if ps.baseline_locked:
         raise conflict_error("baseline_already_locked", f"baseline_already_locked: {payload.station_id}")
-    manifest = [c for c in (ps.baseline_manifest or []) if c]
-    if not manifest:
-        raise bad_request(
-            "baseline_empty",
-            f"baseline_empty: 工位 {payload.station_id} 尚未捕获到用例序列草稿（无进站记录）",
+
+    source = (payload.source or "draft").strip().lower()
+    if source not in ("draft", "items"):
+        raise bad_request("bad_source", "bad_source: source must be 'draft' or 'items'")
+
+    extra_names: Dict[str, str] = {}
+    if source == "items":
+        rows = (
+            db.query(models.StationItem)
+            .filter(
+                models.StationItem.process_id == payload.process_id,
+                models.StationItem.station_id == payload.station_id,
+                models.StationItem.is_active.is_(True),
+            )
+            .order_by(models.StationItem.sort_order, models.StationItem.case_id)
+            .all()
         )
+        manifest = [row.case_id for row in rows]
+        extra_names = {row.case_id: (row.item_name or "") for row in rows}
+        if not manifest:
+            raise bad_request(
+                "baseline_empty",
+                f"baseline_empty: 工位 {payload.station_id} 没有启用中的用例清单"
+                f"（source=items 需先导入清单）",
+            )
+    else:
+        manifest = [c for c in (ps.baseline_manifest or []) if c]
+        if not manifest:
+            raise bad_request(
+                "baseline_empty",
+                f"baseline_empty: 工位 {payload.station_id} 尚未捕获到用例序列草稿（无进站记录）",
+            )
     running = _running_sessions_on(db, payload.process_id, payload.station_id)
     if running:
         raise conflict_error(
@@ -488,7 +519,8 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
             items=[
                 schemas.StationItemImportRow(
                     case_id=cid,
-                    item_name=(names.get(cid) or "").strip(),
+                    # 名称优先级：弹窗补录 > 现有清单名称（source=items 时保留原名） > 空（导入逻辑按 nodeid 兜底）
+                    item_name=(names.get(cid) or extra_names.get(cid) or "").strip(),
                     is_mandatory=True,
                 )
                 for cid in manifest
@@ -500,12 +532,20 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
         user=user,
     )
     ps.baseline_locked = True
+    """ 关键：清单来源为 items 时，manifest 需显式写回工位行——
+    锁定态的进站严格比对读的就是 baseline_manifest（草稿来源时它本来就有值） """
+    if source == "items":
+        ps.baseline_manifest = list(manifest)
+        ps.baseline_captured_at = utcnow()
     db.commit()
 
     warnings = ["新增必测不追溯已盖章在制品：如需按新基线补测，请对在制品做维修处置"]
+    if source == "items":
+        warnings.append("本次基线来源为导入清单（未经机台录制实证）：建议上线前用锁定基线跑一遍确认")
     return schemas.BaselineLockOut(
         locked=True,
         items_count=import_result.total_active,
+        source=source,
         warnings=warnings,
     )
 

@@ -642,7 +642,20 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `baseline_locked` | 10 | 管理端 items 增删改/导入 | 工位基线已锁定：用例清单由基线固化，需先解锁再编辑 |
 | 409 | `baseline_already_locked` | 10 | 管理端 baseline/lock | 工位基线已处于锁定态 |
 | 409 | `baseline_not_locked` | 10 | 管理端 baseline/unlock | 工位基线未锁定，无需解锁 |
-| 400 | `baseline_empty` | 10 | 管理端 baseline/lock | 尚未捕获到用例序列草稿（该工位无进站记录），无法锁定 |
+| 400 | `baseline_empty` | 10 | 管理端 baseline/lock | 锁定来源为空：`source=draft` 无录制草稿（无进站记录）；`source=items` 无启用中的用例清单 |
+| 400 | `bad_source` | 10 | 管理端 baseline/lock | `source` 只能是 `draft`（机台录制草稿）或 `items`（现有启用清单） |
+
+**工位基线锁定的来源（`source`，管理端 `POST /routing/baseline/lock`）**
+
+| 值 | 含义 | 前置要求 |
+|---|---|---|
+| `draft`（默认） | 以机台**录制草稿**为基线——设备实证过的真实序列 | 该工位有进站捕获记录 |
+| `items` | 以该工位**现有启用中的用例清单**为基线（顺序 = `sort_order`） | 已导入清单（`items/import` 或 Web 导入） |
+
+`source=items` 用于「规格书/Excel 导入后直接锁定」，省掉"先让机台完整跑一遍"的环节：
+停用项（`is_active=false`）不进基线，物化后全部置为必测、按顺序步长 10 重新编号，
+响应新增 `source` 字段并在 `warnings` 中提示"未经机台录制实证"。
+
 | 403 | `client_not_bound` | 10 | 全部 | 机台未绑定工位 |
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
 | 403 | `sn_is_test_device` | 10 | check-in | 生产服黑名单：登记的试验设备禁止进生产流程（建档前拦截，零痕迹） |

@@ -2330,6 +2330,70 @@ def test_station_seq_guard():
           f"clone keeps seq: {procs.get(f'PROC-TEST-CLN-{STAMP}')}")
 
 
+def test_baseline_lock_from_items():
+    """基线锁定 source=items：以现有启用清单为基线（导入规格后直接锁定，无需机台跑一遍）。"""
+    pid = f"PROC-TEST-BI-{STAMP}"
+    st = "ST-BI-01"
+    cases = ["tests/bi.py::t1", "tests/bi.py::t2", "tests/bi.py::t3"]
+
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "导入锁定工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "导入锁定流程"})
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+          params={"process_id": pid})
+
+    # ① 空清单 → source=items 锁定应 400 baseline_empty
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "items"})
+    check(resp.status_code == 400 and resp.json()["code"] == "baseline_empty",
+          f"items lock empty: {resp.text}")
+
+    # ② 导入规格清单（顺序 = 导入顺序）
+    resp = admin("POST", "/api/admin/routing/items/import",
+                 {"process_id": pid, "station_id": st, "mode": "upsert",
+                  "items": [{"case_id": c, "item_name": f"名-{c.split('::')[1]}"} for c in cases]})
+    check(resp.status_code == 200, f"items import: {resp.text}")
+
+    # ③ source=items 锁定：清单原样升格，顺序与导入一致
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "items"})
+    check(resp.status_code == 200 and resp.json()["source"] == "items"
+          and resp.json()["items_count"] == 3, f"items lock: {resp.text}")
+    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+    step = next(s for s in steps if s["station_id"] == st)
+    check(step["baseline_locked"] is True and step["baseline_manifest"] == cases,
+          f"items manifest: {step['baseline_manifest']}")
+
+    # 名称沿用现有 item_name（不是 nodeid 兜底）
+    items = admin("GET", "/api/admin/routing/items",
+                  params={"process_id": pid, "station_id": st}).json()
+    check(all(i["is_mandatory"] for i in items) and items[0]["item_name"] == "名-t1",
+          f"items materialized: {[(i['case_id'], i['item_name']) for i in items]}")
+
+    # ④ 解锁 → 停用一项 → 再次 source=items 锁定：停用项不进基线
+    resp = admin("POST", "/api/admin/routing/baseline/unlock", {"process_id": pid, "station_id": st})
+    check(resp.status_code == 200, f"unlock: {resp.text}")
+    items = admin("GET", "/api/admin/routing/items",
+                  params={"process_id": pid, "station_id": st}).json()
+    target = next(i for i in items if i["case_id"] == cases[1])
+    resp = admin("PUT", f"/api/admin/routing/items/{target['item_id']}", {"is_active": False})
+    check(resp.status_code == 200, f"deactivate: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "items"})
+    check(resp.status_code == 200 and resp.json()["items_count"] == 2, f"items lock 2: {resp.text}")
+    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
+    manifest = next(s for s in steps if s["station_id"] == st)["baseline_manifest"]
+    check(manifest == [cases[0], cases[2]], f"inactive excluded: {manifest}")
+
+    # ⑤ 非法来源 → 400 bad_source
+    resp = admin("POST", "/api/admin/routing/baseline/unlock", {"process_id": pid, "station_id": st})
+    check(resp.status_code == 200, f"unlock2: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "magic"})
+    check(resp.status_code == 400 and resp.json()["code"] == "bad_source",
+          f"bad source: {resp.text}")
+
+
 def test_station_baseline_lock():
     """工位基线（黄金样本快照锁）：捕获草稿 → 运行中 409 → 锁定物化 → 锁定态严格比对 → 解锁恢复。"""
     pid = f"PROC-TEST-BASE-{STAMP}"
@@ -3247,6 +3311,7 @@ TESTS = [
     test_topology_impact_preview,
     test_model_switch_impact_and_confirm,
     test_station_seq_guard,
+    test_baseline_lock_from_items,
     test_station_baseline_lock,
     test_sn_registry_status_api,
     test_sn_registry_import_export,

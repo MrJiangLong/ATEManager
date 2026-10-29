@@ -516,6 +516,8 @@ class ProcessStationOut(ORMModel):
 class BaselineLockIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
+    """ 锁定来源：draft = 机台录制草稿（默认）；items = 现有启用中的用例清单（规格导入后直接锁定） """
+    source: str = "draft"
     """ 锁定物化时一并写入的用例名称（case_id → item_name）；未提供的沿用现有名称或 nodeid 兜底 """
     names: Dict[str, str] = {}
 
@@ -523,6 +525,8 @@ class BaselineLockIn(BaseModel):
 class BaselineLockOut(BaseModel):
     locked: bool
     items_count: int = 0
+    """ 本次锁定实际采用的来源：draft（机台录制） / items（导入清单） """
+    source: str = "draft"
     warnings: List[str] = []
 
 class ProcessStationIn(BaseModel):

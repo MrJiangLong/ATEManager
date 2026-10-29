@@ -112,9 +112,7 @@
         <template #default="{ row, $index }">
           <el-tooltip
             v-if="canManage && !row.baseline_locked"
-            :content="(row.baseline_manifest || []).length
-              ? t('configs.lockBaseline')
-              : t('configs.baselineNoDraftTip')"
+            :content="lockTipOf(row)"
             placement="top"
           >
             <span>
@@ -124,7 +122,7 @@
                 size="small"
                 :icon="Unlock"
                 style="font-size: 18px"
-                :disabled="!(row.baseline_manifest || []).length"
+                :disabled="!canLockRow(row)"
                 @click="openLock(row)"
               />
             </span>
@@ -189,16 +187,36 @@
           <span class="code">{{ lockRow?.station_id }}</span>
           <span v-if="lockRow?.station_name" class="muted">（{{ lockRow.station_name }}）</span>
           <el-tag size="small" effect="plain" type="info" class="bl-count">
-            {{ t('configs.baselineDraftN', { n: (lockRow?.baseline_manifest || []).length }) }}
+            {{ t('configs.baselineDraftN', { n: lockCaseCount }) }}
           </el-tag>
-          <el-tag v-if="lockDiff.reordered" type="warning" size="small" effect="plain" class="bl-count">
+          <el-tag
+            v-if="lockSource === 'draft' && lockDiff.reordered"
+            type="warning"
+            size="small"
+            effect="plain"
+            class="bl-count"
+          >
             {{ t('configs.baselineDiffOrder') }}
           </el-tag>
         </div>
+        <el-radio-group v-model="lockSource" size="small" class="bl-source">
+          <el-radio-button value="draft" :disabled="!draftCount">
+            {{ t('configs.baselineSourceDraft', { n: draftCount }) }}
+          </el-radio-button>
+          <el-radio-button value="items" :disabled="!activeCount">
+            {{ t('configs.baselineSourceItems', { n: activeCount }) }}
+          </el-radio-button>
+        </el-radio-group>
+        <div v-if="lockSource === 'items'" class="muted bl-source-tip">
+          {{ t('configs.baselineSourceItemsTip') }}
+        </div>
+        <div v-else-if="!draftCount" class="muted bl-source-tip">
+          {{ t('configs.baselineNoDraftTip') }}
+        </div>
       </div>
 
-      <!-- ② 与现有用例清单的差异 -->
-      <div class="bl-sec">
+      <!-- ② 与现有用例清单的差异（仅草稿来源需要比对；items 来源即清单本身） -->
+      <div v-if="lockSource === 'draft'" class="bl-sec">
         <div class="bl-sec-title">{{ t('configs.baselineDiffTitle') }}</div>
         <div v-if="diffEmpty" class="muted bl-none">{{ t('configs.baselineDiffNone') }}</div>
         <template v-else>
@@ -226,7 +244,7 @@
       </div>
 
       <!-- ③ 为缺名称的用例补录（新增项 / 名称仍是 nodeid 的项） -->
-      <div v-if="nameTargets.length" class="bl-sec">
+      <div v-if="lockSource === 'draft' && nameTargets.length" class="bl-sec">
         <div class="bl-sec-title">{{ t('configs.baselineNamesTitle') }}</div>
         <div v-for="row in nameTargets" :key="row.case_id" class="bl-name-row">
           <el-tooltip :content="row.case_id" placement="top">
@@ -427,6 +445,31 @@ async function save() {
 const lockVisible = ref(false)
 const lockRow = ref(null)
 const locking = ref(false)
+/** 基线来源：draft = 机台录制草稿（默认）；items = 现有启用清单（规格导入后直接锁定） */
+const lockSource = ref('draft')
+
+/** 草稿项数（机台录制）；为 0 时该来源不可选 */
+const draftCount = computed(() => (lockRow.value?.baseline_manifest || []).length)
+/** 现有启用清单项数；为 0 时该来源不可选 */
+const activeCount = computed(() =>
+  lockRow.value ? activeCasesOf(lockRow.value.station_id).length : 0
+)
+/** 弹窗顶部展示的基线项数：按当前来源显示 */
+const lockCaseCount = computed(() =>
+  lockSource.value === 'items' ? activeCount.value : draftCount.value
+)
+
+/** 该行能否打开锁定：草稿或现有清单任一非空 */
+function canLockRow(row) {
+  return (row.baseline_manifest || []).length > 0 || activeCasesOf(row.station_id).length > 0
+}
+
+/** 锁定按钮悬停提示：区分三种情形 */
+function lockTipOf(row) {
+  if ((row.baseline_manifest || []).length) return t('configs.lockBaseline')
+  if (activeCasesOf(row.station_id).length) return t('configs.lockFromItemsTip')
+  return t('configs.baselineNoDraftTip')
+}
 
 /** 工位当前生效用例的有序清单（按执行序号排序）。 */
 function activeCasesOf(stationId) {
@@ -486,6 +529,8 @@ const nameEdits = ref({})
 
 function openLock(row) {
   lockRow.value = { ...row }
+  // 默认来源：有草稿用草稿（设备实证），否则退回现有清单
+  lockSource.value = (row.baseline_manifest || []).length ? 'draft' : 'items'
   const edits = {}
   for (const t2 of nameTargetsList(row)) edits[t2.case_id] = shortNameOf(t2.case_id)
   nameEdits.value = edits
@@ -514,7 +559,8 @@ async function confirmLock() {
     const res = await routingApi.lockBaseline({
       process_id: processId.value,
       station_id: lockRow.value.station_id,
-      names,
+      source: lockSource.value,
+      names: lockSource.value === 'items' ? {} : names,
     })
     for (const w of res.data?.warnings || []) ElMessage.warning(w)
     ElMessage.success(t('configs.baselineLockedDone'))
@@ -639,6 +685,14 @@ onMounted(async () => {
   font-weight: 600;
   color: var(--el-text-color-primary);
   margin-bottom: 6px;
+}
+.bl-source {
+  margin-top: 10px;
+}
+.bl-source-tip {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 .bl-target {
   display: flex;
