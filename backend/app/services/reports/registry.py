@@ -174,7 +174,7 @@ def register_rule(
     auto_trigger: bool = True,
     enabled: bool = True,
     updated_by: str = None,
-) -> models.ReportRule:  # noqa: C901
+) -> models.ReportRule:
     """新建/更新报告规则（含脚本与模板登记），并广播缓存失效。"""
     row = db.get(models.ReportRule, rule)
     if row is None:

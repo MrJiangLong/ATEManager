@@ -33,13 +33,13 @@ _DB_PATH = os.path.join(_BACKEND_DIR, "backend_test.db")
 if os.path.exists(_DB_PATH):
     os.remove(_DB_PATH)
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from app import models  # noqa: E402
-from app.config import settings  # noqa: E402
-from app.database import Base, SessionLocal, engine  # noqa: E402
-from app.main import app  # noqa: E402
-from app.security import hash_password  # noqa: E402
+from app import models
+from app.config import settings
+from app.database import Base, SessionLocal, engine
+from app.main import app
+from app.security import hash_password
 
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
@@ -1881,7 +1881,7 @@ def test_artifacts():
         for key in uploaded_keys:
             try:
                 minio_store.remove(key)
-            except Exception:  # noqa: BLE001 清理失败不影响测试结论
+            except Exception:  # 清理失败不影响测试结论
                 pass
 
 def test_report_batch_requires_completed():

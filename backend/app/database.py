@@ -141,7 +141,7 @@ def _migrate_columns() -> None:
 
 def ensure_schema() -> None:
     """幂等建表 + 补列。"""
-    from . import models  # noqa: F401  导入即注册表元数据
+    from . import models  # 导入即注册表元数据
 
     Base.metadata.create_all(bind=engine)
     try:

@@ -218,7 +218,7 @@ def convert_with_timeout(excel_path, timeout):
     def target():
         try:
             result["pdf"] = excel_to_pdf(excel_path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             result["error"] = exc
 
     thread = threading.Thread(target=target, daemon=True)

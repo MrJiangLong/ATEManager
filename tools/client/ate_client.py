@@ -391,7 +391,7 @@ class SessionState:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        known = {f for f in cls.__dataclass_fields__}
         try:
             return cls(**{k: v for k, v in raw.items() if k in known})
         except TypeError:
