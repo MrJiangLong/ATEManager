@@ -19,7 +19,7 @@
       <el-table-column :label="t('configs.tableModelCount')" width="180">
         <template #default="{ row }">
           <div v-if="row.models?.length" class="model-tags">
-            <el-tag v-for="m in row.models.slice(0, 2)" :key="m" size="small" effect="plain">{{ m }}</el-tag>
+            <el-tag v-for="m in row.models.slice(0, 2)" :key="m" size="small" effect="plain" type="info">{{ m }}</el-tag>
             <el-tooltip v-if="row.models.length > 2" :content="row.models.join(', ')" placement="top">
               <el-tag size="small" effect="plain" type="info">+{{ row.models.length - 2 }}</el-tag>
             </el-tooltip>
@@ -153,7 +153,7 @@
               </div>
             </div>
             <div class="imp-tags-scroll">
-              <el-tag v-for="p in importBatch" :key="p.process?.process_id" size="small" effect="plain" class="code">
+              <el-tag v-for="p in importBatch" :key="p.process?.process_id" size="small" effect="plain" type="info" class="code">
                 {{ p.process?.process_id }}
               </el-tag>
             </div>

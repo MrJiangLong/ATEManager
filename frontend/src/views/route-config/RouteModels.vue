@@ -5,6 +5,16 @@
         <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" style="width:300px">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
         </el-select>
+        <el-select
+          v-model="managedFilter"
+          clearable
+          :placeholder="t('configs.managedFilter')"
+          style="width:150px"
+          :title="t('configs.managedFilterTip')"
+        >
+          <el-option value="managed" :label="t('configs.managedOnly')" />
+          <el-option value="unmanaged" :label="t('configs.unmanaged')" />
+        </el-select>
       </div>
       <div class="filter-row">
         <el-button :icon="RefreshRight" size="small" @click="loadModels">{{ t('common.refresh') }}</el-button>
@@ -18,13 +28,21 @@
       </el-table-column>
       <el-table-column :label="t('configs.modelProcess')" min-width="220">
         <template #default="{ row }">
-          <el-tag size="small" effect="plain" type="primary">{{ row.process_id }}</el-tag>
-          <span class="muted" style="margin-left:8px">{{ processName(row.process_id) }}</span>
+          <div class="flow-cell">
+            <template v-if="row.passthrough">
+              <el-tag size="small" effect="plain" type="warning">{{ t('configs.unmanaged') }}</el-tag>
+              <span class="muted">{{ t('configs.unmanagedTip') }}</span>
+            </template>
+            <template v-else>
+              <el-tag size="small" effect="plain" type="info">{{ row.process_id }}</el-tag>
+              <span class="muted">{{ processName(row.process_id) }}</span>
+            </template>
+          </div>
         </template>
       </el-table-column>
       <el-table-column :label="t('configs.targetFw')" width="120">
         <template #default="{ row }">
-          <el-tag size="small" type="success" effect="plain">{{ row.target_fw_version }}</el-tag>
+          <el-tag size="small" type="info" effect="plain">{{ row.target_fw_version }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="t('configs.fwRule')" width="180">
@@ -36,7 +54,7 @@
       </el-table-column>
       <el-table-column :label="t('configs.targetApp')" width="130">
         <template #default="{ row }">
-          <el-tag v-if="row.target_app_version" size="small" effect="plain">{{ row.target_app_version }}</el-tag>
+          <el-tag v-if="row.target_app_version" size="small" type="info" effect="plain">{{ row.target_app_version }}</el-tag>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
@@ -55,7 +73,7 @@
       </el-table-column>
       <el-table-column :label="t('configs.passthroughMode')" width="90" align="center">
         <template #default="{ row }">
-          <el-tag v-if="row.passthrough" size="small" type="warning" effect="plain">
+          <el-tag v-if="row.passthrough" size="small" type="info" effect="plain">
             {{ t('configs.passthroughOn') }}
           </el-tag>
           <span v-else class="muted">—</span>
@@ -155,6 +173,8 @@ const { processes, processName, loadProcesses } = useProcesses()
 const list = ref([])
 const loading = ref(false)
 const processFilter = ref('')
+// 管控状态筛选：'' 全部 / managed 已管控 / unmanaged 未管控（直通）
+const managedFilter = ref('')
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -173,9 +193,14 @@ const form = reactive({
   passthrough: false,
 })
 
-const filtered = computed(() =>
-  processFilter.value ? list.value.filter((m) => m.process_id === processFilter.value) : list.value
-)
+const filtered = computed(() => {
+  let rows = processFilter.value
+    ? list.value.filter((m) => m.process_id === processFilter.value)
+    : list.value
+  if (managedFilter.value === 'managed') rows = rows.filter((m) => !m.passthrough)
+  if (managedFilter.value === 'unmanaged') rows = rows.filter((m) => !!m.passthrough)
+  return rows
+})
 const { page, pageSize, paged } = useLocalPagination(filtered)
 
 const selectableProcesses = computed(() =>
@@ -326,3 +351,18 @@ onMounted(async () => {
 })
 </script>
 
+<style scoped>
+/* 流程列：标签与说明文字垂直居中（inline 混排会因字号/行高差异错位） */
+.flow-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.flow-cell .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

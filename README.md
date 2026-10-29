@@ -818,7 +818,7 @@ docker compose up -d --build     # 生产：单容器同源托管，http://local
 同一份代码部署生产/测试两台服务器，仅 `.env` 中 `SERVER_ROLE` 一行不同；试验设备 SN 由
 管理端「工艺配置 → SN 登记」Tab 维护（`/api/admin/sn-registry`，写操作 require_admin）。
 
-**存量机型渐进上线（passthrough）**：机型可设"直通放行"——进站直接 ACK，零写入
+**存量机型渐进上线（passthrough，界面称"未管控"）**：机型可设"直通放行"——进站直接 ACK，零写入
 （不建档/不领锁/不进台账与统计），用于存量机型灰度；身份卡控不受豁免（登记的试验
 设备在直通机型上同样被 403）。关直通需要产线清线：服务端强制 `confirm_drain` 确认位
 （否则 409 `drain_confirm_required`）+ 管理端强制清线弹窗；开直通要求机型无在制件

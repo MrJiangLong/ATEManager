@@ -2,7 +2,7 @@
   <div>
     <div class="tab-head">
       <div class="filter-row">
-        <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:240px">
+        <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:300px">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
         </el-select>
         <div class="seq-group">
@@ -96,7 +96,7 @@
           </el-tag>
           <el-tag
             v-else-if="(row.baseline_manifest || []).length"
-            :type="baselineDrifted(row) ? 'warning' : 'primary'"
+            :type="baselineDrifted(row) ? 'warning' : 'info'"
             :effect="baselineDrifted(row) ? 'light' : 'plain'"
             :title="baselineDrifted(row) ? t('configs.baselineDriftTip') : ''"
           >
@@ -188,7 +188,7 @@
         <div class="bl-target">
           <span class="code">{{ lockRow?.station_id }}</span>
           <span v-if="lockRow?.station_name" class="muted">（{{ lockRow.station_name }}）</span>
-          <el-tag size="small" class="bl-count">
+          <el-tag size="small" effect="plain" type="info" class="bl-count">
             {{ t('configs.baselineDraftN', { n: (lockRow?.baseline_manifest || []).length }) }}
           </el-tag>
           <el-tag v-if="lockDiff.reordered" type="warning" size="small" effect="plain" class="bl-count">

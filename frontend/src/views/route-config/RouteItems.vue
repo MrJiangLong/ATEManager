@@ -44,7 +44,7 @@
       <el-table-column prop="item_name" :label="t('configs.itemName')" min-width="200" show-overflow-tooltip />
       <el-table-column :label="t('configs.mandatory')" width="100" align="center">
         <template #default="{ row }">
-          <el-tag :type="row.is_mandatory ? 'danger' : 'info'" size="small" :effect="row.is_mandatory ? 'dark' : 'plain'">
+          <el-tag :type="row.is_mandatory ? 'warning' : 'info'" size="small" effect="plain">
             {{ row.is_mandatory ? t('configs.mandatory') : t('configs.optional') }}
           </el-tag>
         </template>
