@@ -23,9 +23,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
+import signal
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +50,7 @@ EXIT_ERROR = 1
 EXIT_BLOCKED = 10
 EXIT_NETWORK = 12
 EXIT_LOCK_LOST = 11
+EXIT_SIGINT = 130
 
 DEFAULT_STATE = "ate-state.json"
 CLI_VERSION = "1.0.0"
@@ -115,6 +119,28 @@ def _items_from_json(raw: Any) -> List[dict]:
             raise SystemExit(_fail("invalid_items", "每条 item 必须含 case_id"))
         items.append(it)
     return items
+
+
+PROBE_PATH = "/api/health"
+PROBE_TIMEOUT_SEC = 1.0      # 就绪探测固定超时：不可达即 fail-fast，不做可调
+
+
+def probe_server(client: "ate.AteClient", timeout: float = 1.0) -> "tuple[bool, int]":
+    """服务端探针：GET /api/health（短超时、无重试、不发业务请求）。
+
+    返回 (连得上, HTTP 状态码)：
+    - 连得上 = 拿到了任何 HTTP 响应（含 4xx/5xx）——只证明网络通
+    - 健康 = 状态码 < 500（服务端自检通过，业务命令才可能成功）
+    连接层失败（拒绝/超时/DNS）→ (False, 0)
+    """
+    url = client.http.base_url.rstrip("/") + PROBE_PATH
+    try:
+        with ate._OPENER.open(urllib.request.Request(url, method="GET"), timeout=timeout) as resp:
+            return True, int(getattr(resp, "status", 200))
+    except urllib.error.HTTPError as exc:
+        return True, int(getattr(exc, "code", 500))
+    except Exception:
+        return False, 0
 
 
 def build_client(args: argparse.Namespace) -> "ate.AteClient":
@@ -490,92 +516,163 @@ def cmd_serve(args: argparse.Namespace) -> int:
         })
 
     client.on_lost_lock = _on_lost_lock
-    ready: Dict[str, Any] = {"ready": True, "state": args.state, "commands": sorted(SERVE_COMMANDS)}
+    ready: Dict[str, Any] = {"ready": True, "process_ready": True,
+                             "state": args.state, "commands": sorted(SERVE_COMMANDS)}
     if args.state:
         leftover = ate.SessionState.load(Path(args.state).expanduser())
         if leftover is not None and leftover.session_id:
             ready.update({"resumable": True, "sn": leftover.sn, "station_id": leftover.station_id})
+
+    """ 就绪 = 进程就绪「且」服务端可达且自检通过；探测失败即 fail-fast（退出码 12），
+    由 Supervisor 决定重启/报警——CLI 不做等待与重探。 """
+    reachable, status = probe_server(client, PROBE_TIMEOUT_SEC)
+
+    healthy = reachable and status < 500
+    ready["server_reachable"] = reachable
+    ready["server_healthy"] = healthy
+    if not healthy:
+        ready["ready"] = False
+        ready["hint"] = (
+            "服务端不可达：进程退出（退出码 12），请检查服务端与网络后重启 CLI"
+            if not reachable else
+            f"服务端可达但自检未通过（HTTP {status}）：进程退出（退出码 12），请检查服务端状态"
+        )
     emit({"ok": True, "command": "serve", "data": ready})
-    clean_quit = False        # True = 主动 quit（不触发 EOF 兜底释放）
-    for raw in sys.stdin:
-        line = raw.strip()
-        if not line:
-            continue
+
+    if not healthy:
+        """ fail-fast：没有服务对象就退出，不留"活着但干不了活"的哑进程 """
+        log("server unreachable/unhealthy (HTTP %s): exit %d" % (status, EXIT_NETWORK))
+        client.stop_heartbeat()
+        return EXIT_NETWORK
+
+    clean_quit = False        # True = 主动 quit（不触发兜底释放）
+    stop_event = threading.Event()
+    inbox = queue.Queue()
+
+    def _pump_stdin() -> None:
+        """独立线程读 stdin，主线程用带超时的 queue.get()。
+        主线程直接阻塞在 stdin 的 C 层 read 上时（stdin 是宿主管道），
+        Ctrl+C 往往要等到有数据才被处理——表现为"按了没反应"。"""
         try:
-            req = json.loads(line)
-        except ValueError as exc:
-            emit({"ok": False, "code": "invalid_json", "message": str(exc), "exit": EXIT_USAGE})
-            continue
-        if not isinstance(req, dict):
-            emit({"ok": False, "code": "invalid_request", "message": "每行必须是一个 JSON 对象", "exit": EXIT_USAGE})
-            continue
-        cmd = str(req.get("cmd") or req.get("command") or "").strip().lower()
-        rid = req.get("id")
-        if cmd in ("quit", "exit"):
-            release = bool(req.get("release", False))
-            has_session = bool(client.state and client.state.session_id)
-            released = False
-            if release and has_session:
-                try:
-                    client.release(reason=str(req.get("reason") or "cli quit"))
-                    released = True
-                except ate.ApiError as exc:
-                    log(f"quit release failed: {exc}")
-            client.stop_heartbeat()   # 优雅停止：先停心跳再退出
-            payload: Dict[str, Any] = {"ok": True, "id": rid, "command": cmd, "exit": EXIT_OK,
-                                       "data": {"active_session": bool(has_session and not released),
-                                                "released": released}}
-            if has_session and not released:
-                payload["data"]["hint"] = "会话未出站：锁将在超时后失效；建议发送 {\"cmd\":\"quit\",\"release\":true} 或先 check-out"
-            emit(payload)
-            clean_quit = True
-            break
-        if cmd in ("", "ping"):
-            emit({"ok": True, "id": rid, "command": "ping", "exit": EXIT_OK})
-            continue
-        handler = SERVE_COMMANDS.get(cmd)
-        if handler is None:
-            emit({
-                "ok": False, "id": rid, "code": "unknown_command", "message": cmd,
-                "data": {"commands": sorted(SERVE_COMMANDS)}, "exit": EXIT_USAGE,
-            })
-            continue
-        buf: List[Dict[str, Any]] = []
-        _SINK["buf"] = buf
-        code = EXIT_OK
-        try:
-            code = int(handler(_serve_namespace(req, args)) or EXIT_OK)
-        except SystemExit as exc:      # _fail() 已写入 buf（结构化错误）
-            code = int(exc.code or EXIT_ERROR) if isinstance(exc.code, int) else EXIT_ERROR
-        except ate.ApiError as exc:
-            emit({
-                "ok": False, "status": exc.status, "code": exc.code, "message": str(exc),
-                "data": exc.data,
-            })
-            code = EXIT_NETWORK if exc.is_network else (EXIT_LOCK_LOST if exc.is_lock_invalid else (int(exc.exit_code) or EXIT_BLOCKED))
-        except Exception as exc:
-            log(f"serve handler error: {exc.__class__.__name__}: {exc}")
-            emit({"ok": False, "code": "cli_error", "message": str(exc), "data": {}})
-            code = EXIT_ERROR
+            for raw in sys.stdin:
+                inbox.put(raw)
         finally:
-            _SINK["buf"] = None
-        if not buf:
-            buf.append({"ok": code == EXIT_OK, "command": cmd, "data": {}})
-        for payload in buf:
-            payload.setdefault("id", rid)
-            payload["exit"] = code
-            if client.lost_lock:
-                payload["lock_lost"] = True   # 锁已被接管：宿主必须停止后续流程
-            emit(payload)
-    """ stdin 关闭（宿主异常退出）：若仍持有会话则兜底释放，避免僵尸锁。
+            inbox.put(None)
+
+    def _on_signal(signum, frame) -> None:
+        stop_event.set()
+
+    for _sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None),
+                 getattr(signal, "SIGBREAK", None)):
+        if _sig is not None:
+            try:
+                signal.signal(_sig, _on_signal)
+            except (ValueError, OSError):
+                pass
+
+    threading.Thread(target=_pump_stdin, name="ate-cli-stdin", daemon=True).start()
+
+    interrupted_by_keyboard = False
+    try:
+        while not stop_event.is_set():
+            try:
+                raw = inbox.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if raw is None:
+                break
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except ValueError as exc:
+                emit({"ok": False, "code": "invalid_json", "message": str(exc), "exit": EXIT_USAGE})
+                continue
+            if not isinstance(req, dict):
+                emit({"ok": False, "code": "invalid_request", "message": "每行必须是一个 JSON 对象", "exit": EXIT_USAGE})
+                continue
+            cmd = str(req.get("cmd") or req.get("command") or "").strip().lower()
+            rid = req.get("id")
+            if cmd in ("quit", "exit"):
+                release = bool(req.get("release", False))
+                has_session = bool(client.state and client.state.session_id)
+                released = False
+                if release and has_session:
+                    try:
+                        client.release(reason=str(req.get("reason") or "cli quit"))
+                        released = True
+                    except ate.ApiError as exc:
+                        log(f"quit release failed: {exc}")
+                client.stop_heartbeat()   # 优雅停止：先停心跳再退出
+                payload: Dict[str, Any] = {"ok": True, "id": rid, "command": cmd, "exit": EXIT_OK,
+                                           "data": {"active_session": bool(has_session and not released),
+                                                    "released": released}}
+                if has_session and not released:
+                    payload["data"]["hint"] = "会话未出站：锁将在超时后失效；建议发送 {\"cmd\":\"quit\",\"release\":true} 或先 check-out"
+                emit(payload)
+                clean_quit = True
+                break
+            if cmd in ("", "ping"):
+                emit({"ok": True, "id": rid, "command": "ping", "exit": EXIT_OK})
+                continue
+            handler = SERVE_COMMANDS.get(cmd)
+            if handler is None:
+                emit({
+                    "ok": False, "id": rid, "code": "unknown_command", "message": cmd,
+                    "data": {"commands": sorted(SERVE_COMMANDS)}, "exit": EXIT_USAGE,
+                })
+                continue
+            buf: List[Dict[str, Any]] = []
+            _SINK["buf"] = buf
+            code = EXIT_OK
+            try:
+                code = int(handler(_serve_namespace(req, args)) or EXIT_OK)
+            except SystemExit as exc:
+                code = int(exc.code or EXIT_ERROR) if isinstance(exc.code, int) else EXIT_ERROR
+            except ate.ApiError as exc:
+                emit({
+                    "ok": False, "status": exc.status, "code": exc.code, "message": str(exc),
+                    "data": exc.data,
+                })
+                code = EXIT_NETWORK if exc.is_network else (EXIT_LOCK_LOST if exc.is_lock_invalid else (int(exc.exit_code) or EXIT_BLOCKED))
+            except Exception as exc:
+                log(f"serve handler error: {exc.__class__.__name__}: {exc}")
+                emit({"ok": False, "code": "cli_error", "message": str(exc), "data": {}})
+                code = EXIT_ERROR
+            finally:
+                _SINK["buf"] = None
+            if not buf:
+                buf.append({"ok": code == EXIT_OK, "command": cmd, "data": {}})
+            for payload in buf:
+                payload.setdefault("id", rid)
+                payload["exit"] = code
+                if client.lost_lock:
+                    payload["lock_lost"] = True   # 锁已被接管：宿主必须停止后续流程
+                emit(payload)
+    except KeyboardInterrupt:
+        """ 控制台 Ctrl+C：主线程在 queue.get() 上，中断可即时送达；
+        统一走下面的收尾（释放会话 + 退出码 130），不留僵尸锁 """
+        stop_event.set()
+        interrupted_by_keyboard = True
+
+    """ 异常退出兜底（stdin 关闭 / Ctrl+C / SIGTERM）：释放会话，避免僵尸锁。
     主动 quit 不走这里——quit 默认保留会话并已提示，是否释放由宿主决定。 """
+    signalled = stop_event.is_set() or interrupted_by_keyboard
     if not clean_quit and client.state and client.state.session_id:
         try:
-            client.release(reason="cli stdin closed")
-            _write_line({"event": "released_on_eof", "sn": client.state.sn, "exit": EXIT_OK})
+            client.release(reason="cli interrupted" if signalled else "cli stdin closed")
+            _write_line({
+                "event": "released_on_signal" if signalled else "released_on_eof",
+                "sn": client.state.sn,
+                "exit": EXIT_SIGINT if signalled else EXIT_OK,
+            })
         except Exception as exc:
-            log(f"release on eof failed: {exc}")
+            log(f"release on exit failed: {exc}")
     client.stop_heartbeat()
+    if signalled:
+        log("interrupted (Ctrl+C/SIGTERM): 会话已释放，退出码 130")
+        return EXIT_SIGINT
     return EXIT_OK
 
 
@@ -647,7 +744,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p.set_defaults(func=cmd_release)
 
-    sub.add_parser("serve", help="常驻模式：stdin/stdout JSON-lines（进程只起一次）").set_defaults(func=cmd_serve)
+    p = sub.add_parser("serve", help="常驻模式：stdin/stdout JSON-lines（进程只起一次）")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("status", help="聚合状态：本地会话 + 服务端持锁情况")
     p.set_defaults(func=cmd_status)
@@ -684,6 +782,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if exc.is_lock_invalid:
             return EXIT_LOCK_LOST
         return int(exc.exit_code) or EXIT_BLOCKED
+    except KeyboardInterrupt:
+        log("interrupted (Ctrl+C): 已中止")
+        return EXIT_SIGINT
     except Exception as exc:
         log(f"unexpected error: {exc.__class__.__name__}: {exc}")
         return _fail("cli_error", str(exc))

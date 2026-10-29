@@ -36,6 +36,11 @@ tools/reports/_mes_sink
 tools/reports/plugin/_out/
 tools/reports/plugin/.env
 tools/reports/plugin/tek_mso/_out
+# ---- ate-cli 打包产物（PyInstaller，位于 tools/atetest/）----
+tools/atetest/build/
+tools/atetest/dist/
+tools/atetest/*.spec
+tools/atetest/ate-cli.spec
 # ---- 契约自测断点（tools/atetest 运行时落在仓库根）----
 .state/
 # ---- ate_client demo 断点文件（运行时落在 CWD）----

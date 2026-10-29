@@ -920,14 +920,28 @@ set ATE_STATE_FILE=D:\ate\cal-state.json
 ate-cli serve
 ```
 
-进程启动即输出一行就绪信号（宿主据此判定可发命令）：
+进程启动即输出一行就绪信号。**`ready` = 进程就绪 且 服务端可达且自检通过**（启动时探一次 `GET /api/health`，超时 1s）：
 
 ```json
 {"ok": true, "command": "serve",
- "data": {"ready": true, "state": "D:\\ate\\cal-state.json", "commands": ["..."],
+ "data": {"ready": true, "process_ready": true,
+          "server_reachable": true, "server_healthy": true,
+          "state": "D:\\ate\\cal-state.json", "commands": ["..."],
           "resumable": true, "sn": "C020001", "station_id": "CAL-PARAM"}}
 ```
 
+服务端不可达或自检未通过时（**默认 fail-fast：输出就绪行后进程以退出码 12 退出**）：
+
+```json
+{"ok": true, "command": "serve",
+ "data": {"ready": false, "process_ready": true,
+          "server_reachable": false, "server_healthy": false,
+          "hint": "服务端不可达：进程退出（退出码 12），请检查服务端与网络后重启 CLI"}}
+```
+
+- **fail-fast**：连不上（或自检未过）就退出 `12`（`EXIT_NETWORK`，与命令侧"网络不可达"同一语义），由 Supervisor 重启或报警；CLI 自身不做等待/保活重试——**启动顺序由编排层负责**（服务端先起，或宿主自己重试拉起 CLI）
+- 探测口径：任何 HTTP 响应 = `server_reachable:true`；状态码 <500 = `server_healthy:true`（503 = 进程活着但自检未过，同样 fail-fast）
+- 探测**固定 1s 超时、无开关**：启动路径只有一条（要连服务端就绪，没有"跳过探测"的第二种语义）；启动顺序由编排层保证
 - `resumable: true` = 上次有未完成会话，直接 `check-in` 即按续测处理（服务端 attempt+1、回传已完成用例）
 - 全局参数也可走命令行：`--url/--key/--client/--app/--state/--timeout`；密钥建议只走环境变量（命令行会暴露在进程列表）
 
@@ -1048,6 +1062,19 @@ if (r.ExitCode != 0) Abort(r.Stdout);     // 10 = 业务拦截，12 = 网络不�
 
 实测：`quit` 默认后 DB 仍 `TESTING` 且 state 保留，重启 serve 的 ready 行返回 `resumable:true`；`quit(release)` 后状态回 `IDLE` 并清理 state；stdin 关闭触发 `released_on_eof`。
 
+**中断信号（Ctrl+C / Ctrl+Break / SIGTERM）**
+
+serve 用"独立读线程 + 带超时队列"接收 stdin：主线程不直接阻塞在 stdin 的 C 层 read 上，
+因此控制台中断能即时送达（否则 stdin 为宿主管道时，Ctrl+C 可能"按了没反应"）。
+
+| 情形 | 行为 |
+|---|---|
+| `Ctrl+C` / `Ctrl+Break` / `SIGTERM` | 0.5~1s 内退出：**先自动 `release` 会话**，推事件 `{"event":"released_on_signal","exit":130}`，进程退出码 **130**（128+2），stderr 一行说明、**不打印 traceback** |
+| `taskkill /F`（Windows 硬杀）/ 进程被杀 | 无法拦截，无收尾；服务端靠租约（90s 软超时 / 1800s 硬超时）兜底 |
+| 一次性子命令执行中 Ctrl+C | 退出码 130，不打印 traceback（无会话可释放时无副作用） |
+
+实测：stdin 阻塞且无数据时发中断，0.70s 退出，退出码 130，事件 `released_on_signal`，DB 由 `TESTING` 回到 `IDLE`。
+
 #### 10.6.8 命令与参数总表
 
 | 命令 | 关键参数 | 说明 |
@@ -1064,7 +1091,7 @@ if (r.ExitCode != 0) Abort(r.Stdout);     // 10 = 业务拦截，12 = 网络不�
 | `status` | — | 聚合：本地会话 + 服务端 `holding_lock`/剩余租约 |
 | `sn-status` | `--sn` | 登记状态（测试服/生产服路由判定） |
 | `state` | `--clear` | 查看/清除本地会话状态 |
-| `serve` | 全局参数同上 | 常驻 JSON-lines 模式 |
+| `serve` | 全局参数同上 | 常驻 JSON-lines 模式；启动即探测 `/api/health`，不可达 fail-fast 退出 12 |
 | `--version` | — | 打印 CLI 版本 |
 
 #### 10.6.9 实用要点
