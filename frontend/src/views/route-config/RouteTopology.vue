@@ -281,7 +281,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -297,6 +298,8 @@ const { t } = useI18n()
 const { canManage } = useAuth()
 const { processes, stations, loadProcesses } = useProcesses()
 
+const route = useRoute()
+const topologyRequest = inject('topologyRequest', null)
 const processId = ref('')
 const steps = ref([])
 const seqEnabled = ref(true)
@@ -633,6 +636,16 @@ async function onToggleSequence(value) {
   }
 }
 
+/** 机型页再次点击流程名（同一流程也可重复触发）：按 nonce 变化切到目标流程，
+ *  watch(processId) 负责同步严格顺序开关并重载拓扑 */
+watch(
+  () => topologyRequest?.value?.nonce,
+  () => {
+    const pid = topologyRequest?.value?.pid
+    if (pid && processes.value.some((p) => p.process_id === pid)) processId.value = pid
+  }
+)
+
 watch(processId, () => {
   syncSeqFlag()
   loadSteps()
@@ -647,6 +660,13 @@ useTabRefresh('topology', async () => {
 
 onMounted(async () => {
   await loadProcesses()
+  /** 预选：注入的跳转请求（机型页点流程名）或深链 ?process_id= */
+  const wanted =
+    topologyRequest?.value?.pid ||
+    (typeof route.query.process_id === 'string' ? route.query.process_id : '')
+  if (wanted && processes.value.some((p) => p.process_id === wanted)) {
+    processId.value = wanted
+  }
   if (!processId.value && processes.value.length) processId.value = processes.value[0].process_id
   syncSeqFlag()
   await loadSteps()

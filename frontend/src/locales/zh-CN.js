@@ -576,6 +576,7 @@ export default {
 
     modelId: '机型',
     modelProcess: '所属流程',
+    gotoTopology: '点击查看该流程的工步拓扑',
     targetFw: '固件基线',
     fwRule: '固件匹配规则',
     targetApp: 'ATE软件基线',

@@ -12,8 +12,17 @@
     </div>
 
     <el-table v-loading="loading" :data="paged" stripe size="small">
-      <el-table-column prop="process_id" :label="t('configs.processId')" width="220">
-        <template #default="{ row }"><span class="code">{{ row.process_id }}</span></template>
+      <el-table-column prop="process_id" :label="t('configs.processId')" width="240">
+        <template #default="{ row }">
+          <!-- 完整 ID 常超列宽：省略显示 + title 兜底；点击直达该流程的工步拓扑 -->
+          <span
+            class="code flow-link"
+            :title="`${row.process_id}｜${t('configs.gotoTopology')}`"
+            @click="gotoTopology(row.process_id)"
+          >
+            {{ row.process_id }}
+          </span>
+        </template>
       </el-table-column>
       <el-table-column prop="process_name" :label="t('configs.processName')" min-width="220" />
       <el-table-column :label="t('configs.tableModelCount')" width="180">
@@ -232,10 +241,12 @@ import { useTabRefresh } from '../../composables/useTabRefresh'
 import ProcessDetailDrawer from '../../components/ProcessDetailDrawer.vue'
 import { useLocalPagination } from '../../composables/usePagination'
 import { useProcesses } from '../../composables/useProcesses'
+import { useTopologyJump } from '../../composables/useTopologyJump'
 
 const { t } = useI18n()
 const { canManage } = useAuth()
 const { processes, loading, loadProcesses } = useProcesses()
+const { gotoTopology } = useTopologyJump()
 const { page, pageSize, paged } = useLocalPagination(processes)
 
 const dialogVisible = ref(false)
@@ -453,6 +464,18 @@ onMounted(() => loadProcesses())
 </script>
 
 <style scoped>
+.flow-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.flow-link:hover {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+}
 .switch-row { display: flex; gap: 20px; }
 /* 机型标签：换行排布，超 2 个折叠为 +N（tooltip 看全部） */
 .model-tags { display: flex; flex-wrap: wrap; gap: 4px; }

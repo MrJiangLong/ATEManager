@@ -574,6 +574,7 @@ export default {
 
     modelId: 'Model',
     modelProcess: 'Process',
+    gotoTopology: 'Open step topology of this process',
     targetFw: 'FW Baseline',
     fwRule: 'FW Match Rule',
     targetApp: 'ATE Baseline',

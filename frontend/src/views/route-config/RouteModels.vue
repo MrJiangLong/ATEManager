@@ -3,7 +3,17 @@
     <div class="tab-head">
       <div class="filter-row">
         <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" style="width:300px">
-          <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+          <el-option
+            v-for="p in processes"
+            :key="p.process_id"
+            :value="p.process_id"
+            :label="processName(p.process_id)"
+          >
+            <div class="opt-row">
+              <span class="opt-name">{{ processName(p.process_id) }}</span>
+              <span class="opt-id">{{ p.process_id }}</span>
+            </div>
+          </el-option>
         </el-select>
         <el-select
           v-model="managedFilter"
@@ -26,7 +36,7 @@
       <el-table-column prop="product_model" :label="t('configs.modelId')" width="180">
         <template #default="{ row }"><span class="code">{{ row.product_model }}</span></template>
       </el-table-column>
-      <el-table-column :label="t('configs.modelProcess')" min-width="220">
+      <el-table-column :label="t('configs.modelProcess')" min-width="240">
         <template #default="{ row }">
           <div class="flow-cell">
             <template v-if="row.passthrough">
@@ -34,8 +44,18 @@
               <span class="muted">{{ t('configs.unmanagedTip') }}</span>
             </template>
             <template v-else>
-              <el-tag size="small" effect="plain" type="info">{{ row.process_id }}</el-tag>
-              <span class="muted">{{ processName(row.process_id) }}</span>
+              <!-- 名称主显（人读）、ID 次行（机器标识）；用原生 title 兜底全文，
+                   不用 el-tooltip 包裹点击元素（避免 popper 包裹层影响 click 生效） -->
+              <div class="flow-lines">
+                <span
+                  class="flow-name"
+                  :title="`${processName(row.process_id)}（${row.process_id}）｜${t('configs.gotoTopology')}`"
+                  @click="gotoTopology(row.process_id)"
+                >
+                  {{ processName(row.process_id) }}
+                </span>
+                <span class="flow-id" :title="row.process_id">{{ row.process_id }}</span>
+              </div>
             </template>
           </div>
         </template>
@@ -161,6 +181,7 @@ import { useAuth } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { modelApi } from '../../api'
+import { useTopologyJump } from '../../composables/useTopologyJump'
 import EmptyState from '../../components/EmptyState.vue'
 import { useTabRefresh } from '../../composables/useTabRefresh'
 import { useLocalPagination } from '../../composables/usePagination'
@@ -169,6 +190,7 @@ import { useProcesses } from '../../composables/useProcesses'
 const { t } = useI18n()
 const { canManage } = useAuth()
 const { processes, processName, loadProcesses } = useProcesses()
+const { gotoTopology } = useTopologyJump()
 
 const list = ref([])
 const loading = ref(false)
@@ -353,6 +375,43 @@ onMounted(async () => {
 
 <style scoped>
 /* 流程列：标签与说明文字垂直居中（inline 混排会因字号/行高差异错位） */
+.flow-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.flow-name {
+  font-size: 13.5px;
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-name:hover {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+}
+.flow-id {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.opt-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.opt-row .opt-id {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--el-text-color-secondary);
+}
 .flow-cell {
   display: flex;
   align-items: center;

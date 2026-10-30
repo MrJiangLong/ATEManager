@@ -14,7 +14,8 @@
 </template>
 
 <script setup>
-import { provide, ref } from 'vue'
+import { provide, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import PageToolbar from '../components/PageToolbar.vue'
 import RouteProcesses from './route-config/RouteProcesses.vue'
 import RouteModels from './route-config/RouteModels.vue'
@@ -23,9 +24,25 @@ import RouteTopology from './route-config/RouteTopology.vue'
 import RouteItems from './route-config/RouteItems.vue'
 import RouteSnRegistry from './route-config/RouteSnRegistry.vue'
 
-const activeTab = ref('processes')
+const route = useRoute()
+/** 支持外部深链 ?tab=topology（机型页点流程名跳转过来） */
+const TABS = ['processes', 'models', 'stations', 'topology', 'items', 'snRegistry']
+const activeTab = ref(TABS.includes(route.query.tab) ? route.query.tab : 'processes')
+/** 子页请求「打开某流程的工步拓扑」：nonce 保证同一流程重复点击也能触发（route.query 做不到） */
+const topologyRequest = ref({
+  pid: typeof route.query.process_id === 'string' ? route.query.process_id : '',
+  nonce: 0,
+})
+/** 同一路由内 router.push 不会重挂组件：必须监听 query 才能切 Tab */
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (TABS.includes(tab)) activeTab.value = tab
+  }
+)
 /** 下发当前 Tab 给各子页，供 useTabRefresh 在切回时刷新数据（组件常驻不重挂） */
 provide('configTab', activeTab)
+provide('topologyRequest', topologyRequest)
 </script>
 
 <style scoped>
