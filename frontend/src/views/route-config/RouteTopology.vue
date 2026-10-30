@@ -2,8 +2,13 @@
   <div>
     <div class="tab-head">
       <div class="filter-row">
-        <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:300px">
-          <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+        <el-select v-model="processId" filterable :placeholder="t('common.process')" class="select-flow">
+          <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id">
+            <div class="opt-row">
+              <span class="opt-code">{{ p.process_id }}</span>
+              <span class="opt-name">{{ processName(p.process_id) }}</span>
+            </div>
+          </el-option>
         </el-select>
         <div class="seq-group">
           <el-switch
@@ -45,7 +50,17 @@
       <el-table-column :label="t('configs.tabStations')" width="200">
         <template #default="{ row }">
           <el-select v-model="row.station_id" filterable style="width:100%">
-            <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+            <el-option
+              v-for="s in stations"
+              :key="s.station_id"
+              :value="s.station_id"
+              :label="s.station_id"
+            >
+              <div class="opt-row">
+                <span class="opt-code">{{ s.station_id }}</span>
+                <span class="opt-name">{{ s.station_name || '' }}</span>
+              </div>
+            </el-option>
           </el-select>
         </template>
       </el-table-column>
@@ -66,7 +81,12 @@
               :value="s.station_id"
               :label="s.station_id"
               :disabled="s.station_id === row.station_id"
-            />
+            >
+              <div class="opt-row">
+                <span class="opt-code">{{ s.station_id }}</span>
+                <span class="opt-name">{{ stationName(s.station_id) }}</span>
+              </div>
+            </el-option>
           </el-select>
         </template>
       </el-table-column>
@@ -296,7 +316,15 @@ import { useProcesses } from '../../composables/useProcesses'
 
 const { t } = useI18n()
 const { canManage } = useAuth()
-const { processes, stations, loadProcesses } = useProcesses()
+const { processes, stations, processName, loadProcesses } = useProcesses()
+
+/** 工位名称（字典缺失时回落 ID），供依赖下拉与已选标签使用。 */
+function stationName(stationId) {
+  if (!stationId) return ''
+  return stations.value.find((s) => s.station_id === stationId)?.station_name || stationId
+}
+
+
 
 const route = useRoute()
 const topologyRequest = inject('topologyRequest', null)

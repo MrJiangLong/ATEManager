@@ -2,11 +2,21 @@
   <div>
     <div class="tab-head">
       <div class="filter-row">
-        <el-select v-model="processId" filterable :placeholder="t('common.process')" style="width:240px">
-          <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+        <el-select v-model="processId" filterable :placeholder="t('common.process')" class="select-flow">
+          <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id">
+            <div class="opt-row">
+              <span class="opt-code">{{ p.process_id }}</span>
+              <span class="opt-name">{{ processName(p.process_id) }}</span>
+            </div>
+          </el-option>
         </el-select>
-        <el-select v-model="stationFilter" clearable :placeholder="t('configs.filterStation')" style="width:180px">
-          <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+        <el-select v-model="stationFilter" clearable :placeholder="t('configs.filterStation')" class="select-station">
+          <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id">
+            <div class="opt-row">
+              <span class="opt-code">{{ s.station_id }}</span>
+              <span class="opt-name">{{ s.station_name || '' }}</span>
+            </div>
+          </el-option>
         </el-select>
       </div>
       <div class="filter-row">
@@ -104,7 +114,12 @@
                   :value="s.station_id"
                   :label="isStationLocked(s.station_id) ? `${s.station_id}（${t('configs.baselineLocked')}）` : s.station_id"
                   :disabled="isStationLocked(s.station_id)"
-                />
+                >
+                  <div class="opt-row">
+                    <span class="opt-code">{{ s.station_id }}</span>
+                    <span class="opt-name">{{ s.station_name || '' }}</span>
+                  </div>
+                </el-option>
               </el-select>
             </el-form-item>
           </el-col>
@@ -145,7 +160,7 @@ import CaseIdText from '../../components/CaseIdText.vue'
 
 const { t } = useI18n()
 const { canManage } = useAuth()
-const { processes, stations, loadProcesses } = useProcesses()
+const { processes, stations, processName, loadProcesses } = useProcesses()
 
 const processId = ref('')
 const stationFilter = ref('')

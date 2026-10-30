@@ -2,16 +2,16 @@
   <div>
     <div class="tab-head">
       <div class="filter-row">
-        <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" style="width:300px">
+        <el-select v-model="processFilter" clearable :placeholder="t('configs.filterProcess')" class="select-flow">
           <el-option
             v-for="p in processes"
             :key="p.process_id"
             :value="p.process_id"
-            :label="processName(p.process_id)"
+            :label="p.process_id"
           >
             <div class="opt-row">
+              <span class="opt-code">{{ p.process_id }}</span>
               <span class="opt-name">{{ processName(p.process_id) }}</span>
-              <span class="opt-id">{{ p.process_id }}</span>
             </div>
           </el-option>
         </el-select>
@@ -19,7 +19,7 @@
           v-model="managedFilter"
           clearable
           :placeholder="t('configs.managedFilter')"
-          style="width:150px"
+          class="select-status"
           :title="t('configs.managedFilterTip')"
         >
           <el-option value="managed" :label="t('configs.managedOnly')" />
@@ -400,17 +400,6 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.opt-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.opt-row .opt-id {
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  color: var(--el-text-color-secondary);
 }
 .flow-cell {
   display: flex;

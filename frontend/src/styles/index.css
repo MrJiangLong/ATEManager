@@ -295,3 +295,31 @@ body {
   .kpi-row { grid-template-columns: 1fr !important; }
   .grid-2 { grid-template-columns: 1fr !important; }
 }
+
+/* ---------- 8. 筛选下拉：统一宽度与选项行 ---------- */
+/* 各页筛选下拉统一宽度（流程 / 工位 / 状态），避免并排时宽窄不一造成视觉跳动 */
+.select-flow { width: 300px; }
+.select-station { width: 240px; }
+.select-status { width: 150px; }
+
+/* 选项行：ID（与选中显示同字号同字体）+ 名称（小一号、灰色、右对齐）
+   放在全局而非各页 scoped，保证三处下拉完全一致 */
+.opt-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.5;
+}
+.opt-row .opt-code {
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--el-text-color-primary);
+}
+.opt-row .opt-name {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
