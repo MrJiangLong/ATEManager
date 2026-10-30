@@ -176,6 +176,7 @@ export default {
   status: {
     IDLE: 'Idle',
     TESTING: 'Testing',
+    SAMPLING: 'Sampling',
     LOCKED: 'Locked',
     SCRAPPED: 'Scrapped',
     COMPLETED: 'Completed',

@@ -177,6 +177,7 @@ export default {
   status: {
     IDLE: '待测试',
     TESTING: '测试中',
+    SAMPLING: '选检中',
     LOCKED: '已锁定',
     SCRAPPED: '已报废',
     COMPLETED: '已完工',

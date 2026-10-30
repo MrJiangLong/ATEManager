@@ -2394,6 +2394,98 @@ def test_baseline_lock_from_items():
           f"bad source: {resp.text}")
 
 
+def test_overview_stats_semantics():
+    """运营总览口径：total 尊重流程过滤；状态分布与完工互斥；锁统计与 testing 同源。"""
+    pid = f"PROC-TEST-OV-{STAMP}"
+    st = "ST-OV-01"
+    mid = "DPO4054B-OV"
+    cases = ["tests/ov.py::t1"]
+
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "总览工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "总览流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    admin("PUT", "/api/admin/routing/stations",
+          [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+          params={"process_id": pid})
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-OV", "bound_stations": [st]})
+
+    def checkin(sn):
+        return v1("check-in", {"client_id": "SMOKE-OV", "sn": sn, "product_model": mid,
+                               "firmware": FW, "case_ids": cases})
+
+    # A：进站 + 出站 → 已完工（状态回 IDLE，不得再算进"待测试"）
+    a = f"SIMRS-OV-A-{STAMP}"
+    check(checkin(a).status_code == 200, "ov A checkin")
+    resp = v1("check-out", {"client_id": "SMOKE-OV", "sn": a, "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(cases), "duration_ms": 500})
+    check(resp.status_code == 201, f"ov A checkout: {resp.text}")
+
+    # B：进站未出站 → 测试中（持锁）
+    b = f"SIMRS-OV-B-{STAMP}"
+    check(checkin(b).status_code == 200, "ov B checkin")
+
+    # C：进站后释放 → 未完结空闲（IDLE 且未完工 = 待测试）
+    c = f"SIMRS-OV-C-{STAMP}"
+    check(checkin(c).status_code == 200, "ov C checkin")
+    resp = v1("release", {"client_id": "SMOKE-OV", "sn": c, "reason": "overview test"})
+    check(resp.status_code == 200, f"ov C release: {resp.text}")
+
+    resp = admin("GET", "/api/admin/metrics/overview", params={"process_id": pid})
+    check(resp.status_code == 200, f"overview: {resp.text[:160]}")
+    doc = resp.json()
+    wip = doc["wip"]
+    check(wip["total"] == 3 and doc["product_total"] == 3,
+          f"total respects filter: total={wip['total']} product_total={doc['product_total']}")
+    check(wip["completed"] == 1, f"completed: {wip}")
+    check(wip["in_process"] == 2, f"in_process: {wip}")
+    check(wip["idle"] == 1 and wip["testing"] == 1,
+          f"status split excludes completed: idle={wip['idle']} testing={wip['testing']}")
+    check(wip["completed"] + wip["in_process"] + wip["scrapped"] == wip["total"],
+          f"no double counting: {wip}")
+    check(doc["locks"]["active"] == wip["testing"],
+          f"locks.active == wip.testing: {doc['locks']} vs {wip['testing']}")
+
+    # D) 完工后进选检工位：仍在站上 → 计"测试中"，不计"已完工"（与列表筛选同源）
+    qa = "ST-QA-01"      # 工位 ID 规则：前缀字母 + 分组，末组为两位数字
+    admin("POST", "/api/admin/stations", {"station_id": qa, "station_name": "选检工位"})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False},
+                  {"station_id": qa, "step_order": 20, "depends_on": [], "is_optional": True}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"qa topology: {resp.text}")
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-OV-QA", "bound_stations": [qa]})
+    resp = v1("check-in", {"client_id": "SMOKE-OV-QA", "sn": a, "product_model": mid,
+                           "firmware": FW, "case_ids": ["tests/ov.py::qa"]})
+    check(resp.status_code == 200, f"completed item enters optional station: {resp.text}")
+
+    doc = admin("GET", "/api/admin/metrics/overview", params={"process_id": pid}).json()
+    wip = doc["wip"]
+    """ 完工件进选检工位后单独成桶（sampling），完工数不再抖动：
+    A(完工但在选检站) → sampling；B(未完结在测) → testing；C(未完结空闲) → idle """
+    check(wip["completed"] == 0 and wip["sampling"] == 1
+          and wip["in_process"] == 2 and wip["testing"] == 1 and wip["idle"] == 1,
+          f"qa bucket: {wip}")
+    check(wip["completed"] + wip["sampling"] + wip["in_process"] + wip["scrapped"] == wip["total"],
+          f"invariant after qa: {wip}")
+    # 锁活跃 = 在站测试的件（未完结 testing + 选检中 sampling）
+    check(doc["locks"]["active"] == wip["testing"] + wip["sampling"],
+          f"locks.active: {doc['locks']} vs testing+sampling={wip['testing']}+{wip['sampling']}")
+    # 列表可按 SAMPLING 下钻，且与看板 sampling 严格相等
+    resp = admin("GET", "/api/admin/products",
+                 params={"sn": "SIMRS-OV-", "current_status": "SAMPLING", "process_id": pid,
+                         "page_size": 200})
+    check(resp.status_code == 200 and resp.json()["total"] == wip["sampling"],
+          f"list SAMPLING aligns: {resp.json().get('total')} vs {wip['sampling']}")
+    # 列表 TESTING 仍是"在站上"的件数（含选检中那件）
+    resp = admin("GET", "/api/admin/products",
+                 params={"sn": "SIMRS-OV-", "current_status": "TESTING", "process_id": pid,
+                         "page_size": 200})
+    check(resp.status_code == 200
+          and resp.json()["total"] == wip["testing"] + wip["sampling"],
+          f"list TESTING aligns: {resp.json().get('total')}")
+
+
 def test_station_baseline_lock():
     """工位基线（黄金样本快照锁）：捕获草稿 → 运行中 409 → 锁定物化 → 锁定态严格比对 → 解锁恢复。"""
     pid = f"PROC-TEST-BASE-{STAMP}"
@@ -3312,6 +3404,7 @@ TESTS = [
     test_model_switch_impact_and_confirm,
     test_station_seq_guard,
     test_baseline_lock_from_items,
+    test_overview_stats_semantics,
     test_station_baseline_lock,
     test_sn_registry_status_api,
     test_sn_registry_import_export,

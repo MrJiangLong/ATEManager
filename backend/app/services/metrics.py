@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..config import settings
 from .gate import is_lock_lost
-from .routing import ProcessGraph, _as_list, is_completed, load_process
+from .routing import ProcessGraph, load_process
 from .timeutil import (
     as_utc,
     client_online_since,
@@ -50,26 +50,35 @@ def build_overview(
         return graphs[pid]
 
     products = db.query(models.ProductStatus).all()
+    """ 受 process 过滤约束的台账集合：total / product_total / 状态分布 / 锁统计都基于它 """
+    scoped = [
+        p for p in products
+        if not process_id or model_process.get(p.product_model) == process_id
+    ]
     wip = schemas.WipStat()
-    for p in products:
-        if process_id and model_process.get(p.product_model) != process_id:
-            continue
-        graph = graph_of(p.product_model)
-        passed = set(_as_list(p.passed_stations))
+    for p in scoped:
         if p.current_status == models.STATUS_SCRAPPED:
             wip.scrapped += 1
-        elif graph and is_completed(graph, passed):
-            wip.completed += 1
-        else:
-            wip.in_process += 1
-
-        if p.current_status == models.STATUS_IDLE:
-            wip.idle += 1
-        elif p.current_status == models.STATUS_TESTING:
+            continue
+        """ 四桶互斥：已报废 / 选检中 / 已完工 / 在制（未完结）。
+        完工件还能进站，只可能是"选检工位"（必跑站已全过 → 复测拦截 409），
+        故无需查工位归属即可精确区分——单独一桶，避免完工数在抽检期间来回抖动。 """
+        if p.is_completed:
+            if p.current_status == models.STATUS_TESTING:
+                wip.sampling += 1
+            else:
+                wip.completed += 1
+            continue
+        wip.in_process += 1
+        """ 状态分布只在"未完结"内统计：完工件出站后状态回 IDLE，
+        旧实现会把同一件同时算进"已完工"与"待测试"。 """
+        if p.current_status == models.STATUS_TESTING:
             wip.testing += 1
+        elif p.current_status == models.STATUS_IDLE:
+            wip.idle += 1
         elif p.current_status == models.STATUS_LOCKED:
             wip.locked += 1
-    wip.total = len(products)
+    wip.total = len(scoped)
 
     raw = (
         db.query(models.TestRecord)
@@ -187,17 +196,14 @@ def build_overview(
             lambda: {"total": 0, "passed": 0, "first_pass": 0}
         )
         pending = 0
-        for p in products:
+        for p in scoped:
             if p.sn not in active_sns:
                 continue
             pid = model_process.get(p.product_model)
-            if not pid or (process_id and pid != process_id):
-                continue
-            graph = graph_of(p.product_model)
-            if not graph:
+            if not pid or not graph_of(p.product_model):
                 continue
             scrapped = p.current_status == models.STATUS_SCRAPPED
-            if not scrapped and not is_completed(graph, set(_as_list(p.passed_stations))):
+            if not scrapped and not p.is_completed:
                 pending += 1
                 continue
             bucket = grouped[pid]
@@ -241,11 +247,11 @@ def build_overview(
     ]
 
     lock_stat = schemas.LockStat()
-    for p in products:
-        if p.current_status != models.STATUS_TESTING:
-            continue
-        lock_stat.active += 1
-        if is_lock_lost(p):
+    """ active = 在站测试的件（未完结 testing + 选检中 sampling，两者都持锁），
+    与在制管理列表 current_status=TESTING 的筛选结果一致；僵尸锁在同集合内判定 """
+    lock_stat.active = wip.testing + wip.sampling
+    for p in scoped:
+        if p.current_status == models.STATUS_TESTING and is_lock_lost(p):
             lock_stat.zombie += 1
     lock_stat.sessions_running = (
         db.query(func.count(models.TestSession.session_id))
@@ -287,7 +293,7 @@ def build_overview(
         process_unit_yield_pending=unit_yield_pending,
         top_failed_items=top_failed,
         clients=schemas.ClientStat(total=client_total, online=client_online),
-        product_total=len(products),
+        product_total=len(scoped),
         locks=lock_stat,
     )
 

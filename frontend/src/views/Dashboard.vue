@@ -19,7 +19,7 @@
         :icon="Tickets"
         tone="blue"
         :label="$t('dashboard.wipTitle')"
-        :value="wip.total ?? 0"
+        :value="wip.in_process ?? 0"
         :unit="$t('dashboard.wipTotal')"
         :legend="wipLegend"
         :hint="$t('dashboard.wipHint')"
@@ -41,8 +41,8 @@
         :icon="CircleCheck"
         tone="green"
         :label="$t('dashboard.yieldTitle')"
-        :value="yieldRate"
-        unit="%"
+        :value="today.total ? yieldRate : '—'"
+        :unit="today.total ? '%' : ''"
         :legend="yieldLegend"
         :hint="$t('dashboard.yieldHint')"
       />
@@ -198,13 +198,20 @@ const windowYield = computed(() => {
 
 /* 图例一律中性灰点：只有异常项（锁定 / 报废 / 失败 / 僵尸 / 异常会话）标红，
    窗口均值作为对照基线用品牌蓝强调，避免出现多色仪表盘 */
-const wipLegend = computed(() => [
-  { text: `${t('status.IDLE')} ${wip.value.idle ?? 0}` },
-  { text: `${t('status.TESTING')} ${wip.value.testing ?? 0}` },
-  { text: `${t('status.LOCKED')} ${wip.value.locked ?? 0}`, alert: (wip.value.locked ?? 0) > 0 },
-  { text: `${t('status.SCRAPPED')} ${wip.value.scrapped ?? 0}`, alert: (wip.value.scrapped ?? 0) > 0 },
-  { text: `${t('status.COMPLETED')} ${wip.value.completed ?? 0}` },
-])
+const wipLegend = computed(() => {
+  const items = [
+    { text: `${t('status.IDLE')} ${wip.value.idle ?? 0}` },
+    { text: `${t('status.TESTING')} ${wip.value.testing ?? 0}` },
+  ]
+  // 选检中（完工件在选检工位抽检）为 0 时不占版面
+  if (wip.value.sampling) items.push({ text: `${t('status.SAMPLING')} ${wip.value.sampling}` })
+  items.push(
+    { text: `${t('status.LOCKED')} ${wip.value.locked ?? 0}`, alert: (wip.value.locked ?? 0) > 0 },
+    { text: `${t('status.SCRAPPED')} ${wip.value.scrapped ?? 0}`, alert: (wip.value.scrapped ?? 0) > 0 },
+    { text: `${t('status.COMPLETED')} ${wip.value.completed ?? 0}` }
+  )
+  return items
+})
 const todayLegend = computed(() => [
   { text: `${t('result.PASS')} ${today.value.passed ?? 0}` },
   { text: `${t('result.FAIL')} ${today.value.failed ?? 0}`, alert: (today.value.failed ?? 0) > 0 },
@@ -215,7 +222,7 @@ const yieldLegend = computed(() => [
   { text: `${t('result.FAIL')} ${today.value.failed ?? 0}`, alert: (today.value.failed ?? 0) > 0 },
 ])
 const clientsLegend = computed(() => [
-  { text: `${t('dashboard.productTotal')} ${overview.value?.product_total ?? 0}` },
+  { text: `${t('dashboard.productTotal')} ${wip.value.in_process ?? 0}` },
   { text: `${t('configs.tabProcesses')} ${processes.value.length}` },
 ])
 const lockLegend = computed(() => [

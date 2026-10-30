@@ -198,6 +198,8 @@ function search() {
 
 // 文案与配色必须共用同一个状态键，否则会出现「文字已完工、颜色仍是待处理的灰」。
 function statusKey(row) {
+  // 完工件在选检工位抽检时，状态列显示"选检中"更有信息量（筛选值同名 SAMPLING）
+  if (row.is_completed && row.current_status === 'TESTING') return 'SAMPLING'
   return row.is_completed ? 'COMPLETED' : row.current_status
 }
 function statusLabel(row) {

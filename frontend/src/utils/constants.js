@@ -4,7 +4,7 @@
  * COMPLETED 为派生状态（拓扑盖章齐全），后端会单独处理：
  *   选"待测试"时排除已完工，选"已完工"时只返回已完工，避免两种状态混淆。
  */
-export const WIP_FILTER_STATUSES = ['IDLE', 'TESTING', 'LOCKED', 'SCRAPPED', 'COMPLETED']
+export const WIP_FILTER_STATUSES = ['IDLE', 'TESTING', 'SAMPLING', 'LOCKED', 'SCRAPPED', 'COMPLETED']
 
 /** 维修处置动作（与后端枚举保持一致）。 */
 export const REPAIR_ACTIONS = ['RETEST', 'ROLLBACK', 'RESET', 'SCRAP']

@@ -61,7 +61,7 @@ def list_products(
     if end:
         query = query.filter(models.ProductStatus.updated_at < end)
     status_filter = (current_status or "").upper()
-    if current_status and status_filter not in ("IDLE", "COMPLETED"):
+    if current_status and status_filter not in ("IDLE", "COMPLETED", "SAMPLING"):
         query = query.filter(models.ProductStatus.current_status == status_filter)
     if process_id:
         models_in = [
@@ -76,6 +76,25 @@ def list_products(
     models_by_name, graphs = _prefetch_models_and_graphs(db)
 
     # 故"待测试 / 已完工"必须按 is_completed 冗余列区分，否则两种状态混在一起。
+    # SAMPLING = 完工件正在选检工位抽检（is_completed 仍为 true，但人在站上、持锁）。
+    if status_filter == "SAMPLING":
+        query = query.filter(
+            models.ProductStatus.current_status == models.STATUS_TESTING,
+            models.ProductStatus.is_completed.is_(True),
+        )
+        total = query.count()
+        rows = (
+            query.order_by(models.ProductStatus.updated_at.desc().nullslast())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return schemas.ProductPageOut(
+            total=total,
+            page=page,
+            page_size=page_size,
+            items=[_build_view(db, r, models_by_name, graphs) for r in rows],
+        )
     if status_filter in ("IDLE", "COMPLETED"):
         query = query.filter(
             models.ProductStatus.current_status == models.STATUS_IDLE,

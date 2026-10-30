@@ -998,6 +998,9 @@ class WipStat(BaseModel):
     scrapped: int = 0
     completed: int = 0
     in_process: int = 0
+    """ 完工后进入"选检工位"（is_optional）抽检中的件数：与 completed / in_process 互斥，
+    scrapped + completed + sampling + in_process == total """
+    sampling: int = 0
     total: int = 0
 
 class TodayStat(BaseModel):
