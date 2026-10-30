@@ -230,7 +230,7 @@
               <CodeTip :code="row.station_id" :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
             </template>
           </el-table-column>
-          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="180" show-overflow-tooltip>
+          <el-table-column prop="client_id" :label="$t('records.tableClient')" width="180">
           <template #default="{ row }">
             <CodeTip :code="row.client_id" :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
           </template>
@@ -266,7 +266,7 @@
               <CodeTip :code="row.station_id" :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
             </template>
           </el-table-column>
-          <el-table-column prop="client_id" :label="$t('sessions.tableClient')" width="180" show-overflow-tooltip>
+          <el-table-column prop="client_id" :label="$t('sessions.tableClient')" width="180">
             <template #default="{ row }">
               <CodeTip :code="row.client_id" :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
             </template>

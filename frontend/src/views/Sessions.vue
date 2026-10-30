@@ -8,8 +8,33 @@
         style="width: 170px"
         @keyup.enter="search"
       />
-      <el-select v-model="filters.station_id" clearable :placeholder="$t('sessions.filterStation')" style="width: 150px">
-        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+      <el-select
+        v-model="filters.station_id"
+        clearable
+        filterable
+        :placeholder="$t('sessions.filterStation')"
+        class="select-station"
+      >
+        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(s.station_name || stationName(s.station_id)) || (s.station_name || stationName(s.station_id)) === (s.station_id) }" :title="[s.station_id, s.station_name || stationName(s.station_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ s.station_id }}</span>
+            <span class="opt-name">{{ s.station_name || stationName(s.station_id) }}</span>
+          </div>
+        </el-option>
+      </el-select>
+      <el-select
+        v-model="filters.client_id"
+        clearable
+        filterable
+        :placeholder="$t('sessions.filterClient')"
+        class="select-station"
+      >
+        <el-option v-for="c in clients" :key="c.client_id" :value="c.client_id" :label="c.client_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(c.client_name || '') || (c.client_name || '') === (c.client_id) }" :title="[c.client_id, c.client_name || ''].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ c.client_id }}</span>
+            <span class="opt-name">{{ c.client_name || '' }}</span>
+          </div>
+        </el-option>
       </el-select>
       <el-select v-model="filters.status" clearable :placeholder="$t('sessions.filterStatus')" style="width: 140px">
         <el-option v-for="s in SESSION_STATUS_LIST" :key="s" :value="s" :label="$t(`sessionStatus.${s}`)" />
@@ -39,12 +64,12 @@
         </el-table-column>
         <el-table-column prop="station_id" :label="$t('sessions.tableStation')" min-width="130">
           <template #default="{ row }">
-            <CodeTip :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
+            <CodeTip :code="row.station_id" :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
           </template>
         </el-table-column>
-        <el-table-column prop="client_id" :label="$t('sessions.tableClient')" min-width="150" show-overflow-tooltip>
+        <el-table-column prop="client_id" :label="$t('sessions.tableClient')" min-width="150">
           <template #default="{ row }">
-            <CodeTip :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
+            <CodeTip :code="row.client_id" :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>
           </template>
         </el-table-column>
 
@@ -162,14 +187,14 @@ const { t } = useI18n()
 const { canOperate } = useAuth()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
-const { stationName, clientName, ensureLoaded } = useDictionaries()
+const { clients, stationName, clientName, ensureClients, ensureLoaded } = useDictionaries()
 
 const items = ref([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const filters = reactive({ sn: '', station_id: '', status: '', view: '' })
+const filters = reactive({ sn: '', station_id: '', client_id: '', status: '', view: '' })
 const dateRange = ref(null)
 
 const drawerVisible = ref(false)
@@ -193,6 +218,7 @@ async function load(silent = false) {
       const params = { page: page.value, page_size: pageSize.value }
       if (filters.sn) params.sn = filters.sn
       if (filters.station_id) params.station_id = filters.station_id
+      if (filters.client_id) params.client_id = filters.client_id
       // 视图选「异常终止」时优先于具体状态（沿用后端 abnormal_only 语义）
       if (filters.view === 'abnormal') params.abnormal_only = true
       else if (filters.status) params.status = filters.status
@@ -275,12 +301,12 @@ async function onForceRelease(row) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.station_id, filters.status, filters.view, dateRange.value],
+  () => [filters.sn, filters.station_id, filters.client_id, filters.status, filters.view, dateRange.value],
   () => search()
 )
 
 onMounted(async () => {
-  await Promise.all([loadProcesses(), ensureLoaded()])
+  await Promise.all([loadProcesses(), ensureLoaded(), ensureClients()])
   await load()
 })
 

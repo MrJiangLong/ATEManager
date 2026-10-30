@@ -4,7 +4,7 @@
       <div class="filter-row">
         <el-select v-model="processId" filterable :placeholder="t('common.process')" class="select-flow">
           <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id">
-            <div class="opt-row">
+            <div class="opt-row" :class="{ 'opt-row--tight': !(processName(p.process_id)) || (processName(p.process_id)) === (p.process_id) }" :title="[p.process_id, processName(p.process_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
               <span class="opt-code">{{ p.process_id }}</span>
               <span class="opt-name">{{ processName(p.process_id) }}</span>
             </div>
@@ -56,7 +56,7 @@
               :value="s.station_id"
               :label="s.station_id"
             >
-              <div class="opt-row">
+              <div class="opt-row" :class="{ 'opt-row--tight': !(s.station_name || '') || (s.station_name || '') === (s.station_id) }" :title="[s.station_id, s.station_name || ''].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
                 <span class="opt-code">{{ s.station_id }}</span>
                 <span class="opt-name">{{ s.station_name || '' }}</span>
               </div>
@@ -82,7 +82,7 @@
               :label="s.station_id"
               :disabled="s.station_id === row.station_id"
             >
-              <div class="opt-row">
+              <div class="opt-row" :class="{ 'opt-row--tight': !(stationName(s.station_id)) || (stationName(s.station_id)) === (s.station_id) }" :title="[s.station_id, stationName(s.station_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
                 <span class="opt-code">{{ s.station_id }}</span>
                 <span class="opt-name">{{ stationName(s.station_id) }}</span>
               </div>

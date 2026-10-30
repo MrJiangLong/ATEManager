@@ -1,8 +1,13 @@
 <template>
   <div class="dashboard fade-up">
     <PageToolbar :title="$t('dashboard.title')" :subtitle="$t('dashboard.subtitle')">
-      <el-select v-model="processFilter" clearable :placeholder="$t('common.process')" style="width:300px">
-        <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+      <el-select v-model="processFilter" clearable filterable :placeholder="$t('common.process')" class="select-flow">
+        <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(processName(p.process_id)) || (processName(p.process_id)) === (p.process_id) }" :title="[p.process_id, processName(p.process_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ p.process_id }}</span>
+            <span class="opt-name">{{ processName(p.process_id) }}</span>
+          </div>
+        </el-option>
       </el-select>
       <el-radio-group v-model="windowDays" size="small" class="window-switch">
         <el-radio-button v-for="d in WINDOWS" :key="d" :value="d">
@@ -163,7 +168,7 @@ const WINDOWS = [7, 14, 30]
 
 const { t, locale } = useI18n()
 const router = useRouter()
-const { processes, loadProcesses } = useProcesses()
+const { processes, processName, loadProcesses } = useProcesses()
 
 const windowDays = ref(14)
 const processFilter = ref('')

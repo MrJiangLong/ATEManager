@@ -2,8 +2,19 @@
   <div class="products fade-up">
     <PageToolbar :title="$t('products.title')" :subtitle="$t('products.subtitle')">
       <el-input v-model="filters.sn" clearable :placeholder="$t('products.searchSn')" style="width:180px" @keyup.enter="search" />
-      <el-select v-model="filters.process_id" clearable :placeholder="$t('products.filterProcess')" style="width:200px">
-        <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id" />
+      <el-select
+        v-model="filters.process_id"
+        clearable
+        filterable
+        :placeholder="$t('products.filterProcess')"
+        class="select-flow"
+      >
+        <el-option v-for="p in processes" :key="p.process_id" :value="p.process_id" :label="p.process_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(processName(p.process_id)) || (processName(p.process_id)) === (p.process_id) }" :title="[p.process_id, processName(p.process_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ p.process_id }}</span>
+            <span class="opt-name">{{ processName(p.process_id) }}</span>
+          </div>
+        </el-option>
       </el-select>
       <el-select v-model="filters.product_model" clearable :placeholder="$t('products.filterModel')" style="width:160px">
         <el-option v-for="m in models" :key="m.product_model" :value="m.product_model" :label="m.product_model" />
@@ -32,10 +43,11 @@
             <el-button link type="primary" @click="goTrace(row.sn)"><span class="code">{{ row.sn }}</span></el-button>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('products.tableModel')" width="210" show-overflow-tooltip>
+        <el-table-column :label="$t('products.tableModel')" width="210">
           <template #default="{ row }">
             <div class="model-cell">
-              <span>{{ row.product_model }}</span>
+              <!-- 机型名用原生 title 兜底；流程 ID 由 CodeTip 提供「名称（编码）」，避免两个浮层重叠 -->
+              <span :title="row.product_model">{{ row.product_model }}</span>
               <span class="muted model-process">
                 <CodeTip :code="row.process_id" :name="processName(row.process_id)">{{ row.process_id || '—' }}</CodeTip>
               </span>

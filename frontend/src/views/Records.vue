@@ -2,8 +2,33 @@
   <div class="records fade-up">
     <PageToolbar :title="$t('records.title')" :subtitle="$t('records.subtitle')">
       <el-input v-model="filters.sn" clearable :placeholder="$t('records.searchSn')" style="width:170px" @keyup.enter="search" />
-      <el-select v-model="filters.station_id" clearable :placeholder="$t('records.filterStation')" style="width:160px">
-        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+      <el-select
+        v-model="filters.station_id"
+        clearable
+        filterable
+        :placeholder="$t('records.filterStation')"
+        class="select-station"
+      >
+        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(s.station_name || stationName(s.station_id)) || (s.station_name || stationName(s.station_id)) === (s.station_id) }" :title="[s.station_id, s.station_name || stationName(s.station_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ s.station_id }}</span>
+            <span class="opt-name">{{ s.station_name || stationName(s.station_id) }}</span>
+          </div>
+        </el-option>
+      </el-select>
+      <el-select
+        v-model="filters.client_id"
+        clearable
+        filterable
+        :placeholder="$t('records.filterClient')"
+        class="select-station"
+      >
+        <el-option v-for="c in clients" :key="c.client_id" :value="c.client_id" :label="c.client_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(c.client_name || '') || (c.client_name || '') === (c.client_id) }" :title="[c.client_id, c.client_name || ''].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ c.client_id }}</span>
+            <span class="opt-name">{{ c.client_name || '' }}</span>
+          </div>
+        </el-option>
       </el-select>
       <el-select v-model="filters.product_model" clearable :placeholder="$t('records.filterModel')" style="width:150px">
         <el-option v-for="m in models" :key="m.product_model" :value="m.product_model" :label="m.product_model" />
@@ -166,7 +191,7 @@ import { downloadArtifact } from '../utils/artifacts'
 const { t } = useI18n()
 const router = useRouter()
 const { stations, loadProcesses } = useProcesses()
-const { stationName, clientName, ensureLoaded, ensureCaseNames, caseLabel } = useDictionaries()
+const { clients, stationName, clientName, ensureClients, ensureLoaded, ensureCaseNames, caseLabel } = useDictionaries()
 
 const items = ref([])
 const models = ref([])
@@ -175,7 +200,14 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const dateRange = ref(null)
-const filters = reactive({ sn: '', station_id: '', product_model: '', overall_result: '', is_valid: '' })
+const filters = reactive({
+  sn: '',
+  station_id: '',
+  client_id: '',
+  product_model: '',
+  overall_result: '',
+  is_valid: '',
+})
 
 async function load(silent = false) {
   if (!silent) loading.value = true
@@ -183,6 +215,7 @@ async function load(silent = false) {
     const params = { page: page.value, page_size: pageSize.value }
     if (filters.sn) params.sn = filters.sn
     if (filters.station_id) params.station_id = filters.station_id
+    if (filters.client_id) params.client_id = filters.client_id
     if (filters.product_model) params.product_model = filters.product_model
     if (filters.overall_result) params.overall_result = filters.overall_result
     if (filters.is_valid !== '') params.is_valid = filters.is_valid
@@ -212,12 +245,20 @@ function goTrace(sn) {
 
 watch([page, pageSize], () => load())
 watch(
-  () => [filters.sn, filters.station_id, filters.product_model, filters.overall_result, filters.is_valid, dateRange.value],
+  () => [
+    filters.sn,
+    filters.station_id,
+    filters.client_id,
+    filters.product_model,
+    filters.overall_result,
+    filters.is_valid,
+    dateRange.value,
+  ],
   () => search()
 )
 
 onMounted(async () => {
-  await Promise.all([loadProcesses(), ensureLoaded()])
+  await Promise.all([loadProcesses(), ensureLoaded(), ensureClients()])
   ensureCaseNames()
   try {
     const res = await modelApi.list({})

@@ -9,7 +9,7 @@
             :value="p.process_id"
             :label="p.process_id"
           >
-            <div class="opt-row">
+            <div class="opt-row" :class="{ 'opt-row--tight': !(processName(p.process_id)) || (processName(p.process_id)) === (p.process_id) }" :title="[p.process_id, processName(p.process_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
               <span class="opt-code">{{ p.process_id }}</span>
               <span class="opt-name">{{ processName(p.process_id) }}</span>
             </div>

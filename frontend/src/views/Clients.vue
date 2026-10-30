@@ -7,8 +7,19 @@
         :placeholder="$t('clients.searchPh')"
         style="width: 220px"
       />
-      <el-select v-model="stationFilter" clearable :placeholder="$t('clients.filterStation')" style="width:180px">
-        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id" />
+      <el-select
+        v-model="stationFilter"
+        clearable
+        filterable
+        :placeholder="$t('clients.filterStation')"
+        class="select-station"
+      >
+        <el-option v-for="s in stations" :key="s.station_id" :value="s.station_id" :label="s.station_id">
+          <div class="opt-row" :class="{ 'opt-row--tight': !(s.station_name || stationName(s.station_id)) || (s.station_name || stationName(s.station_id)) === (s.station_id) }" :title="[s.station_id, s.station_name || stationName(s.station_id)].filter((v, i, a) => v && a.indexOf(v) === i).join('  ')">
+            <span class="opt-code">{{ s.station_id }}</span>
+            <span class="opt-name">{{ s.station_name || stationName(s.station_id) }}</span>
+          </div>
+        </el-option>
       </el-select>
       <el-date-picker
         v-model="dateRange"

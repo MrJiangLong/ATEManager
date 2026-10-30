@@ -302,23 +302,51 @@ body {
 .select-station { width: 240px; }
 .select-status { width: 150px; }
 
-/* 选项行：ID（与选中显示同字号同字体）+ 名称（小一号、灰色、右对齐）
-   放在全局而非各页 scoped，保证三处下拉完全一致 */
+/* 主副双行：主行（码 / 主名称）在上，副行（名称 / 补充说明）在下。
+   替代原来的左右水平排列——长 ID + 长名称并排时容易挤成一团、对齐也乱。 */
 .opt-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  line-height: 1.5;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  line-height: 1.35;
+}
+
+/* 候选项默认 34px 定高 + 行高居中，双行内容会被裁掉：放开高度并留出上下内边距 */
+.el-select-dropdown__item:has(> .opt-row) {
+  height: auto;
+  min-height: 40px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 1.35;
+}
+/* 无名称的项（多数机台只有 ID，或名称与 ID 相同）折叠回单行密度：
+   用显式 class 判定，避免 :empty 对"空文本节点是否算空"的不确定性 */
+.el-select-dropdown__item:has(> .opt-row--tight) {
+  height: 34px;           /* 固定为 EP 默认单项高度 */
+  min-height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
+  display: flex;          /* 单行内容垂直居中（否则按 line-height 贴顶部，看着仍占满一行） */
+  align-items: center;
+}
+.opt-row--tight .opt-name {
+  display: none;
 }
 .opt-row .opt-code {
   font-size: inherit;
   font-family: inherit;
   color: var(--el-text-color-primary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .opt-row .opt-name {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -216,7 +216,7 @@
           <el-table-column prop="product_model" :label="t('configs.modelId')" min-width="110">
             <template #default="{ row }">{{ row.product_model || '—' }}</template>
           </el-table-column>
-          <el-table-column prop="process_id" :label="t('configs.modelProcess')" min-width="150" show-overflow-tooltip>
+          <el-table-column prop="process_id" :label="t('configs.modelProcess')" min-width="150">
             <template #default="{ row }">
               <CodeTip :code="row.process_id" :name="processName(row.process_id)">{{ row.process_id || '—' }}</CodeTip>
             </template>

@@ -86,7 +86,14 @@ export function useDictionaries() {
     return name && name !== caseId ? `${caseId}(${name})` : caseId
   }
 
+  /** 机台清单（供筛选下拉使用；复用 ensureClients 的缓存，不额外请求） */
+  const clients = computed(() =>
+    [...clientsMap.value.entries()].map(([client_id, client_name]) => ({ client_id, client_name }))
+  )
+
   return {
+    clients,
+    ensureClients,
     ensureLoaded,
     ensureCaseNames,
     caseLabel,
