@@ -1,7 +1,8 @@
 """通道二：工艺拓扑编排与用例ID测试项（/api/admin/routing）。
 
     process_stations  工步拓扑（step_order + depends_on → 防跳站闸门）
-    station_items     用例ID静态清单（防漏测依据）
+    station_items     用例ID静态清单（防漏测依据）；同一工位可挂多个用例集合（set_id），
+                      进站时上报序列与任意一套集合匹配即放行
 """
 
 from typing import Dict, List
@@ -43,6 +44,26 @@ def _assert_station_in_process(db: Session, process_id: str, station_id: str) ->
             "station_not_in_process",
             f"station_not_in_process: {station_id} is not a step of {process_id}",
         )
+
+def _ensure_case_set(
+    db: Session, process_id: str, station_id: str, set_id: str
+) -> models.StationCaseSet:
+    """用例集合主数据兜底：脚本/导入直接落用例行时按字段码补建（名称缺省用字段码）。"""
+    row = (
+        db.query(models.StationCaseSet)
+        .filter(
+            models.StationCaseSet.process_id == process_id,
+            models.StationCaseSet.station_id == station_id,
+            models.StationCaseSet.set_id == set_id,
+        )
+        .first()
+    )
+    if row is None:
+        row = models.StationCaseSet(
+            process_id=process_id, station_id=station_id, set_id=set_id, set_name=set_id
+        )
+        db.add(row)
+    return row
 
 # "没测试项不让存拓扑 → 没拓扑不让加测试项"的死锁。
 _BLOCKING_SAVE_CODES = frozenset(
@@ -111,6 +132,10 @@ def save_steps(
         db.query(models.StationItem).filter(
             models.StationItem.process_id == process_id,
             models.StationItem.station_id.in_(removed),
+        ).delete(synchronize_session=False)
+        db.query(models.StationCaseSet).filter(
+            models.StationCaseSet.process_id == process_id,
+            models.StationCaseSet.station_id.in_(removed),
         ).delete(synchronize_session=False)
 
     db.query(models.ProcessStation).filter(models.ProcessStation.process_id == process_id).delete()
@@ -187,6 +212,10 @@ def delete_step(
         models.StationItem.process_id == process_id,
         models.StationItem.station_id == station_id,
     ).delete(synchronize_session=False)
+    db.query(models.StationCaseSet).filter(
+        models.StationCaseSet.process_id == process_id,
+        models.StationCaseSet.station_id == station_id,
+    ).delete(synchronize_session=False)
     db.commit()
 
 def _running_sessions_on(db: Session, process_id: str, station_id: str) -> int:
@@ -232,14 +261,18 @@ def _assert_baseline_unlocked(db: Session, process_id: str, station_id: str) -> 
 def list_items(
     process_id: str = Query(..., min_length=1),
     station_id: str = Query(None),
+    set_id: str = Query(None, description="只看某个用例集合"),
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ):
     query = db.query(models.StationItem).filter(models.StationItem.process_id == process_id)
     if station_id:
         query = query.filter(models.StationItem.station_id == station_id)
+    if set_id:
+        query = query.filter(models.StationItem.set_id == set_id)
     return query.order_by(
         models.StationItem.station_id,
+        models.StationItem.set_id,
         models.StationItem.sort_order.is_(None),
         models.StationItem.sort_order,
         models.StationItem.case_id,
@@ -247,7 +280,7 @@ def list_items(
 
 @router.post("/items", response_model=schemas.StationItemOut, status_code=201, summary="新增用例ID测试项")
 def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_db), user=Depends(require_manager)):
-    """新增测试项；未指定 sort_order 时按步长 10 追加到该工位末尾（预留中间插入空间）。"""
+    """新增测试项；未指定 sort_order 时按步长 10 追加到**该集合**末尾（预留中间插入空间）。"""
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
     _assert_baseline_unlocked(db, payload.process_id, payload.station_id)
@@ -256,12 +289,15 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
         .filter(
             models.StationItem.process_id == payload.process_id,
             models.StationItem.station_id == payload.station_id,
+            models.StationItem.set_id == payload.set_id,
             models.StationItem.case_id == payload.case_id,
         )
         .first()
     )
     if exists:
-        raise conflict_error("item_already_exists", f"item_already_exists: {payload.case_id}")
+        raise conflict_error(
+            "item_already_exists", f"item_already_exists: {payload.set_id}/{payload.case_id}"
+        )
     next_order = payload.sort_order
     if next_order is None:
         max_order = (
@@ -269,10 +305,12 @@ def create_item(payload: schemas.StationItemCreateIn, db: Session = Depends(get_
             .filter(
                 models.StationItem.process_id == payload.process_id,
                 models.StationItem.station_id == payload.station_id,
+                models.StationItem.set_id == payload.set_id,
             )
             .scalar()
         )
         next_order = (max_order or 0) + 10
+    _ensure_case_set(db, payload.process_id, payload.station_id, payload.set_id)
     row = models.StationItem(
         **{
             **payload.model_dump(exclude={"sort_order"}),
@@ -316,12 +354,14 @@ def import_items(
     db: Session = Depends(get_db),
     user=Depends(require_manager),
 ):
-    """整批同步某工位的用例ID清单，供上位机脚本自动对齐（pytest --collect-only 的输出）。
+    """整批同步某工位**某一套用例集合**的用例ID清单，供上位机脚本自动对齐
+    （pytest --collect-only 的输出）。
 
-    匹配键 (process_id, station_id, case_id) 与唯一约束一致，故重复导入幂等：
+    匹配键 (process_id, station_id, set_id, case_id) 与唯一约束一致，故重复导入幂等：
     第二次执行全部 unchanged，不会产生重复行，也不会因已存在而报 409。
+    同工位的其他集合完全不受影响（replace 只停用**本集合内**清单外的项）。
 
-    闸门：本次导入会"    新增必测项"（新用例 / 停用复活 / is_mandatory 翻 true）且该
+    闸门：本次导入会"新增必测项"（新用例 / 停用复活 / is_mandatory 翻 true）且该
     工位有 RUNNING 会话时默认 409 拒绝 —— 运行中会话的断点里没有新必测项，出站会被
     missing_mandatory 误计一次失败（FAIL_LIMIT 次 → LOCKED）。先停会话再同步，或
     force=true 强行覆盖。只收缩清单（停用/降级/改名）不拦，随时可做。
@@ -333,6 +373,8 @@ def import_items(
     _assert_baseline_unlocked(db, payload.process_id, payload.station_id)
     if payload.mode not in ("upsert", "replace"):
         raise bad_request("bad_mode", "bad_mode: mode must be 'upsert' or 'replace'")
+    # 脚本/上位机直接按字段码同步时，集合主数据自动补建（名称缺省用字段码）
+    _ensure_case_set(db, payload.process_id, payload.station_id, payload.set_id)
 
     existing = {
         row.case_id: row
@@ -340,6 +382,7 @@ def import_items(
         .filter(
             models.StationItem.process_id == payload.process_id,
             models.StationItem.station_id == payload.station_id,
+            models.StationItem.set_id == payload.set_id,
         )
         .all()
     }
@@ -368,6 +411,7 @@ def import_items(
             row = models.StationItem(
                 process_id=payload.process_id,
                 station_id=payload.station_id,
+                set_id=payload.set_id,
                 case_id=case_id,
                 item_name=name,
                 is_mandatory=row_in.is_mandatory,
@@ -436,6 +480,7 @@ def import_items(
     return schemas.StationItemImportOut(
         process_id=str(payload.process_id),
         station_id=str(payload.station_id),
+        set_id=str(payload.set_id),
         mode=payload.mode,
         dry_run=payload.dry_run,
         created=created,
@@ -448,20 +493,216 @@ def import_items(
         warnings=warnings,
     )
 
+# ==================== 用例集合（一个工位多套） ====================
+@router.get("/case-sets", response_model=List[schemas.CaseSetOut], summary="工位用例集合清单")
+def list_case_sets(
+    process_id: str = Query(..., min_length=1),
+    station_id: str = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+):
+    query = db.query(models.StationCaseSet).filter(models.StationCaseSet.process_id == process_id)
+    if station_id:
+        query = query.filter(models.StationCaseSet.station_id == station_id)
+    rows = query.order_by(models.StationCaseSet.station_id, models.StationCaseSet.set_id).all()
+    counts = {
+        (sid, set_id): n
+        for sid, set_id, n in db.query(
+            models.StationItem.station_id,
+            models.StationItem.set_id,
+            func.count(models.StationItem.item_id),
+        )
+        .filter(
+            models.StationItem.process_id == process_id,
+            models.StationItem.is_active.is_(True),
+        )
+        .group_by(models.StationItem.station_id, models.StationItem.set_id)
+        .all()
+    }
+    return [
+        schemas.CaseSetOut(
+            process_id=row.process_id,
+            station_id=row.station_id,
+            set_id=row.set_id,
+            set_name=row.set_name or row.set_id,
+            item_count=counts.get((row.station_id, row.set_id), 0),
+        )
+        for row in rows
+    ]
+
+@router.post("/case-sets", response_model=schemas.CaseSetOut, status_code=201, summary="新建工位用例集合")
+def create_case_set(
+    payload: schemas.CaseSetCreateIn,
+    db: Session = Depends(get_db),
+    user=Depends(require_manager),
+):
+    """新建一套用例集合（字段码 + 名称）；用例在「测试项」里挂到该字段码下。"""
+    get_or_404(db, models.Process, payload.process_id, "process")
+    _assert_station_in_process(db, payload.process_id, payload.station_id)
+    _assert_baseline_unlocked(db, payload.process_id, payload.station_id)
+    exists = (
+        db.query(models.StationCaseSet)
+        .filter(
+            models.StationCaseSet.process_id == payload.process_id,
+            models.StationCaseSet.station_id == payload.station_id,
+            models.StationCaseSet.set_id == payload.set_id,
+        )
+        .first()
+    )
+    if exists:
+        raise conflict_error(
+            "case_set_already_exists",
+            f"case_set_already_exists: {payload.station_id}/{payload.set_id}",
+        )
+    row = models.StationCaseSet(
+        process_id=payload.process_id,
+        station_id=payload.station_id,
+        set_id=payload.set_id,
+        set_name=payload.set_name or payload.set_id,
+    )
+    db.add(row)
+    db.commit()
+    return schemas.CaseSetOut(
+        process_id=row.process_id,
+        station_id=row.station_id,
+        set_id=row.set_id,
+        set_name=row.set_name,
+        item_count=0,
+    )
+
+@router.delete("/case-sets", status_code=204, summary="删除工位用例集合(连带其用例清单)")
+def delete_case_set(
+    process_id: str = Query(..., min_length=1),
+    station_id: str = Query(..., min_length=1),
+    set_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    user=Depends(require_manager),
+):
+    """删除整套集合：该集合下的用例行一并清理（其他集合不受影响）。
+
+    闸门：锁定态 409 baseline_locked（清单由基线固化）；该工位有 RUNNING 会话
+    409 running_session_block（会话断点属于被删集合，出站会被漏测误杀）。
+    """
+    row = (
+        db.query(models.StationCaseSet)
+        .filter(
+            models.StationCaseSet.process_id == process_id,
+            models.StationCaseSet.station_id == station_id,
+            models.StationCaseSet.set_id == set_id,
+        )
+        .first()
+    )
+    if row is None:
+        raise not_found("case_set_not_found", f"case_set_not_found: {station_id}/{set_id}")
+    _assert_baseline_unlocked(db, process_id, station_id)
+    running = _running_sessions_on(db, process_id, station_id)
+    if running:
+        raise conflict_error(
+            "running_session_block",
+            f"running_session_block: {running} RUNNING session(s) on "
+            f"{process_id}/{station_id}，删除集合前请先中止会话",
+            data={"running_sessions": running},
+        )
+    db.query(models.StationItem).filter(
+        models.StationItem.process_id == process_id,
+        models.StationItem.station_id == station_id,
+        models.StationItem.set_id == set_id,
+    ).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+
 # ==================== 工位基线（黄金样本快照锁） ====================
-@router.post("/baseline/lock", response_model=schemas.BaselineLockOut, summary="锁定工位基线（草稿物化为用例清单并开启严格比对）")
+def _station_case_sets(db: Session, process_id: str, station_id: str) -> Dict[str, List[str]]:
+    """该工位启用中的用例集合：{set_id: [用例ID（按执行序号）]}。"""
+    rows = (
+        db.query(models.StationItem)
+        .filter(
+            models.StationItem.process_id == process_id,
+            models.StationItem.station_id == station_id,
+            models.StationItem.is_active.is_(True),
+        )
+        .order_by(
+            models.StationItem.set_id,
+            models.StationItem.sort_order.is_(None),
+            models.StationItem.sort_order,
+            models.StationItem.case_id,
+        )
+        .all()
+    )
+    sets: Dict[str, List[str]] = {}
+    for row in rows:
+        sets.setdefault(row.set_id, []).append(row.case_id)
+    return sets
+
+
+def _overwrite_set_with_draft(
+    db: Session,
+    process_id: str,
+    station_id: str,
+    set_id: str,
+    case_ids: List[str],
+    names: Dict[str, str],
+) -> int:
+    """把录制草稿**物理覆盖**到指定集合：草稿外的行删除，草稿内的行按序重建。
+
+    锁定 = 发布承诺，因此这里不做可回滚的软停用：「锁定后这套集合的清单就是草稿」。
+    返回被删除的用例条数。
+    """
+    _ensure_case_set(db, process_id, station_id, set_id)
+    existing = {
+        row.case_id: row
+        for row in db.query(models.StationItem)
+        .filter(
+            models.StationItem.process_id == process_id,
+            models.StationItem.station_id == station_id,
+            models.StationItem.set_id == set_id,
+        )
+        .all()
+    }
+    keep = set(case_ids)
+    stale_ids = [row.item_id for cid, row in existing.items() if cid not in keep]
+    if stale_ids:
+        db.query(models.StationItem).filter(
+            models.StationItem.item_id.in_(stale_ids)
+        ).delete(synchronize_session=False)
+    for idx, case_id in enumerate(case_ids, 1):
+        row = existing.get(case_id)
+        name = (names.get(case_id) or "").strip()
+        if row is None:
+            db.add(
+                models.StationItem(
+                    process_id=process_id,
+                    station_id=station_id,
+                    set_id=set_id,
+                    case_id=case_id,
+                    item_name=name or case_id,
+                    is_mandatory=True,
+                    is_active=True,
+                    sort_order=idx * 10,
+                )
+            )
+            continue
+        row.item_name = name or row.item_name or case_id
+        row.is_mandatory = True
+        row.is_active = True
+        row.sort_order = idx * 10
+    return len(stale_ids)
+
+
+@router.post("/baseline/lock", response_model=schemas.BaselineLockOut, summary="锁定工位基线（冻结全部用例集合并开启严格比对）")
 def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db), user=Depends(require_manager)):
-    """黄金样本快照锁：把录制态捕获的用例序列草稿按 replace 模式物化为该工位
-    的用例清单（全部必测、执行序号按清单顺序步长 10 编号）并开启进站严格比对
-    （全列表含顺序精确一致，任何增删/改序进站即 400 case_order_mismatch）。
+    """黄金样本快照锁：冻结该工位的**全部用例集合**，进站上报的用例序列必须与
+    任意一套集合逐项一致（全列表含顺序，任何增删/改序进站即 400 case_order_mismatch）。
 
     来源（`source`）：
-    - `draft`（默认）：以机台录制草稿为基线——设备实证过的真实序列
-    - `items`：以该工位**现有启用中的清单**为基线——规格书/Excel 导入后无需再让机台跑一遍
-      （顺序即当前 `sort_order`；停用项不进基线）
+    - `items`（默认）：以现有启用中的各套集合为基线——规格书/Excel 导入后无需再让机台
+      跑一遍（顺序即各集合当前 `sort_order`；停用项不进基线），不物化、不改清单
+    - `draft`：把机台录制草稿**物理覆盖**到 `set_id` 指定的集合（该集合内草稿外的用例
+      删除、草稿内的用例全部必测、步长 10 编号），其他集合原样保留——设备实证过的真实序列
 
-    闸门：来源为空 400 baseline_empty；该工位有运行中会话 409 running_session_block
-    （新基线必测集合与运行中断点不同，出站会被漏测误杀）。解锁走 /baseline/unlock。
+    闸门：来源为空 400 baseline_empty；draft 未指定集合 400 set_required；该工位有
+    运行中会话 409 running_session_block（新基线必测集合与运行中断点不同，出站会被
+    漏测误杀）。解锁走 /baseline/unlock。
     """
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
@@ -469,31 +710,25 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
     if ps.baseline_locked:
         raise conflict_error("baseline_already_locked", f"baseline_already_locked: {payload.station_id}")
 
-    source = (payload.source or "draft").strip().lower()
+    source = (payload.source or "items").strip().lower()
     if source not in ("draft", "items"):
         raise bad_request("bad_source", "bad_source: source must be 'draft' or 'items'")
 
-    extra_names: Dict[str, str] = {}
+    set_id = (payload.set_id or "").strip()
+    manifest: List[str] = []
     if source == "items":
-        rows = (
-            db.query(models.StationItem)
-            .filter(
-                models.StationItem.process_id == payload.process_id,
-                models.StationItem.station_id == payload.station_id,
-                models.StationItem.is_active.is_(True),
-            )
-            .order_by(models.StationItem.sort_order, models.StationItem.case_id)
-            .all()
-        )
-        manifest = [row.case_id for row in rows]
-        extra_names = {row.case_id: (row.item_name or "") for row in rows}
-        if not manifest:
+        if not _station_case_sets(db, payload.process_id, payload.station_id):
             raise bad_request(
                 "baseline_empty",
-                f"baseline_empty: 工位 {payload.station_id} 没有启用中的用例清单"
+                f"baseline_empty: 工位 {payload.station_id} 没有启用中的用例集合"
                 f"（source=items 需先导入清单）",
             )
     else:
+        if not set_id:
+            raise bad_request(
+                "set_required",
+                f"set_required: 草稿锁定须指定物化到的用例集合（工位 {payload.station_id}）",
+            )
         manifest = [c for c in (ps.baseline_manifest or []) if c]
         if not manifest:
             raise bad_request(
@@ -509,43 +744,28 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
             data={"running_sessions": running},
         )
 
-    # 物化 = 以草稿为载荷复用批量导入端点逻辑（replace 清空重建 + 步长 10 编号 + 全部必测）；
-    # names 为锁定弹窗内补录的名称（缺省空 → 导入逻辑沿用现有名称或 nodeid 兜底）
-    names = payload.names or {}
-    import_result = import_items(
-        schemas.StationItemImportIn(
-            process_id=payload.process_id,
-            station_id=payload.station_id,
-            items=[
-                schemas.StationItemImportRow(
-                    case_id=cid,
-                    # 名称优先级：弹窗补录 > 现有清单名称（source=items 时保留原名） > 空（导入逻辑按 nodeid 兜底）
-                    item_name=(names.get(cid) or extra_names.get(cid) or "").strip(),
-                    is_mandatory=True,
-                )
-                for cid in manifest
-            ],
-            mode="replace",
-            force=True,
-        ),
-        db=db,
-        user=user,
-    )
+    removed = 0
+    if source == "draft":
+        # 物化 = 该集合内**物理覆盖**为草稿（锁定即发布承诺，草稿外的用例直接删除）
+        removed = _overwrite_set_with_draft(
+            db, payload.process_id, payload.station_id, set_id, manifest, payload.names or {}
+        )
     ps.baseline_locked = True
-    """ 关键：清单来源为 items 时，manifest 需显式写回工位行——
-    锁定态的进站严格比对读的就是 baseline_manifest（草稿来源时它本来就有值） """
-    if source == "items":
-        ps.baseline_manifest = list(manifest)
-        ps.baseline_captured_at = utcnow()
     db.commit()
 
+    sets = _station_case_sets(db, payload.process_id, payload.station_id)
     warnings = ["新增必测不追溯已盖章在制品：如需按新基线补测，请对在制品做维修处置"]
-    if source == "items":
+    if source == "draft":
+        warnings.append(f"草稿已物化为集合 {set_id}：进站须与该集合序列完全一致")
+        if removed:
+            warnings.append(f"已删除该集合内草稿外的 {removed} 条用例（锁定即覆盖，不可恢复）")
+    else:
         warnings.append("本次基线来源为导入清单（未经机台录制实证）：建议上线前用锁定基线跑一遍确认")
     return schemas.BaselineLockOut(
         locked=True,
-        items_count=import_result.total_active,
+        items_count=sum(len(ids) for ids in sets.values()),
         source=source,
+        set_count=len(sets),
         warnings=warnings,
     )
 
@@ -553,7 +773,7 @@ def lock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db)
 @router.post("/baseline/unlock", response_model=schemas.BaselineLockOut, summary="解锁工位基线（回到录制态）")
 def unlock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     """解锁后回到录制态：下次进站将以上位机当前执行序列覆盖基线草稿，
-    用例清单恢复可手工编辑。用于"改代码 → 重录 → 再锁定"的发版循环。"""
+    用例集合恢复可手工编辑。用于"改代码 → 重录 → 再锁定"的发版循环。"""
     get_or_404(db, models.Process, payload.process_id, "process")
     _assert_station_in_process(db, payload.process_id, payload.station_id)
     ps = get_or_404(db, models.ProcessStation, (payload.process_id, payload.station_id), "process_station")
@@ -561,9 +781,11 @@ def unlock_baseline(payload: schemas.BaselineLockIn, db: Session = Depends(get_d
         raise conflict_error("baseline_not_locked", f"baseline_not_locked: {payload.station_id}")
     ps.baseline_locked = False
     db.commit()
+    sets = _station_case_sets(db, payload.process_id, payload.station_id)
     return schemas.BaselineLockOut(
         locked=False,
-        items_count=len(ps.baseline_manifest or []),
+        items_count=sum(len(ids) for ids in sets.values()),
+        set_count=len(sets),
         warnings=["已回到录制态：下次进站将以上位机当前执行序列覆盖基线草稿"],
     )
 
@@ -622,11 +844,26 @@ def clone_process(payload: schemas.CloneIn, db: Session = Depends(get_db), user=
             models.StationItem(
                 process_id=payload.to_process,
                 station_id=item.station_id,
+                set_id=item.set_id,
                 case_id=item.case_id,
                 item_name=item.item_name,
                 is_mandatory=item.is_mandatory,
                 is_active=item.is_active,
                 sort_order=item.sort_order,
+            )
+        )
+    # 用例集合（字段码 + 名称）随流程复制
+    for cs in (
+        db.query(models.StationCaseSet)
+        .filter(models.StationCaseSet.process_id == payload.from_process)
+        .all()
+    ):
+        db.add(
+            models.StationCaseSet(
+                process_id=payload.to_process,
+                station_id=cs.station_id,
+                set_id=cs.set_id,
+                set_name=cs.set_name,
             )
         )
     db.commit()
@@ -681,6 +918,17 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
             )
             for m in models_rows
         ],
+        case_sets=[
+            schemas.ExportCaseSet(
+                station_id=row.station_id,
+                set_id=row.set_id,
+                set_name=row.set_name or "",
+            )
+            for row in db.query(models.StationCaseSet)
+            .filter(models.StationCaseSet.process_id == process.process_id)
+            .order_by(models.StationCaseSet.station_id, models.StationCaseSet.set_id)
+            .all()
+        ],
         steps=[
             schemas.ExportStep(
                 station_id=s.station_id,
@@ -694,6 +942,7 @@ def _build_process_export(db: Session, process: models.Process) -> schemas.Proce
         items=[
             schemas.ExportItem(
                 station_id=i.station_id,
+                set_id=i.set_id,
                 case_id=i.case_id,
                 item_name=i.item_name or "",
                 is_mandatory=i.is_mandatory,
@@ -736,8 +985,9 @@ def export_all_processes(db: Session = Depends(get_db), user=Depends(current_use
 def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_db), user=Depends(require_manager)):
     """事务式导入：流程不存在（409 可改编号重试）；缺失工位自动补建（已有配置
     不覆盖——工位是跨流程共享字典）；机型已存在时跳过（绑定关系不迁移）；
-    用例执行顺序保留导出文件携带的 sort_order，旧文件未携带时按导入顺序以
-    步长 10 自动编号；全部写入后复用拓扑校验，error 级问题整体回滚。"""
+    用例按导出的 set_id 归入各自的用例集合，执行顺序保留文件携带的 sort_order，
+    未携带时按同集合内的导入顺序以步长 10 自动编号；全部写入后复用拓扑校验，
+    error 级问题整体回滚。"""
     proc_in = payload.process
     if db.get(models.Process, proc_in.process_id):
         raise conflict_error(
@@ -809,18 +1059,51 @@ def import_process(payload: schemas.ProcessImportIn, db: Session = Depends(get_d
                 invalidates_downstream=s.invalidates_downstream,
             )
         )
-    items_created = 0
-    station_seq: Dict[str, int] = {}
+    # 4) 用例集合主数据：以导出文件里的名称为准；文件没带而用例里出现的按字段码兜底
+    set_names = {
+        (cs.station_id, cs.set_id): cs.set_name for cs in payload.case_sets
+    }
+    sets_written = set()
     for it in payload.items:
+        key = (it.station_id, it.set_id)
+        if key in sets_written:
+            continue
+        sets_written.add(key)
+        db.add(
+            models.StationCaseSet(
+                process_id=proc_in.process_id,
+                station_id=it.station_id,
+                set_id=it.set_id,
+                set_name=set_names.get(key) or it.set_id,
+            )
+        )
+    for key, name in set_names.items():
+        if key in sets_written:
+            continue
+        db.add(
+            models.StationCaseSet(
+                process_id=proc_in.process_id,
+                station_id=key[0],
+                set_id=key[1],
+                set_name=name or key[1],
+            )
+        )
+
+    items_created = 0
+    # 执行序号按 (工位, 集合) 独立续排：多套集合并存时互不干扰
+    set_seq: Dict[tuple, int] = {}
+    for it in payload.items:
+        key = (it.station_id, it.set_id)
         if it.sort_order is not None:
             seq = it.sort_order
         else:
-            seq = station_seq.get(it.station_id, 0) + 10
-        station_seq[it.station_id] = max(station_seq.get(it.station_id, 0), seq)
+            seq = set_seq.get(key, 0) + 10
+        set_seq[key] = max(set_seq.get(key, 0), seq)
         db.add(
             models.StationItem(
                 process_id=proc_in.process_id,
                 station_id=it.station_id,
+                set_id=it.set_id,
                 case_id=it.case_id,
                 item_name=it.item_name or it.case_id,
                 is_mandatory=it.is_mandatory,

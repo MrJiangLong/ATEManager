@@ -106,6 +106,22 @@
           <el-switch v-model="row.invalidates_downstream" size="small" />
         </template>
       </el-table-column>
+      <el-table-column :label="t('configs.caseSetCol')" width="110" align="center">
+        <template #header>
+          <span :title="t('configs.caseSetTip')">{{ t('configs.caseSetCol') }}</span>
+        </template>
+        <template #default="{ row }">
+          <el-tooltip v-if="setsOf(row.station_id).length" placement="top">
+            <template #content>
+              <div v-for="cs in setsOf(row.station_id)" :key="cs.set_id">
+                {{ t('configs.caseSetItemRow', { set_id: cs.set_id, n: cs.cases.length }) }}
+              </div>
+            </template>
+            <span>{{ t('configs.caseSetN', { n: setsOf(row.station_id).length }) }}</span>
+          </el-tooltip>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('configs.baselineCol')" width="130" align="center">
         <template #header>
           <span :title="t('configs.baselineColTip')">{{ t('configs.baselineCol') }}</span>
@@ -207,7 +223,7 @@
           <span class="code">{{ lockRow?.station_id }}</span>
           <span v-if="lockRow?.station_name" class="muted">（{{ lockRow.station_name }}）</span>
           <el-tag size="small" effect="plain" type="info" class="bl-count">
-            {{ t('configs.baselineDraftN', { n: lockCaseCount }) }}
+            {{ t('configs.caseSetN', { n: activeSets }) }} · {{ t('configs.baselineDraftN', { n: lockCaseCount }) }}
           </el-tag>
           <el-tag
             v-if="lockSource === 'draft' && lockDiff.reordered"
@@ -224,7 +240,7 @@
             {{ t('configs.baselineSourceDraft', { n: draftCount }) }}
           </el-radio-button>
           <el-radio-button value="items" :disabled="!activeCount">
-            {{ t('configs.baselineSourceItems', { n: activeCount }) }}
+            {{ t('configs.baselineSourceItems', { n: activeSets, m: activeCount }) }}
           </el-radio-button>
         </el-radio-group>
         <div v-if="lockSource === 'items'" class="muted bl-source-tip">
@@ -233,10 +249,25 @@
         <div v-else-if="!draftCount" class="muted bl-source-tip">
           {{ t('configs.baselineNoDraftTip') }}
         </div>
+        <div v-if="lockSource === 'draft'" class="bl-set-row">
+          <span class="bl-set-label">{{ t('configs.lockSetLabel') }}</span>
+          <el-select
+            v-model="lockSet"
+            size="small"
+            filterable
+            allow-create
+            default-first-option
+            :placeholder="t('configs.caseSetPh')"
+            style="width: 220px"
+          >
+            <el-option v-for="cs in lockSets" :key="cs.set_id" :value="cs.set_id" :label="cs.set_id" />
+          </el-select>
+          <span class="muted bl-set-tip">{{ t('configs.lockSetTip') }}</span>
+        </div>
       </div>
 
-      <!-- ② 与现有用例清单的差异（仅草稿来源需要比对；items 来源即清单本身） -->
-      <div v-if="lockSource === 'draft'" class="bl-sec">
+      <!-- ② 与目标集合现有清单的差异（仅草稿来源且选了集合才比对；items 来源即各集合本身） -->
+      <div v-if="lockSource === 'draft' && lockSet" class="bl-sec">
         <div class="bl-sec-title">{{ t('configs.baselineDiffTitle') }}</div>
         <div v-if="diffEmpty" class="muted bl-none">{{ t('configs.baselineDiffNone') }}</div>
         <template v-else>
@@ -476,60 +507,82 @@ async function save() {
 const lockVisible = ref(false)
 const lockRow = ref(null)
 const locking = ref(false)
-/** 基线来源：draft = 机台录制草稿（默认）；items = 现有启用清单（规格导入后直接锁定） */
+/** 基线来源：draft = 机台录制草稿（物化为指定集合）；items = 现有全部用例集合 */
 const lockSource = ref('draft')
+/** 草稿物化到的用例集合（source=draft 必填） */
+const lockSet = ref('')
 
+/** 工位的用例集合：[{ set_id, cases（按执行序号排序） }]，一个工位可挂多套。 */
+function setsOf(stationId) {
+  const map = new Map()
+  for (const it of allItems.value) {
+    if (it.station_id !== stationId || !it.is_active) continue
+    if (!map.has(it.set_id)) map.set(it.set_id, [])
+    map.get(it.set_id).push(it)
+  }
+  return [...map.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([set_id, rows]) => ({
+      set_id,
+      cases: rows
+        .slice()
+        .sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9))
+        .map((r) => r.case_id),
+    }))
+}
+
+const lockSets = computed(() => (lockRow.value ? setsOf(lockRow.value.station_id) : []))
+/** 该工位当前用例集合套数 / 生效用例总数 */
+const activeSets = computed(() => lockSets.value.length)
+const activeCount = computed(() => lockSets.value.reduce((n, cs) => n + cs.cases.length, 0))
 /** 草稿项数（机台录制）；为 0 时该来源不可选 */
 const draftCount = computed(() => (lockRow.value?.baseline_manifest || []).length)
-/** 现有启用清单项数；为 0 时该来源不可选 */
-const activeCount = computed(() =>
-  lockRow.value ? activeCasesOf(lockRow.value.station_id).length : 0
-)
 /** 弹窗顶部展示的基线项数：按当前来源显示 */
 const lockCaseCount = computed(() =>
   lockSource.value === 'items' ? activeCount.value : draftCount.value
 )
+/** 目标集合当前的有序清单（草稿差异比对的基准） */
+const lockSetCases = computed(
+  () => lockSets.value.find((cs) => cs.set_id === lockSet.value)?.cases || []
+)
 
-/** 该行能否打开锁定：草稿或现有清单任一非空 */
+/** 该行能否打开锁定：草稿或现有集合任一非空 */
 function canLockRow(row) {
-  return (row.baseline_manifest || []).length > 0 || activeCasesOf(row.station_id).length > 0
+  return (row.baseline_manifest || []).length > 0 || setsOf(row.station_id).length > 0
 }
 
 /** 锁定按钮悬停提示：区分三种情形 */
 function lockTipOf(row) {
   if ((row.baseline_manifest || []).length) return t('configs.lockBaseline')
-  if (activeCasesOf(row.station_id).length) return t('configs.lockFromItemsTip')
+  if (setsOf(row.station_id).length) return t('configs.lockFromItemsTip')
   return t('configs.baselineNoDraftTip')
 }
 
-/** 工位当前生效用例的有序清单（按执行序号排序）。 */
-function activeCasesOf(stationId) {
-  return allItems.value
-    .filter((i) => i.station_id === stationId && i.is_active)
-    .sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9))
-    .map((i) => i.case_id)
-}
-
-/** 已锁定标签的悬停说明：基线项数与捕获时间（本地时区，走全站统一 fmtDateTime）。 */
+/** 已锁定标签的悬停说明：集合套数、用例总数与捕获时间（本地时区，走 fmtDateTime）。 */
 function baselineLockedTitle(row) {
-  const n = (row.baseline_manifest || []).length
-  return t('configs.baselineLockedTip', { n, time: fmtDateTime(row.baseline_captured_at) })
+  const sets = setsOf(row.station_id)
+  const n = sets.reduce((k, cs) => k + cs.cases.length, 0)
+  return t('configs.baselineLockedTip', {
+    n: sets.length,
+    m: n,
+    time: fmtDateTime(row.baseline_captured_at),
+  })
 }
 
-/** 草稿（进站捕获序列）与现有用例清单是否不一致：增删或顺序任一变化即为漂移。 */
+/** 草稿（进站捕获序列）与任何一套集合都不一致即为漂移。 */
 function baselineDrifted(row) {
   const draft = row.baseline_manifest || []
-  const current = activeCasesOf(row.station_id)
-  if (draft.length !== current.length) return true
-  return draft.some((c, i) => c !== current[i])
+  const sets = setsOf(row.station_id)
+  if (!sets.length) return true
+  return !sets.some(
+    (cs) => cs.cases.length === draft.length && cs.cases.every((c, i) => c === draft[i])
+  )
 }
 
-/** 草稿（进站捕获序列）与现有用例清单的差异预览 */
+/** 草稿（进站捕获序列）与目标集合现有清单的差异预览 */
 const lockDiff = computed(() => {
-  const row = lockRow.value
-  if (!row) return { added: [], removed: [], reordered: false }
-  const draft = row.baseline_manifest || []
-  const current = activeCasesOf(row.station_id)
+  const draft = lockRow.value?.baseline_manifest || []
+  const current = lockSetCases.value
   return {
     added: draft.filter((c) => !current.includes(c)),
     removed: current.filter((c) => !draft.includes(c)),
@@ -560,8 +613,11 @@ const nameEdits = ref({})
 
 function openLock(row) {
   lockRow.value = { ...row }
-  // 默认来源：有草稿用草稿（设备实证），否则退回现有清单
+  // 默认来源：有草稿用草稿（设备实证），否则退回现有集合
   lockSource.value = (row.baseline_manifest || []).length ? 'draft' : 'items'
+  const sets = setsOf(row.station_id)
+  // 只有一套集合时直接预填；多套时留空，由工艺员显式选择物化目标
+  lockSet.value = sets.length === 1 ? sets[0].set_id : ''
   const edits = {}
   for (const t2 of nameTargetsList(row)) edits[t2.case_id] = shortNameOf(t2.case_id)
   nameEdits.value = edits
@@ -580,6 +636,10 @@ function nameTargetsList(row) {
 
 async function confirmLock() {
   if (!lockRow.value) return
+  const targetSet = String(lockSet.value || '').trim()
+  if (lockSource.value === 'draft' && !targetSet) {
+    return ElMessage.warning(t('configs.caseSetRequired'))
+  }
   locking.value = true
   try {
     const names = {}
@@ -591,6 +651,7 @@ async function confirmLock() {
       process_id: processId.value,
       station_id: lockRow.value.station_id,
       source: lockSource.value,
+      set_id: lockSource.value === 'draft' ? targetSet : '',
       names: lockSource.value === 'items' ? {} : names,
     })
     for (const w of res.data?.warnings || []) ElMessage.warning(w)
@@ -739,6 +800,21 @@ onMounted(async () => {
 }
 .bl-source-tip {
   margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.bl-set-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.bl-set-label {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+.bl-set-tip {
   font-size: 12.5px;
   line-height: 1.6;
 }

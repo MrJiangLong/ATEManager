@@ -81,6 +81,9 @@ def delete_process(process_id: str, db: Session = Depends(get_db), user=Depends(
     db.query(models.StationItem).filter(models.StationItem.process_id == process_id).delete(
         synchronize_session=False
     )
+    db.query(models.StationCaseSet).filter(
+        models.StationCaseSet.process_id == process_id
+    ).delete(synchronize_session=False)
     db.delete(db.get(models.Process, process_id))
     db.commit()
 
@@ -271,6 +274,10 @@ def delete_station(station_id: str, db: Session = Depends(get_db), user=Depends(
     )
     if db.query(models.StationItem).filter(models.StationItem.station_id == station_id).count():
         raise conflict_error("station_has_items", "station_has_items: remove its test items first")
+    # 用例集合随工位一并清理（此时已无用例行，不会留下空壳集合）
+    db.query(models.StationCaseSet).filter(
+        models.StationCaseSet.station_id == station_id
+    ).delete(synchronize_session=False)
     db.delete(db.get(models.Station, station_id))
     db.commit()
 

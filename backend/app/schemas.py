@@ -254,6 +254,8 @@ class CheckInData(BaseModel):
     # 受控直通：true = 进站直接 ACK（零写入），SDK 据此跳过心跳/断点/出站
     passthrough: bool = False
     rules: List[StationRule] = []
+    """ 本次进站命中的用例集合（工位配置了多套集合时，rules 为命中那套的清单） """
+    case_set_id: Optional[str] = None
     passed_stations: List[str] = []
     next_stations: List[NextStation] = []
     server_time: str
@@ -516,8 +518,10 @@ class ProcessStationOut(ORMModel):
 class BaselineLockIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
-    """ 锁定来源：draft = 机台录制草稿（默认）；items = 现有启用中的用例清单（规格导入后直接锁定） """
+    """ 锁定来源：draft = 机台录制草稿（物化为 set_id 指定的集合）；items = 现有全部用例集合 """
     source: str = "draft"
+    """ source=draft 时草稿物化到的用例集合标识（该集合外项不动，集合内按草稿 replace） """
+    set_id: Trimmed = Field(default="", max_length=64)
     """ 锁定物化时一并写入的用例名称（case_id → item_name）；未提供的沿用现有名称或 nodeid 兜底 """
     names: Dict[str, str] = {}
 
@@ -527,6 +531,8 @@ class BaselineLockOut(BaseModel):
     items_count: int = 0
     """ 本次锁定实际采用的来源：draft（机台录制） / items（导入清单） """
     source: str = "draft"
+    """ 该工位当前用例集合数（锁定后进站与任意一套集合全列表比对） """
+    set_count: int = 0
     warnings: List[str] = []
 
 class ProcessStationIn(BaseModel):
@@ -536,10 +542,26 @@ class ProcessStationIn(BaseModel):
     invalidates_downstream: bool = False
     is_optional: bool = False
 
+class CaseSetOut(BaseModel):
+    process_id: str
+    station_id: str
+    """ 字段码（工位内唯一，station_items.set_id 的归属键） """
+    set_id: str
+    set_name: str = ""
+    item_count: int = 0
+
+class CaseSetCreateIn(BaseModel):
+    process_id: TrimmedRequired = Field(max_length=64)
+    station_id: TrimmedRequired = Field(max_length=64)
+    """ 字段码：进站/导入/脚本都用它标识集合，创建后不可改 """
+    set_id: TrimmedRequired = Field(max_length=64)
+    set_name: Trimmed = Field(default="", max_length=128)
+
 class StationItemOut(ORMModel):
     item_id: int
     process_id: str
     station_id: str
+    set_id: str
     case_id: str
     item_name: str
     sort_order: Optional[int] = None
@@ -549,6 +571,8 @@ class StationItemOut(ORMModel):
 class StationItemCreateIn(BaseModel):
     process_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
+    """ 归属的用例集合；同一工位可有多套集合，集合内的执行序号独立编号 """
+    set_id: TrimmedRequired = Field(max_length=64)
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     sort_order: Optional[int] = None
@@ -569,15 +593,17 @@ class StationItemImportRow(BaseModel):
     is_mandatory: bool = True
 
 class StationItemImportIn(BaseModel):
-    """按工位整批同步用例ID清单（幂等 upsert）。
+    """按工位 + 用例集合整批同步用例ID清单（幂等 upsert）。
 
-    mode=upsert   清单内的项新增/更新并重新启用，清单外的项原样不动
-    mode=replace  在 upsert 之上，把清单外的**启用中**项置为停用（不物理删，可回滚）
+    mode=upsert   清单内的项新增/更新并重新启用，**同集合内**清单外的项原样不动
+    mode=replace  在 upsert 之上，把**同集合内**清单外的启用项置为停用（不物理删，可回滚）
     dry_run       只算差异不落库，用于脚本的 --dry-run 预览
     """
 
     process_id: TrimmedRequired = Field(max_length=64)
     station_id: TrimmedRequired = Field(max_length=64)
+    """ 本次同步的用例集合；同工位其他集合完全不受影响 """
+    set_id: TrimmedRequired = Field(max_length=64)
     items: List[StationItemImportRow] = []
     mode: str = "upsert"
     dry_run: bool = False
@@ -585,6 +611,7 @@ class StationItemImportIn(BaseModel):
 class StationItemImportOut(BaseModel):
     process_id: str
     station_id: str
+    set_id: str
     mode: str
     dry_run: bool = False
     created: int = 0
@@ -649,8 +676,15 @@ class ExportStep(BaseModel):
     is_optional: bool = False
     invalidates_downstream: bool = False
 
+class ExportCaseSet(BaseModel):
+    station_id: str
+    set_id: str
+    set_name: str = ""
+
 class ExportItem(BaseModel):
     station_id: str
+    """ 用例集合：同一工位多套集合各自独立导出/导入 """
+    set_id: str
     case_id: str
     item_name: str = ""
     is_mandatory: bool = True
@@ -658,10 +692,11 @@ class ExportItem(BaseModel):
     sort_order: Optional[int] = None
 
 class ProcessExportOut(BaseModel):
-    export_version: int = 1
+    export_version: int = 3
     exported_at: datetime
     process: ExportProcess
     stations: List[ExportStation] = []
+    case_sets: List[ExportCaseSet] = []
     models: List[ExportModel] = []
     steps: List[ExportStep] = []
     items: List[ExportItem] = []
@@ -669,7 +704,7 @@ class ProcessExportOut(BaseModel):
 class ProcessExportAllOut(BaseModel):
     """全量导出：processes 数组的每一项都是可单独导入的完整流程定义。"""
 
-    export_version: int = 1
+    export_version: int = 3
     exported_at: datetime
     processes: List[ProcessExportOut] = []
 
@@ -711,20 +746,27 @@ class ImportStep(BaseModel):
     is_optional: bool = False
     invalidates_downstream: bool = False  # 旧导出文件缺省 false 兼容
 
+class ImportCaseSet(BaseModel):
+    station_id: TrimmedRequired = Field(max_length=64)
+    set_id: TrimmedRequired = Field(max_length=64)
+    set_name: Trimmed = Field(default="", max_length=128)
+
 class ImportItem(BaseModel):
     station_id: TrimmedRequired = Field(max_length=64)
+    set_id: TrimmedRequired = Field(max_length=64)
     case_id: TrimmedRequired = Field(max_length=256)
     item_name: Trimmed = Field(default="", max_length=128)
     is_mandatory: bool = True
-    is_active: bool = True  # 旧导出文件缺省 True → 与导出前行为一致
-    sort_order: Optional[int] = None  # 旧导出文件缺省 None → 按导入顺序自动编号
+    is_active: bool = True
+    sort_order: Optional[int] = None  # 缺省 None → 按同集合内的导入顺序自动编号
 
 class ProcessImportIn(BaseModel):
     """导入载荷：结构与导出文件一致（exported_at/export_version 可缺省）。"""
 
-    export_version: int = 1
+    export_version: int = 3
     process: ImportProcess
     stations: List[ImportStation] = []
+    case_sets: List[ImportCaseSet] = []
     models: List[ImportModel] = []
     steps: List[ImportStep] = []
     items: List[ImportItem] = []

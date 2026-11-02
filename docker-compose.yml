@@ -18,7 +18,6 @@ services:
       DEFAULT_ADMIN_NAME: Administrator
       FAIL_LIMIT: "3"
       ENFORCE_FW: "true"
-      ENFORCE_CASE_IDS: "true"
       CLIENT_ONLINE_WINDOW_SECONDS: "90"
       METRICS_WINDOW_DAYS: "14"
       # ---- 出厂报告引擎 ----

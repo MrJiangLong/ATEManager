@@ -1,7 +1,7 @@
 """幂等搭建场景仿真沙箱：独立流程 + 拓扑 + 用例ID + 虚拟机台。
 
 沙箱流程 PROC-SELFTEST-DPO-BASE 与真实工艺配置（PROC-SCOPE-DPO-BASE）完全隔离——
-工位是跨流程共享字典（复用 CAL-PARAM 等），但 station_items 按 (process, station)
+工位是跨流程共享字典（复用 CAL-PARAM 等），但 station_items 按 (process, station, set)
 隔离，机台按"件所属流程 ∩ 绑定"解析，两边互不干扰。
 """
 import json
@@ -15,6 +15,8 @@ import api
 BASE = os.environ.get("ATE_BASE_URL", "http://127.0.0.1:8000")
 PROCESS_ID = "PROC-SELFTEST-DPO-BASE"
 SANDBOX_MODEL = "SELFTEST-MODEL"
+# 沙箱只铺一套用例集合（一个工位可挂多套，进站与任意一套匹配即放行）
+SET_ID = "S1"
 
 
 def login():
@@ -83,7 +85,7 @@ def main():
     for sid, case_id, name, mandatory in items:
         attempt(f"用例 {case_id.rsplit('::', 1)[-1]} → {sid}", lambda s=sid, c=case_id, n=name, mm=mandatory: h.request(
             "POST", "/api/admin/routing/items",
-            body={"process_id": PROCESS_ID, "station_id": s,
+            body={"process_id": PROCESS_ID, "station_id": s, "set_id": SET_ID,
                   "case_id": c, "item_name": n, "is_mandatory": mm}))
 
     for cid, bound in (("JC-CAL1", ["CAL-PARAM"]), ("JC-IFACE", ["CAL-IFACE"]),

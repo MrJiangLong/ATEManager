@@ -15,9 +15,15 @@
       ]
     },
     "PROC-SCOPE-DPO-BASE": {
-      "CAL-PARAM": [
-        "tests/test_cal_param.py::TestAmp::test_amp_cal"
-      ]
+      "CAL-PARAM": {
+        "S1": [
+          "tests/test_cal_param.py::TestAmp::test_amp_cal"
+        ],
+        "S2": [
+          "tests/test_cal_param.py::TestAmp::test_amp_cal",
+          "tests/test_cal_param.py::TestPhase::test_phase_cal"
+        ]
+      }
     }
   }
 }

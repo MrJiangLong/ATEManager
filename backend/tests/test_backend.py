@@ -63,6 +63,9 @@ P_DPO = f"PROC-TEST-DPO-{STAMP}"
 M_MSO = "MSO4054B"
 M_DPO = "DPO4054B"
 FW = "V3.20"
+# 夹具默认用例集合：一个工位可挂多套，这里只铺一套（多套场景见 test_multi_case_set_match）
+SET = "S1"
+SET2 = "S2"
 
 STATIONS = [
     ("CAL-PARAM", "校准-指标测试站位", 1800),
@@ -149,7 +152,23 @@ def new_client_id(stage: str = "CAL") -> str:
     """
     return f"SZ-L9-{stage}-{next(_CLIENT_SEQ):02d}"
 
+def station_cases(station, model=M_DPO):
+    """该工位当前生效的用例ID（进站契约要求客户端自证清单）。
+
+    机型未注册时返回空清单：进站会在更早的守卫（model_not_registered）被拦。
+    """
+    models_rows = admin("GET", "/api/admin/product-models").json()
+    pid = next((m["process_id"] for m in models_rows if m["product_model"] == model), "")
+    if not pid:
+        return []
+    items = admin("GET", "/api/admin/routing/items",
+                  params={"process_id": pid, "station_id": station}).json()
+    return [i["case_id"] for i in items if i["is_active"]]
+
 def checkin(station, sn, model=M_DPO, firmware=FW, case_ids=None):
+    """未显式给清单时按该工位配置自动填充（有集合就必须上报 case_ids）。"""
+    if case_ids is None:
+        case_ids = station_cases(station, model)
     return v1(
         "check-in",
         {
@@ -157,7 +176,7 @@ def checkin(station, sn, model=M_DPO, firmware=FW, case_ids=None):
             "sn": sn,
             "product_model": model,
             "firmware": firmware,
-            **({"case_ids": case_ids} if case_ids is not None else {}),
+            "case_ids": case_ids,
         },
     )
 
@@ -250,6 +269,7 @@ def test_topology_and_items():
                     {
                         "process_id": pid,
                         "station_id": sid,
+                        "set_id": SET,
                         "case_id": case_id,
                         "item_name": case_id,
                     },
@@ -350,7 +370,8 @@ def test_station_item_guards():
         return admin(
             "POST",
             "/api/admin/routing/items",
-            {"process_id": pid, "station_id": station_id, "case_id": case_id, "item_name": case_id},
+            {"process_id": pid, "station_id": station_id, "set_id": SET,
+             "case_id": case_id, "item_name": case_id},
         )
 
     resp = create_item("CAL-PARAM", "tests/guard_a.py::test_one")
@@ -379,7 +400,8 @@ def test_station_item_guards():
     with SessionLocal() as db:
         db.add(
             models.StationItem(
-                process_id=pid, station_id=orphan_station, case_id="legacy::one", item_name="legacy"
+                process_id=pid, station_id=orphan_station, set_id=SET,
+                case_id="legacy::one", item_name="legacy",
             )
         )
         db.commit()
@@ -398,7 +420,8 @@ def test_station_item_guards():
     with SessionLocal() as db:
         db.add(
             models.StationItem(
-                process_id=pid, station_id=orphan_station, case_id="legacy::two", item_name="legacy2"
+                process_id=pid, station_id=orphan_station, set_id=SET,
+                case_id="legacy::two", item_name="legacy2",
             )
         )
         db.commit()
@@ -640,6 +663,19 @@ def test_firmware_mismatch_403():
     check(resp.status_code == 403, f"fw mismatch must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "firmware_mismatch", f"code: {resp.json()}")
 
+def test_case_ids_required_400():
+    """有集合就必须自证清单：不上报/空清单一律 400 case_ids_required（锁定前后一致）。"""
+    sn = new_sn("NOCASE")
+    resp = v1("check-in", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn,
+                           "product_model": M_DPO, "firmware": FW})
+    check(resp.status_code == 400 and resp.json()["code"] == "case_ids_required"
+          and resp.json()["exit_code"] == 15,
+          f"missing case_ids must 400: {resp.status_code} {resp.text}")
+    resp = v1("check-in", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn,
+                           "product_model": M_DPO, "firmware": FW, "case_ids": []})
+    check(resp.status_code == 400 and resp.json()["code"] == "case_ids_required",
+          f"empty case_ids must 400: {resp.text}")
+
 def test_case_id_mismatch_400():
     """上报的用例ID未覆盖必测清单 → 400。"""
     sn = new_sn("CASEID")
@@ -781,7 +817,8 @@ def test_lock_conflict_409_and_timeout_takeover():
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
     resp = v1(
         "check-in",
-        {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW},
+        {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW,
+         "case_ids": station_cases("CAL-PARAM")},
     )
     check(resp.status_code == 409, f"conflict must be 409, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "lock_conflict", f"code: {resp.json()}")
@@ -799,7 +836,8 @@ def test_lock_conflict_409_and_timeout_takeover():
 
     resp = v1(
         "check-in",
-        {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW},
+        {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW,
+         "case_ids": station_cases("CAL-PARAM")},
     )
     check(resp.status_code == 200, f"takeover after timeout: {resp.status_code} {resp.text}")
 
@@ -975,12 +1013,14 @@ def test_lock_lost_takeover():
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
 
-    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
+    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO,
+                           "firmware": FW, "case_ids": station_cases("CAL-PARAM")})
     check(resp.status_code == 409, f"still locked: {resp.status_code} {resp.text}")
 
     # 心跳断流 200s（> grace 120s），但持锁总时长远未到硬超时 → 可接管
     _backdate(sn, lock_last_seen_at=200)
-    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
+    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO,
+                           "firmware": FW, "case_ids": station_cases("CAL-PARAM")})
     check(resp.status_code == 200, f"takeover: {resp.status_code} {resp.text}")
     body = resp.json()["data"]
     check(body["takeover"] is True, f"takeover flag: {body}")
@@ -1093,7 +1133,8 @@ def test_sweeper_releases_orphan_lock():
 
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-PARAM"]})
-    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
+    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO,
+                           "firmware": FW, "case_ids": station_cases("CAL-PARAM")})
     check(resp.status_code == 200, f"re-checkin after sweep: {resp.text}")
 
 def test_client_app_version_tracked():
@@ -1122,6 +1163,7 @@ def test_client_app_version_tracked():
             "product_model": M_DPO,
             "firmware": FW,
             "app_version": "2.5.0",
+            "case_ids": station_cases("CAL-PARAM"),
         },
     )
     check(resp.status_code == 200, f"check-in: {resp.text}")
@@ -1365,7 +1407,8 @@ def test_client_release_lock():
 
     other = new_client_id("CAL")
     admin("POST", "/api/admin/clients", {"client_id": other, "bound_stations": ["CAL-IFACE"]})
-    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO, "firmware": FW})
+    resp = v1("check-in", {"client_id": other, "sn": sn, "product_model": M_DPO,
+                           "firmware": FW, "case_ids": station_cases("CAL-IFACE")})
     check(resp.status_code == 200, f"re-check-in after release: {resp.status_code} {resp.text}")
 
     # 未持锁的机台调用 release：不报错，但绝不能释放他人持有的锁
@@ -1447,6 +1490,7 @@ def test_import_blocks_running_session():
     add_new = {
         "process_id": P_DPO,
         "station_id": "CAL-PARAM",
+        "set_id": SET,
         "mode": "replace",
         "items": [{"case_id": "tests/new_case.py::test_new", "item_name": "新用例", "is_mandatory": True}],
     }
@@ -1478,6 +1522,7 @@ def test_import_blocks_running_session():
         {
             "process_id": P_DPO,
             "station_id": "CAL-PARAM",
+            "set_id": SET,
             "mode": "replace",
             "items": [{"case_id": keep, "is_mandatory": True}],
         },
@@ -1495,6 +1540,7 @@ def test_import_blocks_running_session():
     restore = {
         "process_id": P_DPO,
         "station_id": "CAL-PARAM",
+        "set_id": SET,
         "mode": "replace",
         "items": [{"case_id": c, "is_mandatory": True} for c in ITEMS["CAL-PARAM"]],
     }
@@ -1548,21 +1594,22 @@ def test_process_export_import():
     imp_active = {i["case_id"]: i["is_active"] for i in imp_rows}
     check(imp_active.get(dpo_items[0]["case_id"]) is False, f"roundtrip is_active: {imp_active}")
 
-    # 旧格式兼容：无 sort_order 的导出文件可导入，按导入顺序以步长 10 自动编号
-    old = json.loads(json.dumps(doc))
-    old["process"]["process_id"] = f"PROC-IMP-OLD-{STAMP}"
-    for it in old["items"]:
+    # 未携带 sort_order：按**同集合内**的导入顺序以步长 10 自动编号
+    auto = json.loads(json.dumps(doc))
+    auto["process"]["process_id"] = f"PROC-IMP-AUTO-{STAMP}"
+    for it in auto["items"]:
         it.pop("sort_order", None)
-        it.pop("is_active", None)
-    resp = admin("POST", "/api/admin/routing/processes/import", old)
-    check(resp.status_code == 201, f"old-format import: {resp.status_code} {resp.text}")
-    old_items = admin("GET", "/api/admin/routing/items",
-                      params={"process_id": f"PROC-IMP-OLD-{STAMP}",
+    resp = admin("POST", "/api/admin/routing/processes/import", auto)
+    check(resp.status_code == 201, f"auto-number import: {resp.status_code} {resp.text}")
+    auto_rows = admin("GET", "/api/admin/routing/items",
+                      params={"process_id": f"PROC-IMP-AUTO-{STAMP}",
                               "station_id": "CAL-PARAM"}).json()
-    old_orders = [r["sort_order"] for r in old_items]
-    check(old_orders == sorted(old_orders) and old_orders[0] == 10 and len(set(old_orders)) == len(old_orders),
-          f"old-format auto numbering: {old_orders}")
-    check(all(r["is_active"] for r in old_items), "old-format defaults is_active=True")
+    auto_by_set = {}
+    for row in auto_rows:
+        auto_by_set.setdefault(row["set_id"], []).append(row["sort_order"])
+    for set_id, orders in auto_by_set.items():
+        check(orders == sorted(orders) and orders[0] == 10 and len(set(orders)) == len(orders),
+              f"auto numbering in {set_id}: {orders}")
 
     # 清理副本上的序号标记，避免影响其他用例
     # 只复活本用例停用的那一项；清单里还可能有其他用例留下的停用项，不能一起点亮
@@ -1617,7 +1664,7 @@ def test_model_app_fields_roundtrip():
     admin(
         "POST",
         "/api/admin/routing/items",
-        {"process_id": pid, "station_id": "CAL-PARAM", "case_id": "cal/CAL-PARAM",
+        {"process_id": pid, "station_id": "CAL-PARAM", "set_id": SET, "case_id": "cal/CAL-PARAM",
          "item_name": "ATE 基线往返用例", "is_mandatory": True},
     )
 
@@ -1982,7 +2029,8 @@ def test_optional_station_sampling():
         resp = admin(
             "POST",
             "/api/admin/routing/items",
-            {"process_id": p_opt, "station_id": sid, "case_id": case, "item_name": case},
+            {"process_id": p_opt, "station_id": sid, "set_id": SET,
+             "case_id": case, "item_name": case},
         )
         check(resp.status_code == 201, f"create item {sid}: {resp.text}")
 
@@ -2012,7 +2060,8 @@ def test_optional_station_sampling():
     qa_client = "SZ-L9-QA-01"
     resp = v1(
         "check-in",
-        {"client_id": qa_client, "sn": sampled_sn, "product_model": m_opt, "firmware": FW},
+        {"client_id": qa_client, "sn": sampled_sn, "product_model": m_opt, "firmware": FW,
+         "case_ids": station_cases("QA-CHECK", m_opt)},
     )
     check(resp.status_code == 200, f"qa check-in: {resp.text}")
     case_ids = rules_of(resp)
@@ -2131,8 +2180,9 @@ def test_case_list_report():
           "manifest reordered")
 
     # ④ 锁定后：只读返回，不覆盖草稿
-    resp = admin("POST", "/api/admin/routing/baseline/lock", {"process_id": pid, "station_id": st})
-    check(resp.status_code == 200, f"lock: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "draft", "set_id": SET})
+    check(resp.status_code == 200 and resp.json()["set_count"] == 1, f"lock: {resp.text}")
     resp = report([cases[0]])
     check(resp.status_code == 200 and resp.json()["data"]["recorded"] is False
           and resp.json()["data"]["locked"] is True,
@@ -2160,7 +2210,8 @@ def test_topology_impact_preview():
     admin("POST", "/api/admin/clients", {"client_id": "SMOKE-IMP-2", "bound_stations": [s2]})
     # 首站配一条用例（供失效统计）
     admin("POST", "/api/admin/routing/items",
-          {"process_id": pid, "station_id": s1, "case_id": "tests/imp.py::t1", "item_name": "t1"})
+          {"process_id": pid, "station_id": s1, "set_id": SET,
+           "case_id": "tests/imp.py::t1", "item_name": "t1"})
 
     # 造一件未完工在制品（只过首站）
     sn = f"SIMRS-IMP-{STAMP}"
@@ -2350,25 +2401,26 @@ def test_baseline_lock_from_items():
 
     # ② 导入规格清单（顺序 = 导入顺序）
     resp = admin("POST", "/api/admin/routing/items/import",
-                 {"process_id": pid, "station_id": st, "mode": "upsert",
+                 {"process_id": pid, "station_id": st, "set_id": SET, "mode": "upsert",
                   "items": [{"case_id": c, "item_name": f"名-{c.split('::')[1]}"} for c in cases]})
     check(resp.status_code == 200, f"items import: {resp.text}")
 
-    # ③ source=items 锁定：清单原样升格，顺序与导入一致
+    # ③ source=items 锁定：现有集合原样升格（不物化、不改清单），集合数/项数如实回报
     resp = admin("POST", "/api/admin/routing/baseline/lock",
                  {"process_id": pid, "station_id": st, "source": "items"})
     check(resp.status_code == 200 and resp.json()["source"] == "items"
-          and resp.json()["items_count"] == 3, f"items lock: {resp.text}")
+          and resp.json()["items_count"] == 3 and resp.json()["set_count"] == 1,
+          f"items lock: {resp.text}")
     steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
     step = next(s for s in steps if s["station_id"] == st)
-    check(step["baseline_locked"] is True and step["baseline_manifest"] == cases,
-          f"items manifest: {step['baseline_manifest']}")
+    check(step["baseline_locked"] is True, f"items lock flag: {step}")
 
-    # 名称沿用现有 item_name（不是 nodeid 兜底）
+    # 名称与必测标志原样保留（不是 nodeid 兜底）
     items = admin("GET", "/api/admin/routing/items",
                   params={"process_id": pid, "station_id": st}).json()
-    check(all(i["is_mandatory"] for i in items) and items[0]["item_name"] == "名-t1",
-          f"items materialized: {[(i['case_id'], i['item_name']) for i in items]}")
+    check(all(i["is_mandatory"] for i in items) and items[0]["item_name"] == "名-t1"
+          and {i["set_id"] for i in items} == {SET},
+          f"items materialized: {[(i['set_id'], i['case_id'], i['item_name']) for i in items]}")
 
     # ④ 解锁 → 停用一项 → 再次 source=items 锁定：停用项不进基线
     resp = admin("POST", "/api/admin/routing/baseline/unlock", {"process_id": pid, "station_id": st})
@@ -2381,17 +2433,23 @@ def test_baseline_lock_from_items():
     resp = admin("POST", "/api/admin/routing/baseline/lock",
                  {"process_id": pid, "station_id": st, "source": "items"})
     check(resp.status_code == 200 and resp.json()["items_count"] == 2, f"items lock 2: {resp.text}")
-    steps = admin("GET", "/api/admin/routing/stations", params={"process_id": pid}).json()
-    manifest = next(s for s in steps if s["station_id"] == st)["baseline_manifest"]
-    check(manifest == [cases[0], cases[2]], f"inactive excluded: {manifest}")
+    active = admin("GET", "/api/admin/routing/items",
+                   params={"process_id": pid, "station_id": st}).json()
+    active = [i for i in active if i["is_active"]]
+    check([i["case_id"] for i in active] == [cases[0], cases[2]],
+          f"inactive excluded: {[i['case_id'] for i in active]}")
 
-    # ⑤ 非法来源 → 400 bad_source
+    # ⑤ 非法来源 → 400 bad_source；草稿锁定未指定集合 → 400 set_required
     resp = admin("POST", "/api/admin/routing/baseline/unlock", {"process_id": pid, "station_id": st})
     check(resp.status_code == 200, f"unlock2: {resp.text}")
     resp = admin("POST", "/api/admin/routing/baseline/lock",
                  {"process_id": pid, "station_id": st, "source": "magic"})
     check(resp.status_code == 400 and resp.json()["code"] == "bad_source",
           f"bad source: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "draft"})
+    check(resp.status_code == 400 and resp.json()["code"] in ("set_required", "baseline_empty"),
+          f"draft without set: {resp.text}")
 
 
 def test_overview_stats_semantics():
@@ -2540,7 +2598,7 @@ def test_station_baseline_lock():
 
     # ③ 运行中会话：锁定 409
     resp = admin("POST", "/api/admin/routing/baseline/lock",
-                 {"process_id": pid, "station_id": st})
+                 {"process_id": pid, "station_id": st, "source": "draft", "set_id": SET})
     check(resp.status_code == 409 and resp.json()["code"] == "running_session_block",
           f"lock with running session: {resp.text}")
 
@@ -2548,23 +2606,41 @@ def test_station_baseline_lock():
     resp = base_checkout(sn1, cases)
     check(resp.status_code == 201, f"checkout: {resp.text}")
 
-    # ⑤ 锁定：草稿物化为 station_items（全部必测、序号 10/20/30），并随锁定补录名称
+    # ④.5 预置：同集合一条草稿外用例（锁定应物理删除）+ 另一套集合一条用例（锁定不得波及）
+    resp = admin("POST", "/api/admin/routing/items",
+                 {"process_id": pid, "station_id": st, "set_id": SET,
+                  "case_id": "tests/legacy.py::old", "item_name": "旧用例"})
+    check(resp.status_code == 201, f"pre-lock legacy item: {resp.text}")
+    resp = admin("POST", "/api/admin/routing/items",
+                 {"process_id": pid, "station_id": st, "set_id": SET2,
+                  "case_id": "tests/other.py::keep", "item_name": "另一套"})
+    check(resp.status_code == 201, f"other set item: {resp.text}")
+
+    # ⑤ 锁定：草稿**物理覆盖**集合 SET（草稿外的行删除），并随锁定补录名称
     resp = admin("POST", "/api/admin/routing/baseline/lock",
-                 {"process_id": pid, "station_id": st, "names": {cases[0]: "写号校验", cases[2]: "功能测试"}})
+                 {"process_id": pid, "station_id": st, "source": "draft", "set_id": SET,
+                  "names": {cases[0]: "写号校验", cases[2]: "功能测试"}})
     check(resp.status_code == 200 and resp.json()["locked"] is True, f"lock: {resp.text}")
-    check(resp.json()["items_count"] == len(cases), f"lock items: {resp.text}")
+    check(resp.json()["items_count"] == len(cases) + 1 and resp.json()["set_count"] == 2,
+          f"lock items (SET 物化 + SET2 原有): {resp.text}")
     resp = admin("GET", "/api/admin/routing/items", params={"process_id": pid, "station_id": st})
-    items = sorted(resp.json(), key=lambda r: r["sort_order"])
-    check([i["case_id"] for i in items] == cases and all(i["is_mandatory"] for i in items)
-          and [i["sort_order"] for i in items] == [10, 20, 30], f"materialized: {resp.text}")
-    check(items[0]["item_name"] == "写号校验" and items[2]["item_name"] == "功能测试",
+    rows = resp.json()
+    in_set = sorted([i for i in rows if i["set_id"] == SET], key=lambda r: r["sort_order"])
+    check([i["case_id"] for i in in_set] == cases and all(i["is_mandatory"] for i in in_set)
+          and [i["sort_order"] for i in in_set] == [10, 20, 30], f"materialized: {resp.text}")
+    check(not any(i["case_id"] == "tests/legacy.py::old" for i in rows),
+          f"draft-outside case must be deleted, not deactivated: {[i['case_id'] for i in rows]}")
+    check(any(i["case_id"] == "tests/other.py::keep" for i in rows),
+          f"other set must stay untouched: {[(i['set_id'], i['case_id']) for i in rows]}")
+    check(in_set[0]["item_name"] == "写号校验" and in_set[2]["item_name"] == "功能测试",
           f"materialized names: {resp.text}")
     step = next(s for s in steps_view() if s["station_id"] == st)
     check(step["baseline_locked"] is True, "locked flag")
 
     # ⑥ 锁定态：清单手工编辑 409
     resp = admin("POST", "/api/admin/routing/items",
-                 {"process_id": pid, "station_id": st, "case_id": "tests/x.py::test_new"})
+                 {"process_id": pid, "station_id": st, "set_id": SET,
+                  "case_id": "tests/x.py::test_new"})
     check(resp.status_code == 409 and resp.json()["code"] == "baseline_locked",
           f"items edit guard: {resp.text}")
 
@@ -2584,9 +2660,176 @@ def test_station_baseline_lock():
                  {"process_id": pid, "station_id": st})
     check(resp.status_code == 200 and resp.json()["locked"] is False, f"unlock: {resp.text}")
     resp = admin("POST", "/api/admin/routing/items",
-                 {"process_id": pid, "station_id": st, "case_id": "tests/x.py::test_new"})
+                 {"process_id": pid, "station_id": st, "set_id": SET,
+                  "case_id": "tests/x.py::test_new"})
     check(resp.status_code == 201, f"editable after unlock: {resp.text}")
 
+
+def test_multi_case_set_match():
+    """一工位多套用例集合：进站与任意一套匹配即放行；锁定后逐套严格比对；出站口径同源。"""
+    pid = f"PROC-TEST-MSET-{STAMP}"
+    mid = "DPO4054B-MSET"
+    st = "ST-MSET-01"
+    s1_cases = ["tests/ms.py::t1", "tests/ms.py::t2"]
+    s2_cases = ["tests/ms.py::t1", "tests/ms.py::t3"]
+
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "多集合工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "多集合流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"mset topology: {resp.text}")
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-MSET", "bound_stations": [st]})
+
+    for set_id, case_list in ((SET, s1_cases), (SET2, s2_cases)):
+        resp = admin("POST", "/api/admin/routing/items/import",
+                     {"process_id": pid, "station_id": st, "set_id": set_id,
+                      "mode": "replace", "items": [{"case_id": c} for c in case_list]})
+        check(resp.status_code == 200, f"import {set_id}: {resp.text}")
+    all_items = admin("GET", "/api/admin/routing/items",
+                      params={"process_id": pid, "station_id": st}).json()
+    check(len(all_items) == 4 and {i["set_id"] for i in all_items} == {SET, SET2},
+          f"two sets coexist: {[(i['set_id'], i['case_id']) for i in all_items]}")
+
+    def checkin(sn_value, case_list=None):
+        return v1("check-in", {
+            "client_id": "SMOKE-MSET", "sn": sn_value, "product_model": mid, "firmware": FW,
+            **({"case_ids": case_list} if case_list is not None else {}),
+        })
+
+    # ① 未锁定：命中第二套集合即放行，rules 按命中那套下发
+    sn = f"SIMRS-MSET-A-{STAMP}"
+    resp = checkin(sn, s2_cases)
+    check(resp.status_code == 200, f"match second set: {resp.text}")
+    check(resp.json()["data"]["case_set_id"] == SET2, f"matched set: {resp.json()['data']}")
+    check([r["case_id"] for r in resp.json()["data"]["rules"]] == s2_cases,
+          f"rules follow matched set: {resp.json()['data']['rules']}")
+    resp = v1("check-out", {"client_id": "SMOKE-MSET", "sn": sn, "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(s2_cases), "duration_ms": 1000})
+    check(resp.status_code == 201, f"checkout second set: {resp.text}")
+
+    # ② 混搭（两套都不满足）→ 400，报错带最接近的集合
+    resp = checkin(f"SIMRS-MSET-B-{STAMP}", ["tests/ms.py::t2", "tests/ms.py::t3"])
+    check(resp.status_code == 400 and resp.json()["code"] == "case_id_mismatch"
+          and resp.json()["data"]["closest_set"] in (SET, SET2),
+          f"no set matched: {resp.text}")
+
+    # ③ 锁定（source=items 冻结全部集合）→ 逐套严格比对
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "items"})
+    check(resp.status_code == 200 and resp.json()["set_count"] == 2
+          and resp.json()["items_count"] == 4, f"lock sets: {resp.text}")
+    resp = checkin(f"SIMRS-MSET-C-{STAMP}", s1_cases)
+    check(resp.status_code == 200 and resp.json()["data"]["case_set_id"] == SET,
+          f"locked first set: {resp.text}")
+    resp = checkin(f"SIMRS-MSET-D-{STAMP}", s2_cases)
+    check(resp.status_code == 200 and resp.json()["data"]["case_set_id"] == SET2,
+          f"locked second set: {resp.text}")
+    resp = checkin(f"SIMRS-MSET-E-{STAMP}", [s2_cases[1], s2_cases[0]])
+    check(resp.status_code == 400 and resp.json()["code"] == "case_order_mismatch"
+          and resp.json()["data"]["first_diff_index"] == 0,
+          f"locked reorder rejected: {resp.text}")
+
+def test_subset_set_checkout():
+    """子集集合：S2 是 S1 的前缀子集时，跑完 S2 出站不得被判 S1 漏测。"""
+    pid = f"PROC-TEST-SUBSET-{STAMP}"
+    mid = "DPO4054B-SUBSET"
+    st = "ST-SUBSET-01"
+    s1_cases = ["tests/sub.py::t1", "tests/sub.py::t2", "tests/sub.py::t3"]
+    s2_cases = s1_cases[:2]
+
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "子集工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "子集流程"})
+    admin("POST", "/api/admin/product-models",
+          {"product_model": mid, "process_id": pid, "target_fw_version": FW})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"subset topology: {resp.text}")
+    admin("POST", "/api/admin/clients", {"client_id": "SMOKE-SUBSET", "bound_stations": [st]})
+    for set_id, case_list in ((SET, s1_cases), (SET2, s2_cases)):
+        resp = admin("POST", "/api/admin/routing/items/import",
+                     {"process_id": pid, "station_id": st, "set_id": set_id,
+                      "mode": "replace", "items": [{"case_id": c} for c in case_list]})
+        check(resp.status_code == 200, f"subset import {set_id}: {resp.text}")
+
+    sn = f"SIMRS-SUBSET-{STAMP}"
+    resp = v1("check-in", {"client_id": "SMOKE-SUBSET", "sn": sn, "product_model": mid,
+                           "firmware": FW, "case_ids": s2_cases})
+    check(resp.status_code == 200 and resp.json()["data"]["case_set_id"] == SET2,
+          f"subset check-in hits S2: {resp.text}")
+    resp = v1("check-out", {"client_id": "SMOKE-SUBSET", "sn": sn,
+                            "checkout_id": uuid.uuid4().hex,
+                            "items": items_for(s2_cases), "duration_ms": 800})
+    check(resp.status_code == 201, f"subset checkout must pass: {resp.status_code} {resp.text}")
+
+def test_case_set_crud():
+    """用例集合主数据：新建（字段码+名称）/重名 409/清单带项数/锁定态禁删/删除连带清用例。"""
+    pid = f"PROC-TEST-CSET-{STAMP}"
+    st = "ST-CSET-01"
+    admin("POST", "/api/admin/stations", {"station_id": st, "station_name": "集合增删工位"})
+    admin("POST", "/api/admin/processes", {"process_id": pid, "process_name": "集合增删流程"})
+    resp = admin("PUT", "/api/admin/routing/stations",
+                 [{"station_id": st, "step_order": 10, "depends_on": [], "is_optional": False}],
+                 params={"process_id": pid})
+    check(resp.status_code == 200, f"cs topology: {resp.text}")
+
+    def create_set(set_id, set_name, station=st, process=pid):
+        return admin("POST", "/api/admin/routing/case-sets",
+                     {"process_id": process, "station_id": station,
+                      "set_id": set_id, "set_name": set_name})
+
+    # ① 新建：字段码 + 名称双双落库
+    resp = create_set(SET, "四通道标准集")
+    check(resp.status_code == 201 and resp.json()["set_id"] == SET
+          and resp.json()["set_name"] == "四通道标准集", f"create set: {resp.text}")
+    # ② 重名（同工位同字段码）→ 409
+    resp = create_set(SET, "重复")
+    check(resp.status_code == 409 and resp.json()["code"] == "case_set_already_exists",
+          f"duplicate set: {resp.text}")
+    # ③ 工位不在该流程拓扑内 → 400
+    resp = create_set(SET2, "错位集合", station="CAL-AWG")
+    check(resp.status_code == 400 and resp.json()["code"] == "station_not_in_process",
+          f"set on foreign station: {resp.text}")
+
+    # ④ 往集合里挂用例后，清单带出项数
+    admin("POST", "/api/admin/routing/items",
+          {"process_id": pid, "station_id": st, "set_id": SET,
+           "case_id": "tests/cs.py::t1", "item_name": "t1"})
+    create_set(SET2, "校验集")
+    sets = admin("GET", "/api/admin/routing/case-sets",
+                 params={"process_id": pid, "station_id": st}).json()
+    counts = {s["set_id"]: s["item_count"] for s in sets}
+    check(counts == {SET: 1, SET2: 0}, f"set item counts: {sets}")
+
+    # ⑤ 锁定态禁删（清单由基线固化）；冻结范围 = 有用例的集合（空集合无可比对内容）
+    resp = admin("POST", "/api/admin/routing/baseline/lock",
+                 {"process_id": pid, "station_id": st, "source": "items"})
+    check(resp.status_code == 200 and resp.json()["set_count"] == 1, f"lock sets: {resp.text}")
+    resp = admin("DELETE", "/api/admin/routing/case-sets",
+                 params={"process_id": pid, "station_id": st, "set_id": SET2})
+    check(resp.status_code == 409 and resp.json()["code"] == "baseline_locked",
+          f"delete locked set: {resp.text}")
+    admin("POST", "/api/admin/routing/baseline/unlock", {"process_id": pid, "station_id": st})
+
+    # ⑥ 删除：连带清理该集合用例，其他集合不受影响
+    resp = admin("DELETE", "/api/admin/routing/case-sets",
+                 params={"process_id": pid, "station_id": st, "set_id": SET})
+    check(resp.status_code == 204, f"delete set: {resp.status_code} {resp.text}")
+    sets = admin("GET", "/api/admin/routing/case-sets",
+                 params={"process_id": pid, "station_id": st}).json()
+    check([s["set_id"] for s in sets] == [SET2], f"only target set deleted: {sets}")
+    rows = admin("GET", "/api/admin/routing/items",
+                 params={"process_id": pid, "station_id": st}).json()
+    check(rows == [], f"items of deleted set purged: {rows}")
+
+    # ⑦ 删除不存在的集合 → 404
+    resp = admin("DELETE", "/api/admin/routing/case-sets",
+                 params={"process_id": pid, "station_id": st, "set_id": "NOPE"})
+    check(resp.status_code == 404 and resp.json()["code"] == "case_set_not_found",
+          f"delete unknown set: {resp.text}")
 
 def test_sn_registry_status_api():
     """V1 只读登记状态查询：登记 true / 未登记 false / 无 SN 参数 422，供上位机路由判定。"""
@@ -2952,14 +3195,14 @@ def test_dependency_retest_cascade():
     resp = admin("PUT", "/api/admin/routing/stations", topo, params={"process_id": proc})
     check(resp.status_code == 200, f"topo: {resp.text}")
     for it in (
-        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/casc.py::test_cal",
-         "item_name": "重校准", "sort_order": 1},
-        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/casc.py::test_iface",
-         "item_name": "接口测量"},
-        {"process_id": proc, "station_id": "TST-PARAM", "case_id": "tests/casc.py::test_param",
-         "item_name": "指标测量"},
-        {"process_id": proc, "station_id": "CAL-AWG", "case_id": "tests/casc.py::test_awg",
-         "item_name": "AWG 测量"},
+        {"process_id": proc, "station_id": "CAL-PARAM", "set_id": SET,
+         "case_id": "tests/casc.py::test_cal", "item_name": "重校准", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "set_id": SET,
+         "case_id": "tests/casc.py::test_iface", "item_name": "接口测量"},
+        {"process_id": proc, "station_id": "TST-PARAM", "set_id": SET,
+         "case_id": "tests/casc.py::test_param", "item_name": "指标测量"},
+        {"process_id": proc, "station_id": "CAL-AWG", "set_id": SET,
+         "case_id": "tests/casc.py::test_awg", "item_name": "AWG 测量"},
     ):
         resp = admin("POST", "/api/admin/routing/items", it)
         check(resp.status_code == 201, f"create item: {resp.status_code} {resp.text}")
@@ -3044,16 +3287,16 @@ def test_item_sort_order():
     resp = admin("PUT", "/api/admin/routing/stations", topo, params={"process_id": proc})
     check(resp.status_code == 200, f"topo: {resp.text}")
     for it in (
-        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/x.py::test_a",
-         "item_name": "测量A", "sort_order": 2},
-        {"process_id": proc, "station_id": "CAL-PARAM", "case_id": "tests/x.py::test_b",
-         "item_name": "校准B", "sort_order": 1},
-        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_c",
-         "item_name": "重复序C", "sort_order": 1},
-        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_d",
-         "item_name": "重复序D", "sort_order": 1},
-        {"process_id": proc, "station_id": "CAL-IFACE", "case_id": "tests/x.py::test_e",
-         "item_name": "自动续排E"},
+        {"process_id": proc, "station_id": "CAL-PARAM", "set_id": SET,
+         "case_id": "tests/x.py::test_a", "item_name": "测量A", "sort_order": 2},
+        {"process_id": proc, "station_id": "CAL-PARAM", "set_id": SET,
+         "case_id": "tests/x.py::test_b", "item_name": "校准B", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "set_id": SET,
+         "case_id": "tests/x.py::test_c", "item_name": "重复序C", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "set_id": SET,
+         "case_id": "tests/x.py::test_d", "item_name": "重复序D", "sort_order": 1},
+        {"process_id": proc, "station_id": "CAL-IFACE", "set_id": SET,
+         "case_id": "tests/x.py::test_e", "item_name": "自动续排E"},
     ):
         resp = admin("POST", "/api/admin/routing/items", it)
         check(resp.status_code == 201, f"create item: {resp.status_code} {resp.text}")
@@ -3406,6 +3649,9 @@ TESTS = [
     test_baseline_lock_from_items,
     test_overview_stats_semantics,
     test_station_baseline_lock,
+    test_multi_case_set_match,
+    test_subset_set_checkout,
+    test_case_set_crud,
     test_sn_registry_status_api,
     test_sn_registry_import_export,
     test_health,
@@ -3424,6 +3670,7 @@ TESTS = [
     test_retest_blocked_409,
     test_wrong_process_blocked_400,
     test_firmware_mismatch_403,
+    test_case_ids_required_400,
     test_case_id_mismatch_400,
     test_case_order_mismatch_400,
     test_first_station_required,

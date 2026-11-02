@@ -44,7 +44,7 @@ def _tz_info() -> tzinfo:
 class Settings:
     # ---- 应用 ----
     APP_NAME: str = "ATE Manager API"
-    APP_VERSION: str = "2.1.0"
+    APP_VERSION: str = "2.2.0"
     APP_DEBUG: bool = _as_bool(os.getenv("APP_DEBUG"), True)
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG" if APP_DEBUG else "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
@@ -80,8 +80,6 @@ class Settings:
     ENFORCE_FW: bool = _as_bool(os.getenv("ENFORCE_FW"), True)
     # 测试软件版本基线全局开关（机型未配基线时不卡控）
     ENFORCE_APP_SW: bool = _as_bool(os.getenv("ENFORCE_APP_SW"), True)
-    # 进站时是否强制比对用例ID清单（防漏测前置校验）
-    ENFORCE_CASE_IDS: bool = _as_bool(os.getenv("ENFORCE_CASE_IDS"), True)
     CLIENT_ONLINE_WINDOW_SECONDS: int = _as_int(os.getenv("CLIENT_ONLINE_WINDOW_SECONDS"), 90)
 
     # ---- 租约锁：崩溃续测与快速接管 ----

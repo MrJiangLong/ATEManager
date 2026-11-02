@@ -10,9 +10,9 @@
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| 后端 API | `2.1.0` | `backend/app/config.py::APP_VERSION` |
-| 上位机接口文档 | `v1.2` | `doc/API.md` |
-| 前端 | `2.1.0` | `frontend/package.json` |
+| 后端 API | `2.2.0` | `backend/app/config.py::APP_VERSION` |
+| 上位机接口文档 | `v1.3` | `doc/API.md` |
+| 前端 | `2.2.0` | `frontend/package.json` |
 
 ---
 
@@ -57,6 +57,7 @@
 ## 2. 核心特性
 
 - **用例ID 驱动防漏测**：进站比对本次待执行清单，出站校验必测项是否被真实执行（`SKIP` 等同未执行）
+- **一工位多用例集合**：同一工位可挂多套集合（字段码 + 名称，如不同构型/不同版本各一套）；进站上报序列与**任意一套**匹配即放行，回执 `case_set_id` 并按命中集合下发 `rules`；出站按「缺失最少」的集合判漏测；锁定基线时冻结全部集合并对草稿物化的集合做物理覆盖
 - **防跳工位闸门**：`depends_on` 拓扑依赖 + 已盖章工位集合双重判定
 - **防复测**：已盖章工位严禁重测（`409 station_already_passed`）
 - **固件基线校验**：机型绑定 `target_fw_version`，`fw_match_rule` 决定口径（`exact` 完全一致 / `min` 不低于基线，按数字段比较），不符 `403` 拦截
@@ -307,7 +308,7 @@ ATEManager/
 │   │   ├── main.py           入口：路由装配、schema 初始化、托管前端产物、SPA 回退
 │   │   ├── config.py         集中配置（环境变量 → Settings 单例）
 │   │   ├── database.py       引擎 / 会话 / 建表
-│   │   ├── models.py         14 张业务表 + users（用例ID：列名 nodeid → 属性 case_id）
+│   │   ├── models.py         16 张业务表 + users（用例ID：列名 nodeid → 属性 case_id）
 │   │   ├── schemas.py        API 契约（In / Out）
 │   │   ├── security.py       双通道鉴权：JWT + X-API-Key
 │   │   ├── errors.py         业务异常 → 统一响应包
@@ -402,7 +403,7 @@ ATEManager/
 
 ## 7. 数据模型
 
-**14 张业务表 + 1 张鉴权表**，严格按生产级 DDL 实现。
+**16 张业务表 + 1 张鉴权表**，严格按生产级 DDL 实现。
 
 ### 7.1 静态工艺与主数据（Web 低频维护）
 
@@ -411,8 +412,9 @@ ATEManager/
 | `processes` | `process_id` | 工艺流程主表，一个硬件构型一条；`is_active` 停用后不再接受新机型绑定；**大改两档路径**：①**日常大改（默认）= 原地编辑**同一流程的拓扑/用例——保存时做结构校验、运行中会话拦截，并在确认框展示影响面预演（受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断），在制品由防跳站自动兜底（缺前置进站即拦，走 ROLLBACK/RETEST 处置闭环）；②**真换流程**（产线重构/机型转线）= 克隆新流程 → 影响面预演（在制品逐件判定：交集工位继承、被删工位仅作历史、新增必跑补测）→ 机型改绑（有在制品 409 需 `confirm_switch`）→ 旧流程归档（停用，不可绑定、历史可查）；**`is_sequential`（默认 true）严格顺序**——进站要求所有 `step_order` 更小的必跑工位已盖章（选检除外），与 `depends_on` 并存（并行分支流程需显式关闭，如 MSO-AWG） |
 | `product_models` | `product_model` | 机型 → 专属流程 + 固件基线 `target_fw_version`，`fw_match_rule` 定匹配口径（`exact`/`min`） |
 | `stations` | `station_id` | 逻辑工位字典，含 `timeout_sec` 硬超时时长 |
-| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；**基线锁定**：`baseline_locked/baseline_manifest/baseline_captured_at`（黄金样本快照锁——录制态进站自动捕获上位机用例序列为草稿，锁定后物化为 `station_items` 并对进站执行全列表严格比对）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
-| `station_items` | `item_id` | 工位用例ID静态清单，`is_mandatory` 定必测；`sort_order` 定工位内执行顺序（进站下发的用例清单按此排序；新增/导入未指定时按顺序以步长 10 自动编号，便于中间插入）；全量导入（replace）会停用清单外项，重新出现自动复活（`is_active`） |
+| `process_stations` | `(process_id, station_id)` | 工步拓扑：`step_order` 定序、`depends_on` 定闸门、`is_optional` 标记选检工位（QA 抽查，不参与完工判定）、`invalidates_downstream` 标记依赖重测（重测本工位会改变被测件状态，处置确认后依赖本工位数据的下游已盖章工位一并重测）；**基线锁定**：`baseline_locked/baseline_manifest/baseline_captured_at`（黄金样本快照锁——录制态进站自动捕获上位机用例序列为草稿；锁定后冻结该工位**全部用例集合**，进站序列须与任意一套集合全列表一致；`source=draft` 物化时对目标集合做**物理覆盖**，草稿外的用例直接删除，不留软删墓碑）；整体覆盖式保存，保存前校验成环/缺工位/必跑依赖选检等结构问题（不通过整体回滚，409 `topology_invalid`），`force=true` 可跳过 |
+| `station_case_sets` | `set_pk` | 工位用例集合主数据：`set_id` = 字段码（进站/导入/脚本都用它标识集合，创建后不可改）、`set_name` = 展示名称；唯一键 `(process_id, station_id, set_id)`。删除集合连带清理其用例行；锁定态禁删；工位有 RUNNING 会话时禁删 |
+| `station_items` | `item_id` | 工位用例ID清单，按 `set_id` 分组为**多套用例集合**（一个工位可挂多套，进站与任意一套匹配即放行；集合内 `sort_order` 定执行顺序，新增/导入未指定时按步长 10 自动编号）。`is_mandatory` 定必测；全量导入（replace）只停用**同集合内**清单外项，重新出现自动复活（`is_active`） |
 
 > **用例ID（Case ID）命名**：DDL 中该列名为 `nodeid`，为保持表结构不变，
 > ORM 层用 `mapped_column("nodeid")` 将属性名映射为 `case_id`。
@@ -602,9 +604,10 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | **复测拦截** | **409** | `station_already_passed` | 10 | 提示推错车，禁止复测 |
 | 锁冲突 | 409 | `lock_conflict` | 11 | 等待或换机台 |
 | 工位不在流程 | 400 | `station_not_in_process` | 10 | 提示工艺不符 |
-| 用例ID清单不匹配 | 400 | `case_id_mismatch` | 15 | 提示脚本版本不符 |
-| 用例执行顺序不符 | 400 | `case_order_mismatch` | 15 | 调整工程/用例定义顺序 |
-| **漏测拦截** | **400** | `missing_mandatory` | 13 | 提示补齐必测用例 |
+| 用例清单缺失 | 400 | `case_ids_required` | 15 | 该工位已配置集合却未上报 `case_ids`（锁定前后一致；`data.case_sets` 列出集合） |
+| 用例ID清单不匹配 | 400 | `case_id_mismatch` | 15 | 提示脚本版本不符（多集合时 `data.closest_set` 指出最接近的一套，`data.case_sets` 列出全部集合） |
+| 用例执行顺序不符 | 400 | `case_order_mismatch` | 15 | 调整工程/用例定义顺序（锁定态为全列表逐项比对） |
+| **漏测拦截** | **400** | `missing_mandatory` | 13 | 提示补齐必测用例（多集合时按「缺失最少」的那套判定） |
 | 出站成功 | 201 | `ok.checkout` | 0（PASS）/ 1（FAIL） | 收到 ACK 方可拔线 |
 
 统一响应包：
@@ -626,9 +629,9 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 方法 | 路径 | 说明 | 成功码 |
 |---|---|---|---|
 | POST | `/client/resolve` | 机台身份上报与工位反查（首次自动注册） | 200 |
-| POST | `/client/case-list` | 用例清单上报（录制态草稿）：check-in **前**上报本次执行序列（不受进站校验影响，锁定态只读返回 `recorded=false/locked=true`） | 200 |
+| POST | `/client/case-list` | 用例清单上报（录制态草稿）：check-in **前**上报本次执行序列（不受进站校验影响；锁定态只读返回 `recorded=false/locked=true` + `case_sets` 与集合用例总数） | 200 |
 | GET | `/client/sn-registry/status` | SN 登记状态只读查询（上位机路由判定：true=试验设备走研发服 / false=产线件走生产服；布尔返回，不暴露清单） | 200 |
-| POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁；直通机型（`passthrough`）直接 ACK 零写入 | 200 |
+| POST | `/client/check-in` | 进站：防跳站/防复测/固件/用例ID 卡控 + 领取工位锁；工位配了用例集合时**必须上报 `case_ids`**（否则 400 `case_ids_required`）；直通机型（`passthrough`）直接 ACK 零写入 | 200 |
 | POST | `/client/heartbeat` | 心跳保活（只刷新失联时间，不续硬超时） | 200 |
 | POST | `/client/checkpoint` | 续测断点：增量上报已完成用例（幂等覆盖） | 200 |
 | POST | `/client/artifact` | 测试产物上传（multipart，按 case_id 归档 MinIO；同键覆盖） | 200 |
@@ -647,7 +650,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机型 | view / mgr 写 | `GET/POST /api/admin/product-models`、`PUT/DELETE /api/admin/product-models/{id}`；`GET /api/admin/product-models/{id}/switch-impact`（改绑流程影响面预演：在制品印章继承/补测、失效机台、拓扑差异）；`PUT` 改绑流程时若有在制品需 `confirm_switch=true`（R2 交集结转，否则 409 `process_switch_wip_confirm_required`）；`PUT` 支持 `passthrough` 双态切换（关直通需 `confirm_drain=true` 清线确认，否则 409 `drain_confirm_required`；开直通有在制 409 `model_has_wip`） |
 | SN 登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
-| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`POST /api/admin/routing/baseline/lock`（`source=draft|items`：机台录制 / 现有清单）、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项支持 `sort_order` 执行顺序，未指定自动按添加顺序续排；重复序号校验 warning）、`POST /api/admin/routing/topology/impact`（保存前影响面预演：草案拓扑只读计算——受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（导入/导出/克隆均保留 `sort_order`、`invalidates_downstream` 与流程级 `is_sequential`（旧文件缺省 true）旧导出文件缺省兼容）、`POST /api/admin/routing/baseline/lock`、`POST /api/admin/routing/baseline/unlock`（工位基线快照锁：录制态进站自动捕获用例序列草稿，锁定时自动物化为用例清单并开启进站全列表严格比对；锁定工位的用例清单禁止手工编辑）、`GET /api/admin/routing/item-summary` |
+| 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/DELETE /api/admin/routing/case-sets`（用例集合主数据：一个工位可挂多套，`set_id`=字段码 + `set_name`=名称；删除连带清理该集合用例，锁定态或有 RUNNING 会话时 409）、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项按 `set_id` 归属集合，`sort_order` 在集合内独立续排）、`POST /api/admin/routing/items/import`（`{process_id, station_id, set_id, items[], mode=upsert\|replace}`：replace 只停用**同集合内**清单外项，重新出现自动复活）、`POST /api/admin/routing/topology/impact`（保存前影响面预演：草案拓扑只读计算——受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（`export_version=3`，携带 `case_sets`（集合名称）与 items 的 `set_id`；导入/导出/克隆保留 `sort_order`、`invalidates_downstream` 与流程级 `is_sequential`）、`POST /api/admin/routing/baseline/lock`（`source=items`：冻结该工位全部集合、不物化；`source=draft`：把录制草稿**物理覆盖**到指定 `set_id`——草稿外用例删除、草稿内全部必测，其他集合不动）、`POST /api/admin/routing/baseline/unlock`（解锁回录制态；锁定态下用例与集合禁止增删改）、`GET /api/admin/routing/item-summary` |
 | 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演与依赖重测确认 `confirm_downstream`，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/batch-undo`（按 `batch_id` 整批撤销，逐条独立生效走单条全部守卫）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
@@ -733,7 +736,6 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `FAIL_LIMIT` | `3` | 连续失败达阈值 → 工程锁定 |
 | `ENFORCE_FW` | `true` | 固件基线校验，`false` 时仅记录不拦截 |
 | `ENFORCE_APP_SW` | `true` | 测试软件版本基线校验（机型基线留空则不卡控），`false` 时仅记录不拦截 |
-| `ENFORCE_CASE_IDS` | `true` | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | `90` | 机台在线判定窗口 |
 | `SERVER_ROLE` | `production` | SN 准入极性（见 14.1 双服务器部署）：`production` 黑名单 / `development` 白名单，除 `development` 外的一切值均按生产黑名单卡控（Fail-Safe） |
 | `METRICS_WINDOW_DAYS` | `14` | 仪表盘统计窗口 |
@@ -744,6 +746,12 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `SWEEPER_INTERVAL_SEC` | `30` | 孤儿锁回收周期 |
 | `SWEEPER_ENABLED` | `true` | 回收总开关（演示场景数据可置 `false`） |
 | `LOST_LOCK_FAIL_THRESHOLD` | `3` | 连续失联达 N 次才计一次产品失败 |
+
+> **用例ID 校验没有全局开关**：该工位配置了用例集合 → 客户端**必须上报 `case_ids`**
+> （缺失/空 → 400 `case_ids_required`），再按规则校验（未锁定 = 任一套必测覆盖 + 相对顺序；
+> 锁定 = 任一套全列表逐项一致）。需要整体豁免的机型走 `product_models.passthrough`
+> （直通：零写入、流程逻辑全跳过）；尚未配置集合的新工位天然放行，用于
+> "跑一遍 → 录制序列 → 锁定基线"的自举路径。
 | `MERGE_CHECKPOINT_ON_CHECKOUT` | `true` | 出站时用断点补齐未提交用例 |
 | `STRICT_LOCK_TOKEN` | `false` | `true` 时"未携带 token"也拒绝；**token 不匹配始终拒绝** |
 

@@ -115,7 +115,7 @@
         </el-table-column>
         <el-table-column prop="sn" :label="$t('records.tableSn')" min-width="150">
           <template #default="{ row }">
-            <el-button link type="primary" @click="goTrace(row.sn)"><span class="code">{{ row.sn }}</span></el-button>
+            <el-button link type="primary" class="sn-link" @click="goTrace(row.sn)"><span class="code">{{ row.sn }}</span></el-button>
           </template>
         </el-table-column>
         <el-table-column prop="station_id" :label="$t('records.tableStation')" min-width="160">

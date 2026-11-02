@@ -48,11 +48,13 @@ from . import artifacts
 from .version import version_matches
 from .routing import (
     _as_list,
+    case_sets_of,
     is_completed,
     load_process,
     mandatory_case_ids,
     missing_prereq,
     next_stations,
+    set_case_ids,
     station_rules,
 )
 from .timeutil import as_utc, elapsed_sec, utcnow
@@ -397,6 +399,17 @@ def apply_manifest(ps_row, case_ids) -> bool:
     return True
 
 
+def _seq_diff(incoming: List[str], manifest: List[str]) -> Tuple[List[str], List[str], int]:
+    """有序序列比对：返回（缺失、多余、首个不同位置）。"""
+    missing = [c for c in manifest if c not in incoming]
+    extra = [c for c in incoming if c not in manifest]
+    first_diff = next(
+        (i for i, (a, b) in enumerate(zip(incoming, manifest)) if a != b),
+        min(len(incoming), len(manifest)),
+    )
+    return missing, extra, first_diff
+
+
 def report_manifest(db: Session, client_id: str, product_model: str, case_ids) -> dict:
     """录制态草稿上报（独立于进站，不受任何进站校验影响）。
 
@@ -440,11 +453,13 @@ def report_manifest(db: Session, client_id: str, product_model: str, case_ids) -
     if ps_row is None:
         raise not_found("step_not_found", f"{model_row.process_id}/{station_id}")
     if ps_row.baseline_locked:
+        sets = case_sets_of(graph, station_id)
         return {
             "recorded": False,
             "locked": True,
             "station_id": station_id,
-            "baseline_count": len(ps_row.baseline_manifest or []),
+            "baseline_count": sum(len(rows) for rows in sets.values()),
+            "case_sets": sorted(sets),
         }
     changed = apply_manifest(ps_row, case_ids)
     if changed:
@@ -625,58 +640,95 @@ def check_in(
             data={"missing": missing},
         )
 
-    # 9) 用例序列校验：锁定工位 = 黄金样本全列表严格比对（含顺序、含查多，
-    #    替代必测覆盖与相对顺序两项检查——等式已蕴含覆盖性）；未锁定工位 =
-    #    现有必测覆盖 + 相对顺序校验（存量行为零变化），并在守卫通过后捕获草稿
+    # 9) 用例序列校验：工位可挂多套用例集合，上报序列与**任意一套**匹配即放行。
+    #    锁定工位 = 黄金样本全列表严格比对（含顺序、含查多，替代必测覆盖与相对
+    #    顺序两项检查——等式已蕴含覆盖性）；未锁定工位 = 任一套集合的必测覆盖 +
+    #    相对顺序校验，并在守卫通过后捕获草稿
     ps_row = db.get(models.ProcessStation, (model_row.process_id, station_id))
     baseline_locked = bool(ps_row and ps_row.baseline_locked)
+    sets = case_sets_of(graph, station_id)
+    matched_set: Optional[str] = None
+
+    # 有集合就必须自证清单：不区分是否锁定，否则"同一客户端行为"在锁定前后会得到
+    # 两种结果（未锁定静默放行、锁定 400），现场无法解释。无集合的工位仍放行，
+    # 保留"跑一遍 → 录制草稿 → 锁定基线"的自举路径。
+    if sets and not [c for c in (case_ids or []) if c and c.strip()]:
+        raise bad_request(
+            "case_ids_required",
+            f"用例清单缺失：工位 {_station_label(graph, station_id)} 已配置 "
+            f"{len(sets)} 套用例集合，进站须上报本次执行的 case_ids",
+            exit_code=EXIT_CASE_ID_MISMATCH,
+            data={"case_sets": sorted(sets)},
+        )
 
     if baseline_locked:
-        """ 黄金样本：进站上报的有序用例全集必须与受控基线逐项一致。
-        case_ids 未上报视为全部缺失（锁定工位强制客户端自证清单）；
-        独立于 ENFORCE_CASE_IDS——锁定是工艺员的显式承诺，不随全局开关失效。 """
+        """ 黄金样本：进站上报的有序用例全集必须与某一套受控集合逐项一致。 """
         incoming = [c.strip() for c in (case_ids or []) if c and c.strip()]
-        manifest = list(ps_row.baseline_manifest or [])
-        if incoming != manifest:
-            missing = [c for c in manifest if c not in incoming]
-            extra = [c for c in incoming if c not in manifest]
-            first_diff = next(
-                (i for i, (a, b) in enumerate(zip(incoming, manifest)) if a != b),
-                min(len(incoming), len(manifest)),
+        manifests = {sid: set_case_ids(rows) for sid, rows in sets.items()}
+        matched_set = next((sid for sid, m in manifests.items() if incoming == m), None)
+        if matched_set is None and manifests:
+            # 报错取差异最小的一套，便于现场定位是哪套集合对不上
+            best = min(
+                manifests,
+                key=lambda sid: len(_seq_diff(incoming, manifests[sid])[0])
+                + len(_seq_diff(incoming, manifests[sid])[1]),
             )
+            manifest = manifests[best]
+            missing, extra, first_diff = _seq_diff(incoming, manifest)
             detail = f"缺失 {len(missing)} 项、多余 {len(extra)} 项"
             if not missing and not extra:
                 detail = f"自第 {first_diff + 1} 项起顺序不同"
             raise bad_request(
                 "case_order_mismatch",
                 f"用例序列与受控基线不一致：工位 {_station_label(graph, station_id)} "
-                f"{detail}（基线共 {len(manifest)} 项），请先在管理端审阅并解锁重录",
+                f"共 {len(manifests)} 套用例集合，最接近的 {best} {detail}"
+                f"（该集合共 {len(manifest)} 项），请先在管理端审阅并解锁重录",
                 exit_code=EXIT_CASE_ID_MISMATCH,
-                data={"missing": missing, "extra": extra, "first_diff_index": first_diff},
+                data={
+                    "case_sets": sorted(manifests),
+                    "closest_set": best,
+                    "missing": missing,
+                    "extra": extra,
+                    "first_diff_index": first_diff,
+                },
             )
     else:
-        if case_ids is not None and settings.ENFORCE_CASE_IDS:
-            covered = set(case_ids)
-            absent = [c for c in mandatory_case_ids(graph, station_id) if c not in covered]
-            if absent:
-                raise bad_request(
-                    "case_id_mismatch",
-                    f"用例清单不符：工位 {_station_label(graph, station_id)} 的必测用例未全部收集：{'.、'.join(absent)}",
-                    exit_code=EXIT_CASE_ID_MISMATCH,
-                    data={"missing_case_ids": absent},
-                )
-            """ 执行顺序契约：rules 按 sort_order 下发，上位机须按此顺序执行。
-            case_ids 通常是整个工程的收集顺序，先滤出本工位用例再比相对顺序 """
-            configured = [i.case_id for i in graph.items_of.get(station_id, [])]
-            submitted = [c for c in case_ids if c in configured]
-            expected = [c for c in configured if c in covered]
-            if submitted != expected:
+        if sets:
+            covered = set(case_ids or [])
+            candidates = []
+            for sid, rows in sets.items():
+                configured = set_case_ids(rows)
+                absent = [c for c in mandatory_case_ids(rows) if c not in covered]
+                """ 执行顺序契约：rules 按 sort_order 下发，上位机须按此顺序执行。
+                case_ids 通常是整个工程的收集顺序，先滤出本工位用例再比相对顺序 """
+                submitted = [c for c in case_ids if c in configured]
+                expected = [c for c in configured if c in covered]
+                if not absent and submitted == expected:
+                    matched_set = sid
+                    break
+                candidates.append((len(absent), submitted != expected, sid, absent, expected, submitted))
+            if matched_set is None and candidates:
+                candidates.sort(key=lambda c: (c[0], c[1]))
+                _, _, sid, absent, expected, submitted = candidates[0]
+                if absent:
+                    raise bad_request(
+                        "case_id_mismatch",
+                        f"用例清单不符：工位 {_station_label(graph, station_id)} "
+                        f"共 {len(sets)} 套用例集合，最接近的 {sid} 必测用例未全部收集：{'.、'.join(absent)}",
+                        exit_code=EXIT_CASE_ID_MISMATCH,
+                        data={"case_sets": sorted(sets), "closest_set": sid, "missing_case_ids": absent},
+                    )
                 raise bad_request(
                     "case_order_mismatch",
-                    f"用例执行顺序不符：工位 {_station_label(graph, station_id)} 期望 "
+                    f"用例执行顺序不符：工位 {_station_label(graph, station_id)} 的集合 {sid} 期望 "
                     f"{' → '.join(expected)}，实际 {' → '.join(submitted)}",
                     exit_code=EXIT_CASE_ID_MISMATCH,
-                    data={"expected_case_ids": expected, "actual_case_ids": submitted},
+                    data={
+                        "case_sets": sorted(sets),
+                        "closest_set": sid,
+                        "expected_case_ids": expected,
+                        "actual_case_ids": submitted,
+                    },
                 )
         # 录制态捕获：全部守卫通过后覆盖基线草稿（内容变化才写库，避免每次进站徒增写放大）
         if ps_row is not None and case_ids is not None:
@@ -807,7 +859,8 @@ def check_in(
         timeout_sec=timeout_sec,
         is_first_station=station_id == graph.stations[0],
         created_on_checkin=created,
-        rules=station_rules(graph, station_id),
+        rules=station_rules(graph, station_id, matched_set),
+        case_set_id=matched_set,
         passed_stations=sorted(passed),
         next_stations=next_stations(graph, passed),
         server_time=utcnow().isoformat(),
@@ -1226,8 +1279,22 @@ def check_out(
 
     # 5) 漏测拦截：必测用例ID必须被实际执行
     #    已执行但判定 FAIL → 真实失败；必测 FAIL 计入 overall_result（见步骤 6）
+    #    工位多套集合时取「缺失最少」的那一套（与进站选集合同一口径）：
+    #    已跑最多会让子集/超集关系下的集合误判（如 S2 是 S1 的前缀子集，
+    #    跑完 S2 时两套"已跑数"相同，按已跑最多会选 S1 而误报漏测）
     submitted = {it.get("case_id"): it for it in merged_items}
-    required = mandatory_case_ids(graph, station_id)
+    best_rows: List[models.StationItem] = []
+    best_key: Optional[Tuple[int, int]] = None
+    for rows in case_sets_of(graph, station_id).values():
+        missing = [
+            c
+            for c in mandatory_case_ids(rows)
+            if c not in submitted or submitted[c].get("result") == RESULT_SKIP
+        ]
+        key = (len(missing), -(len(mandatory_case_ids(rows)) - len(missing)))
+        if best_key is None or key < best_key:
+            best_key, best_rows = key, rows
+    required = mandatory_case_ids(best_rows)
     absent = [c for c in required if c not in submitted or submitted[c].get("result") == RESULT_SKIP]
     if absent:
         if session is not None:

@@ -33,6 +33,7 @@ v2：补齐产线状态
     --units 12             本轮投产的被测件数量
     --model DPO4054B       机型（自动取其流程与基线固件）
     --station CAL-PARAM    单工位模式（不做流程推进）
+    --case-set S1          工位挂多套用例集合时跑哪一套（默认第一套）
     --mode chaos           随机注入崩溃（normal 仅关闭崩溃注入，
                            其余 --fail-rate 等注入速率仍然生效）
     --crash-rate 0.12      崩溃概率
@@ -129,16 +130,21 @@ class Admin:
 class ProcessPlan:
     """流程拓扑 + 各工位必测用例：来自 GET /api/admin/routing/topology。"""
 
-    def __init__(self, topo: dict):
+    def __init__(self, topo: dict, case_set: str = ""):
         self.process_id = topo["process_id"]
         self.steps = sorted(topo.get("steps") or [], key=lambda s: s.get("step_order") or 0)
         self.stations: List[str] = [s["station_id"] for s in self.steps]
         self.optional: set = {s["station_id"] for s in self.steps if s.get("is_optional")}
-        self.items: Dict[str, List[str]] = {}
+        # 一个工位可挂多套用例集合：仿真按一套跑（默认第一套），否则上报序列与任何一套都不匹配
+        by_set: Dict[str, Dict[str, List[str]]] = {}
         for it in topo.get("items") or []:
             if not it.get("is_active", True):
                 continue
-            self.items.setdefault(it["station_id"], []).append(it["case_id"])
+            by_set.setdefault(it["station_id"], {}).setdefault(it["set_id"], []).append(it["case_id"])
+        self.items: Dict[str, List[str]] = {
+            sid: list(sets.get(case_set) or next(iter(sets.values())))
+            for sid, sets in by_set.items()
+        }
 
     def cases(self, station_id: str, limit: int = 0) -> List[str]:
         ids = self.items.get(station_id) or []
@@ -498,6 +504,7 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL, help="机型（自动取其流程与基线固件）")
     parser.add_argument("--station", default="", help="单工位模式：只跑该工位，不做流程推进")
     parser.add_argument("--items", type=int, default=0, help="每工位用例数（0=全量必测项）")
+    parser.add_argument("--case-set", default="", help="工位多套用例集合时跑哪一套（默认第一套）")
     parser.add_argument("--mode", choices=["normal", "chaos"], default="chaos")
     parser.add_argument("--crash-rate", type=float, default=0.12, help="每个测试项之后的崩溃概率")
     parser.add_argument("--no-chaos-resume", action="store_true", help="崩溃后不续测，直接换件")
@@ -542,7 +549,7 @@ def main() -> int:
         return 1
     process_id = model_row["process_id"]
     base_fw = model_row.get("target_fw_version") or "V3.20"
-    plan = ProcessPlan(admin.topology(process_id))
+    plan = ProcessPlan(admin.topology(process_id), case_set=args.case_set)
     if not plan.stations:
         print(f"[ERROR] 流程 {process_id} 无工步，请先执行 seed")
         return 1

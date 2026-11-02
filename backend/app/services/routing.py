@@ -2,9 +2,12 @@
 
 硬件构型差异由独立的 `process_id` 物理隔离 —— 带 AWG 的 MSO 流程与不带 AWG 的
 DPO 流程各自维护完整的工步拓扑与用例ID清单，运行期不存在任何条件分支。
+
+一个工位可挂**多套用例集合**（`StationItem.set_id`）：每套集合自带执行顺序，
+进站上报的用例序列与任意一套匹配即放行。
 """
 
-from typing import Dict, List, NamedTuple, Optional, Set
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +31,8 @@ class ProcessGraph(NamedTuple):
     deps_of: Dict[str, List[str]]
     timeout_of: Dict[str, int]
     name_of: Dict[str, str]
-    items_of: Dict[str, List[models.StationItem]]
+    # {station_id: {set_id: [按执行序号排序的用例行]}}
+    sets_of: Dict[str, Dict[str, List[models.StationItem]]]
     sequential: bool = True  # 严格顺序：前序必跑工位未盖章即拦截（并行流程关闭）
     optional: Set[str] = frozenset()  # 选检工位（QA 抽查），不参与完工判定
     invalidates: Set[str] = frozenset()  # 依赖重测触发的工位（invalidates_downstream 配置）
@@ -62,15 +66,16 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
         )
         .order_by(
             models.StationItem.station_id,
+            models.StationItem.set_id,
             models.StationItem.sort_order.is_(None),
             models.StationItem.sort_order,
             models.StationItem.case_id,
         )
         .all()
     )
-    items_of: Dict[str, List[models.StationItem]] = {}
+    sets_of: Dict[str, Dict[str, List[models.StationItem]]] = {}
     for item in items:
-        items_of.setdefault(item.station_id, []).append(item)
+        sets_of.setdefault(item.station_id, {}).setdefault(item.set_id, []).append(item)
 
     return ProcessGraph(
         process_id=process_id,
@@ -88,7 +93,7 @@ def load_process(db: Session, process_id: str) -> Optional[ProcessGraph]:
             s.station_id: (station_map[s.station_id].station_name if s.station_id in station_map else s.station_id)
             for s in steps
         },
-        items_of=items_of,
+        sets_of=sets_of,
         optional={s.station_id for s in steps if s.is_optional},
         invalidates={s.station_id for s in steps if s.invalidates_downstream},
     )
@@ -128,18 +133,33 @@ def next_stations(graph: ProcessGraph, passed: Set[str]) -> List[schemas.NextSta
         )
     return result
 
-def mandatory_case_ids(graph: ProcessGraph, station_id: str) -> List[str]:
-    """该工位必测的用例ID清单（is_active AND is_mandatory），按配置的执行顺序返回。"""
-    return [i.case_id for i in graph.items_of.get(station_id, []) if i.is_mandatory]
+def case_sets_of(graph: ProcessGraph, station_id: str) -> Dict[str, List[models.StationItem]]:
+    """该工位的全部用例集合：{set_id: 按执行序号排序的启用用例行}。"""
+    return graph.sets_of.get(station_id, {})
 
-def station_rules(graph: ProcessGraph, station_id: str) -> List[schemas.StationRule]:
+def set_case_ids(rows: List[models.StationItem]) -> List[str]:
+    """一套集合的有序用例ID全集（配置顺序即执行顺序）。"""
+    return [row.case_id for row in rows]
+
+def mandatory_case_ids(rows: List[models.StationItem]) -> List[str]:
+    """一套集合的必测用例ID（is_mandatory），按配置的执行顺序返回。"""
+    return [row.case_id for row in rows if row.is_mandatory]
+
+def station_rules(
+    graph: ProcessGraph, station_id: str, set_id: Optional[str] = None
+) -> List[schemas.StationRule]:
+    """下发给上位机的执行规则：优先按命中的集合下发；未指定时取项数最多的集合兜底。"""
+    sets = case_sets_of(graph, station_id)
+    rows = sets.get(set_id) if set_id else None
+    if rows is None:
+        rows = max(sets.values(), key=len) if sets else []
     return [
         schemas.StationRule(
             case_id=i.case_id,
             item_name=i.item_name,
             is_mandatory=bool(i.is_mandatory),
         )
-        for i in graph.items_of.get(station_id, [])
+        for i in rows
     ]
 
 def is_completed(graph: ProcessGraph, passed: Set[str]) -> bool:
@@ -276,22 +296,29 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
     )
     active_of: Dict[str, int] = {}
     mandatory_of: Dict[str, int] = {}
-    order_seen: Dict[Tuple[str, int], List[str]] = {}
+    mandatory_of_set: Dict[Tuple[str, str], int] = {}
+    sets_seen: Set[Tuple[str, str]] = set()
+    order_seen: Dict[Tuple[str, str, int], List[str]] = {}
     for item in items:
         if not item.is_active:
             continue
+        sets_seen.add((item.station_id, item.set_id))
         active_of[item.station_id] = active_of.get(item.station_id, 0) + 1
         if item.is_mandatory:
             mandatory_of[item.station_id] = mandatory_of.get(item.station_id, 0) + 1
+            key = (item.station_id, item.set_id)
+            mandatory_of_set[key] = mandatory_of_set.get(key, 0) + 1
         if item.sort_order is not None:
-            order_seen.setdefault((item.station_id, item.sort_order), []).append(item.case_id)
-    for (station_id, order), cases in sorted(order_seen.items()):
+            order_seen.setdefault(
+                (item.station_id, item.set_id, item.sort_order), []
+            ).append(item.case_id)
+    for (station_id, set_id, order), cases in sorted(order_seen.items()):
         if len(cases) > 1:
             issues.append(
                 schemas.ValidateIssue(
                     level="warning",
                     code="item_order_duplicate",
-                    detail=f"{station_id} sort_order={order}: {', '.join(sorted(cases))}",
+                    detail=f"{station_id}/{set_id} sort_order={order}: {', '.join(sorted(cases))}",
                 )
             )
 
@@ -303,6 +330,17 @@ def validate_process(db: Session, process_id: str) -> schemas.ValidateOut:
         elif mandatory_of.get(station_id, 0) == 0:
             issues.append(
                 schemas.ValidateIssue(level="warning", code="station_no_mandatory", detail=station_id)
+            )
+
+    # 集合级：某套集合一条必测都没有 —— 录制态进站该集合几乎不可能被判定为命中
+    for station_id, set_id in sorted(sets_seen):
+        if mandatory_of_set.get((station_id, set_id), 0) == 0:
+            issues.append(
+                schemas.ValidateIssue(
+                    level="warning",
+                    code="case_set_no_mandatory",
+                    detail=f"{station_id}/{set_id}",
+                )
             )
 
     ok = not any(i.level == "error" for i in issues)
@@ -342,7 +380,7 @@ def topology_impact(
         deps_of={x.station_id: list(x.depends_on or []) for x in ordered},
         timeout_of={},
         name_of=names,
-        items_of={},
+        sets_of={},
         sequential=bool(process.is_sequential),
         optional=frozenset(x.station_id for x in ordered if x.is_optional),
     )
@@ -574,6 +612,7 @@ def process_topology(db: Session, process_id: str) -> schemas.TopologyOut:
         .filter(models.StationItem.process_id == process_id)
         .order_by(
             models.StationItem.station_id,
+            models.StationItem.set_id,
             models.StationItem.sort_order.is_(None),
             models.StationItem.sort_order,
             models.StationItem.case_id,

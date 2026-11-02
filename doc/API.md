@@ -5,8 +5,8 @@
 
 | 项 | 值 |
 |---|---|
-| 文档版本 | v1.2 |
-| 适用服务端 | ATE Manager API ≥ 2.1.0 |
+| 文档版本 | v1.3 |
+| 适用服务端 | ATE Manager API ≥ 2.2.0 |
 | 接口前缀 | `/api/v1` |
 | 鉴权方式 | 请求头 `X-API-Key` |
 | 传输协议 | HTTP/1.1 + JSON（UTF-8） |
@@ -79,6 +79,9 @@
 tests/test_cal_param.py::TestAmp::test_amp_cal
 ```
 
+一个工位可挂**多套用例集合**（`set_id`，如 A 构型 / B 构型各一套序列）：每套集合自带
+执行顺序，进站上报的 `case_ids` 与**任意一套**匹配即放行（锁定态要求与某套全列表逐项一致）。
+
 > 数据库物理列名为 `nodeid`（沿用既有 DDL），但**接口、代码、界面一律使用 `case_id`**。
 
 ---
@@ -116,8 +119,12 @@ POST /api/admin/clients
 
 ### 2.3 确认识别用例清单
 
-工位必须已在工艺流程中配置用例ID清单（Web 端「工艺配置 → 测试项」），
+工位必须已在工艺流程中配置用例ID清单（Web 端「工艺配置 → 测试项」，按**用例集合**分组），
 否则进站会通过但出站会因"无必测项"而不产生拦截语义。
+
+一个工位可挂**多套用例集合**（`set_id` 字段码 + `set_name` 名称，如不同构型/版本各一套）：
+上位机只需上报本次真实执行的序列，服务端自动与任意一套匹配并回执命中的 `case_set_id`，
+无需在客户端侧区分集合。
 
 ---
 
@@ -256,6 +263,7 @@ NULL ─────────────→ IDLE ─────────
 
 - 录制态（`baseline_locked=false`）：内容变化才写库，返回 `recorded=true/false`
 - 锁定态：**不覆盖**草稿，返回 `recorded=false, locked=true, baseline_count`
+  （`baseline_count` = 该工位全部集合的用例总数，`case_sets` 列出受控集合）
 - 失败不影响测试：SDK 在 `start()` 内静默调用（异常吞掉），进站会给出真正的错误
 
 **请求**
@@ -288,7 +296,7 @@ NULL ─────────────→ IDLE ─────────
 | `sn` | string(64) | 是 | `*IDN?` 直读序列号 |
 | `product_model` | string(64) | 是 | `*IDN?` 直读机型（须已注册） |
 | `firmware` | string(32) | 是 | `*IDN?` 直读固件版本 |
-| `case_ids` | string[] | 否 | 本次待测的用例ID清单，用于防漏测前置校验 |
+| `case_ids` | string[] | **条件必填** | 本次待测的用例ID清单（有序）。**该工位已配置用例集合时必填**，缺失或空 → 400 `case_ids_required`；工位尚未配置集合（录制自举阶段）时可省略 |
 | `resume_session_id` | string(36) | 否 | 续测会话ID：崩溃重启后携带 |
 | `app_version` | string(50) | 否 | 上位机版本 |
 
@@ -317,13 +325,14 @@ NULL ─────────────→ IDLE ─────────
   "created_on_checkin": true,          // 本次是否动态建档
   "passthrough": false,                // true = 受控直通：station_id/rules/session_id 为空，
                                        // 直接开始测试，跳过心跳/断点/出站（零写入）
-  "rules": [                           // 服务端下发的执行规则，按 station_items.sort_order
-                                       // 排序；上位机必须按此顺序执行用例（服务端契约，
-                                       // 未配置序号的用例由服务端按添加/导入顺序编号）。
-                                       // 进站上报的 case_ids 顺序不符 → case_order_mismatch
+  "rules": [                           // 服务端下发的执行规则 = **命中的那套用例集合**，按该
+                                      // 集合的 sort_order 排序；上位机必须按此顺序执行用例
+                                      // （未配置序号的用例由服务端按添加/导入顺序编号）。
+                                      // 上报的 case_ids 顺序不符 → case_order_mismatch
     {"case_id": "tests/test_cal_param.py::TestAmp::test_amp_cal",
      "item_name": "CHn幅度校准", "is_mandatory": true}
   ],
+  "case_set_id": "S1",                 // 本次进站命中的用例集合（无命中时为空）
   "passed_stations": [],               // 已盖章工位
   "next_stations": [{"station_id": "CAL-IFACE", "station_name": "...", "step_order": 20}],
   "server_time": "...",
@@ -630,10 +639,11 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 |---|---|---|---|---|
 | 401 | `invalid_credentials` | 10 | 全部 | 缺少或无效的 `X-API-Key` |
 | 400 | `station_not_in_process` | 10 | check-in / check-out | 工位不属于该机型流程 |
-| 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID |
-| 400 | `case_order_mismatch` | 15 | check-in | 未锁定工位：上报用例相对顺序与工位配置 `sort_order` 不符；**锁定工位**：上报用例全列表与受控基线不一致（含顺序/增删，`data` 携带 `missing`/`extra`/`first_diff_index` 分诊），需工艺员在 Web 解锁重录 |
+| 400 | `case_ids_required` | 15 | check-in | 该工位已配置用例集合，但请求未携带（或携带空）`case_ids`：客户端必须自证本次执行的清单（`data.case_sets` 列出该工位的集合）；未配置集合的工位不触发 |
+| 400 | `case_id_mismatch` | 15 | check-in | 待执行清单缺少必测用例ID（工位有多套集合时，须至少完整满足其中一套；`data.closest_set` 指出最接近的集合，`data.case_sets` 列出全部集合） |
+| 400 | `case_order_mismatch` | 15 | check-in | 未锁定工位：上报用例相对顺序与该集合配置 `sort_order` 不符（任一套的相对顺序满足即放行）；**锁定工位**：上报用例全列表与**任意一套受控集合**都不一致（含顺序/增删，`data` 携带 `case_sets`/`closest_set`/`missing`/`extra`/`first_diff_index` 分诊），需工艺员在 Web 解锁重录 |
 | 400 | `station_ambiguous` | 10 | 管理端保存绑定 / check-in | 同一流程内命中多个绑定工位（配置层拒绝或拓扑漂移兜底） |
-| 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP） |
+| 400 | `missing_mandatory` | 13 | check-out | 漏测拦截（未执行或 SKIP）。工位多套集合时按「必测缺失最少」的那一套判定（并列取已跑更多的） |
 | 400 | `session_mismatch` | 10 | check-in / checkpoint / artifact | 会话与 SN/机台不匹配 |
 | 400 | `station_mismatch` | 10 | checkpoint | 会话属于其他工位 |
 | 400 | `artifact_empty` | 10 | artifact | 产物文件内容为空 |
@@ -642,19 +652,25 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 409 | `baseline_locked` | 10 | 管理端 items 增删改/导入 | 工位基线已锁定：用例清单由基线固化，需先解锁再编辑 |
 | 409 | `baseline_already_locked` | 10 | 管理端 baseline/lock | 工位基线已处于锁定态 |
 | 409 | `baseline_not_locked` | 10 | 管理端 baseline/unlock | 工位基线未锁定，无需解锁 |
-| 400 | `baseline_empty` | 10 | 管理端 baseline/lock | 锁定来源为空：`source=draft` 无录制草稿（无进站记录）；`source=items` 无启用中的用例清单 |
-| 400 | `bad_source` | 10 | 管理端 baseline/lock | `source` 只能是 `draft`（机台录制草稿）或 `items`（现有启用清单） |
+| 400 | `baseline_empty` | 10 | 管理端 baseline/lock | 锁定来源为空：`source=draft` 无录制草稿（无进站记录）；`source=items` 无启用中的用例集合 |
+| 400 | `bad_source` | 10 | 管理端 baseline/lock | `source` 只能是 `items`（现有全部集合）或 `draft`（机台录制草稿） |
+| 400 | `set_required` | 10 | 管理端 baseline/lock | `source=draft` 必须指定草稿物化到的集合 `set_id` |
+| 409 | `case_set_already_exists` | 10 | 管理端 case-sets | 同一工位已有该字段码的用例集合（`set_id` 工位内唯一） |
+| 404 | `case_set_not_found` | 10 | 管理端 case-sets 删除 | 要删除的集合不存在 |
+| 409 | `running_session_block` | 10 | 管理端 case-sets 删除 / items 导入 / baseline lock | 该工位有 RUNNING 会话：新增必测、删除集合或锁定基线会破坏在跑会话的出站判定，需先中止会话（`data.running_sessions`） |
 
 **工位基线锁定的来源（`source`，管理端 `POST /routing/baseline/lock`）**
 
+锁定 = 冻结该工位**全部用例集合**：进站上报序列必须与任意一套集合全列表一致（含顺序）。
+
 | 值 | 含义 | 前置要求 |
 |---|---|---|
-| `draft`（默认） | 以机台**录制草稿**为基线——设备实证过的真实序列 | 该工位有进站捕获记录 |
-| `items` | 以该工位**现有启用中的用例清单**为基线（顺序 = `sort_order`） | 已导入清单（`items/import` 或 Web 导入） |
+| `items`（默认） | 以现有启用中的各套集合为基线（顺序 = 各集合 `sort_order`），不物化、不改清单 | 该工位至少有一套启用中的集合 |
+| `draft` | 把机台**录制草稿**物化为 `set_id` 指定的集合：该集合内草稿外的用例**物理删除**（锁定即覆盖，不可恢复）、草稿内全部必测并按步长 10 编号，其他集合不动 | 该工位有进站捕获记录且指定 `set_id` |
 
-`source=items` 用于「规格书/Excel 导入后直接锁定」，省掉"先让机台完整跑一遍"的环节：
-停用项（`is_active=false`）不进基线，物化后全部置为必测、按顺序步长 10 重新编号，
-响应新增 `source` 字段并在 `warnings` 中提示"未经机台录制实证"。
+`source=items` 用于「规格书/Excel 导入后直接锁定」，省掉"先让机台完整跑一遍"的环节；
+停用项（`is_active=false`）不进基线。响应携带 `source`、`set_count`、`items_count`，
+并在 `warnings` 中提示"未经机台录制实证"。
 
 | 403 | `client_not_bound` | 10 | 全部 | 机台未绑定工位 |
 | 403 | `model_not_registered` | 10 | check-in | 机型未注册 |
@@ -960,7 +976,7 @@ ate-cli
 |---|---|
 | `cmd` | `resolve` / `case-list` / `check-in` / `heartbeat` / `checkpoint` / `artifact` / `check-out` / `ack` / `release` / `status` / `sn-status` / `state` / `ping` / `quit` |
 | `id` | 任意标识，响应原样回显（用于请求/响应配对） |
-| 业务字段 | `sn` `model` `fw` `case`（字符串或数组）`result` `values`（对象或 JSON 串）`duration` `file` `items`（数组）`reason` `release` `auto_heartbeat` `clear` |
+| 业务字段 | `sn` `model` `fw` `case`（字符串或数组；**该工位已配置用例集合时 `check-in` 必填**，缺失则 400 `case_ids_required`）`result` `values`（对象或 JSON 串）`duration` `file` `items`（数组）`reason` `release` `auto_heartbeat` `clear` |
 
 **响应**（stdout，每行一个 JSON 对象）：
 
@@ -1119,6 +1135,9 @@ void Handle(string line) {
 | `GET /api/admin/clients` | 机台清单（在线状态 + 持锁 SN），支持 `date_from`/`date_to`（按注册时间） |
 | `POST /api/admin/clients` | 注册机台并绑定工位 |
 | `GET /api/admin/records/{record_id}/files/{index}` | 测试产物下载（结果文件/日志等；返回 MinIO 预签名 URL JSON；MinIO 未配置时 503） |
+| `GET /api/admin/routing/case-sets` | 工位用例集合清单：`?process_id=&station_id=` → `[{process_id, station_id, set_id, set_name, item_count}]`（一个工位可挂多套集合） |
+| `POST /api/admin/routing/case-sets` | 新建集合：`{"process_id","station_id","set_id"(字段码),"set_name"}`；重复 409 `case_set_already_exists`，工位不在拓扑 400 `station_not_in_process`，锁定态 409 `baseline_locked` |
+| `DELETE /api/admin/routing/case-sets` | 删除集合（连带清理其用例行）：`?process_id=&station_id=&set_id=`；锁定态 409 `baseline_locked`，有 RUNNING 会话 409 `running_session_block`，不存在 404 `case_set_not_found` |
 | `GET /api/admin/sn-registry` | 试验设备登记清单（按登记时间倒序） |
 | `POST /api/admin/sn-registry` | 登记试验设备（body: `{"sn", "note"?}`；重复登记 409 `sn_already_registered`；`registered_by` 记操作人） |
 | `DELETE /api/admin/sn-registry/{sn}` | 注销SN 登记：仅删除登记行、恢复进站资格，**不触碰任何生产/测试记录**。"是否曾运行研发代码"只有实验室知道，重流线由工艺员显式走维修处置 RESET（清印章/作废报告/履历留痕）；被动过的设备回产线会被固件基线 403 与用例判定自动拦下，无静默出货路径 |
@@ -1141,8 +1160,12 @@ void Handle(string line) {
 | `SERVER_ROLE` | `production` | SN 准入极性：`production`（黑名单：登记的试验设备进站 403 `sn_is_test_device`）/ `development`（白名单：未登记 SN 进站 403 `sn_not_registered_test_device`）。归一化小写，除 `development` 外的一切值均按生产黑名单语义卡控（Fail-Safe） |
 | `ENFORCE_FW` | true | 固件基线校验 |
 | `ENFORCE_APP_SW` | true | 测试软件版本基线校验（机型基线留空则不卡控） |
-| `ENFORCE_CASE_IDS` | true | 进站时比对待执行的用例ID清单 |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | 90 | 机台在线判定窗口 |
+
+> **用例ID 校验恒开、无配置开关**：工位配了用例集合 → **必须上报 `case_ids`**（否则 400
+> `case_ids_required`），并对上报清单校验（未锁定 = 任一套必测覆盖 + 相对顺序；
+> 锁定 = 任一套全列表逐项一致）。需要整体豁免的机型用 `product_models.passthrough` 直通；
+> 未配置集合的新工位放行，用于"先跑一遍录制序列 → 再锁定基线"的自举路径。
 
 ### 12.1 SN 准入极性与机型双态（SERVER_ROLE / passthrough）
 

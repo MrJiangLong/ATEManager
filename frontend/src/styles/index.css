@@ -266,6 +266,15 @@ body {
   color: #47546e;
 }
 
+/* 跳转型编号（SN 追溯等）：悬停或键盘聚焦时变主色 + 下划线，与工艺流程跳转同一观感。
+   内层 .code 自带固定字色，会盖掉 el-button 的 hover 变色的，所以这里显式给颜色。 */
+.sn-link .code { text-decoration: none; }
+.sn-link:hover .code,
+.sn-link:focus-visible .code {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+}
+
 /* 入场动画 */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(10px); }
@@ -297,9 +306,10 @@ body {
 }
 
 /* ---------- 8. 筛选下拉：统一宽度与选项行 ---------- */
-/* 各页筛选下拉统一宽度（流程 / 工位 / 状态），避免并排时宽窄不一造成视觉跳动 */
+/* 各页筛选下拉统一宽度（流程 / 工位 / 用例集合 / 状态），避免并排时宽窄不一造成视觉跳动 */
 .select-flow { width: 300px; }
 .select-station { width: 240px; }
+.select-set { width: 200px; }
 .select-status { width: 150px; }
 
 /* 主副双行：主行（码 / 主名称）在上，副行（名称 / 补充说明）在下。

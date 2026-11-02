@@ -18,10 +18,18 @@ JSON 格式（多流程，一次更新多条；同名工位在不同流程是两
       "TST-AWG": ["tests/test_tst_awg.py::TestDac::test_1k_dc"]
     },
     "PROC-SCOPE-DPO-BASE": {
-      "CAL-PARAM": ["tests/test_cal_param.py::TestAmp::test_amp_cal"]
+      "CAL-PARAM": {"S1": ["tests/test_cal_param.py::TestAmp::test_amp_cal"]}
     }
   }
 }
+
+一个工位多套用例集合（工位值是「集合ID -> 用例列表」的对象；进站与任意一套匹配即放行）：
+"TST-AWG": {
+  "S1": ["tests/test_tst_awg.py::TestDac::test_1k_dc"],
+  "S2": ["tests/test_tst_awg.py::TestDac::test_1k_dc", "tests/test_tst_awg.py::TestDac::test_2k_dc"]
+}
+
+工位值直接给列表时必须用 --set-id 指定集合；一个工位只同步列出的集合，其他集合不动。
 
 单条流程也用同一格式，只写一个 key 即可：
 {"processes": {"PROC-SCOPE-MSO-AWG": {"CAL-PARAM": [...]}}}
@@ -123,9 +131,16 @@ def parse_items(raw) -> List[dict]:
             )
     return items
 
+def station_sets(raw, default_set: str):
+    """把工位条目展开为 [(set_id, cases)]：字典 = 多套集合，列表 = 用 --set-id 的单套。"""
+    if isinstance(raw, dict):
+        return [(str(sid).strip(), cases) for sid, cases in raw.items() if str(sid).strip()]
+    return [(default_set, raw)]
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="用 JSON 全量同步用例ID")
     parser.add_argument("--file", required=True, help="用例清单 JSON 路径")
+    parser.add_argument("--set-id", default="", help="工位值为列表时归属的用例集合（如 S1）")
     parser.add_argument("--base-url", default=os.environ.get("ATE_BASE_URL", DEFAULT_BASE))
     parser.add_argument("--user", default=os.environ.get("ATE_ADMIN_USER", "admin"))
     parser.add_argument("--password", default=os.environ.get("ATE_ADMIN_PASSWORD", ""))
@@ -150,6 +165,11 @@ def main() -> int:
     }
     if not processes:
         print("[ERROR] no non-empty station map under 'processes'")
+        return 1
+    if not args.set_id and any(
+        isinstance(raw, list) for stations in processes.values() for raw in stations.values()
+    ):
+        print("[ERROR] station value is a list: pass --set-id, or use {set_id: [...]} per station")
         return 1
 
     token = login(args.base_url, args.user, args.password)
@@ -212,33 +232,37 @@ def main() -> int:
 
     for process_id in sorted(processes):
         for station_id in sorted(processes[process_id]):
-            payload = {
-                "process_id": process_id,
-                "station_id": station_id,
-                "items": parse_items(processes[process_id][station_id]),
-                "mode": "replace",
-                "dry_run": args.dry_run,
-            }
-            res = http_json("POST", f"{args.base_url}/api/admin/routing/items/import", token, payload)
-            print(
-                "[%-8s] %-30s +%-3d ~%-3d =%-3d -%-3d active=%d%s"
-                % (
-                    "dry-run" if args.dry_run else "synced",
-                    f"{process_id}/{station_id}",
-                res.get("created", 0),
-                res.get("updated", 0),
-                res.get("unchanged", 0),
-                res.get("deactivated", 0),
-                res.get("total_active", 0),
-                "  (nothing written)" if args.dry_run else "",
-            )
-        )
-            if res.get("deactivated"):
-                sample = ", ".join((res.get("orphans") or [])[:3])
-                print(f"           deactivated (not in JSON): {sample}"
-                      f"{' ...' if res['deactivated'] > 3 else ''}")
-            for w in res.get("warnings") or []:
-                print(f"           warn: {w}")
+            for set_id, raw_cases in station_sets(processes[process_id][station_id], args.set_id):
+                payload = {
+                    "process_id": process_id,
+                    "station_id": station_id,
+                    "set_id": set_id,
+                    "items": parse_items(raw_cases),
+                    "mode": "replace",
+                    "dry_run": args.dry_run,
+                }
+                res = http_json(
+                    "POST", f"{args.base_url}/api/admin/routing/items/import", token, payload
+                )
+                print(
+                    "[%-8s] %-38s +%-3d ~%-3d =%-3d -%-3d active=%d%s"
+                    % (
+                        "dry-run" if args.dry_run else "synced",
+                        f"{process_id}/{station_id}/{set_id}",
+                        res.get("created", 0),
+                        res.get("updated", 0),
+                        res.get("unchanged", 0),
+                        res.get("deactivated", 0),
+                        res.get("total_active", 0),
+                        "  (nothing written)" if args.dry_run else "",
+                    )
+                )
+                if res.get("deactivated"):
+                    sample = ", ".join((res.get("orphans") or [])[:3])
+                    print(f"           deactivated (not in JSON): {sample}"
+                          f"{' ...' if res['deactivated'] > 3 else ''}")
+                for w in res.get("warnings") or []:
+                    print(f"           warn: {w}")
 
     return 0
 

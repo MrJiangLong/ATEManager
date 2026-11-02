@@ -3,7 +3,8 @@
     ┌─ 静态工艺与主数据（Web 低频维护）──────────────────────────┐
     │  processes ──┬── product_models (机型 → 专属流程 + 固件基线)  │
     │              └── process_stations (工步拓扑 DAG + step_order) │
-    │  stations ────── station_items (用例ID静态清单)               │
+    │  stations ──┬── station_case_sets (用例集合：字段码 + 名称)   │
+    │             └── station_items (集合内的用例ID清单)            │
     └────────────────────────────────────────────────────────────┘
     ┌─ 运行时数据（上位机高频读写）─────────────────────────────┐
     │  station_clients  物理机台档案（绑定逻辑工位）              │
@@ -209,7 +210,7 @@ class ProcessStation(Base):
         Boolean, default=False, server_default=text("false")
     )
     # 黄金样本基线：录制态 manifest = 进站捕获的最新用例序列草稿；
-    # 锁定态 manifest = 受控基线（进站全列表严格比对）。存量行回填 false = 不启用。
+    # 锁定态 = 该工位**全部用例集合**冻结，进站序列必须与任一套集合全列表一致。
     baseline_locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     baseline_manifest: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     baseline_captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -217,21 +218,47 @@ class ProcessStation(Base):
     process = relationship("Process", back_populates="steps")
     station = relationship("Station")
 
-class StationItem(Base):
-    """工位测试项：用例ID静态清单（防漏测依据）。
+class StationCaseSet(Base):
+    """工位用例集合主数据：`set_id` = 字段码，`set_name` = 展示名称。
 
+    station_items.set_id 只是集合归属键（软引用，便于按集合整批导入/替换），因此
+    删除集合必须连带清理该集合下的用例行（见 routers/routing.py）。
+    """
+
+    __tablename__ = "station_case_sets"
+    __table_args__ = (
+        UniqueConstraint("process_id", "station_id", "set_id", name="uq_station_case_sets"),
+        Index("idx_station_case_sets_station", "process_id", "station_id"),
+    )
+
+    set_pk: Mapped[int] = _pk_column()
+    process_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    station_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    set_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    set_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="", server_default=text("''")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class StationItem(Base):
+    """工位测试项：一个工位可挂多个用例集合（`set_id`），集合内按 sort_order 排序。
+
+    同一工位允许多个集合并存（如 A 构型 / B 构型各一套用例序列）：进站时上报的
+    用例序列与**任意一套**集合匹配即放行；集合之间互不影响，导入/编辑按集合隔离。
     ORM 属性名为 `case_id`；物理列名沿用 DDL 中的 `nodeid`，故不改动表结构。
     """
 
     __tablename__ = "station_items"
     __table_args__ = (
-        UniqueConstraint("process_id", "station_id", "nodeid", name="uq_station_items"),
-        Index("idx_station_items_check", "process_id", "station_id", "is_active"),
+        UniqueConstraint("process_id", "station_id", "set_id", "nodeid", name="uq_station_items"),
+        Index("idx_station_items_check", "process_id", "station_id", "set_id", "is_active"),
     )
 
     item_id: Mapped[int] = _pk_column()
     process_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     station_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # 用例集合标识（工位内唯一）：同一工位多套用例序列各自成组
+    set_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     case_id: Mapped[str] = mapped_column("nodeid", String(256), nullable=False)
     item_name: Mapped[str] = mapped_column(String(128), nullable=False)
     # 执行顺序：同工位内用例的执行次序；未指定时按添加顺序自动续排

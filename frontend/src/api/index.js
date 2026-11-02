@@ -124,6 +124,16 @@ export const routingApi = {
   unlockBaseline: (data) => api.post('/admin/routing/baseline/unlock', data),
   listItems: (processId, stationId) =>
     api.get('/admin/routing/items', { params: { process_id: processId, station_id: stationId || undefined } }),
+  /** 用例集合（一个工位多套：字段码 + 名称） */
+  listCaseSets: (processId, stationId) =>
+    api.get('/admin/routing/case-sets', {
+      params: { process_id: processId, station_id: stationId || undefined },
+    }),
+  createCaseSet: (data) => api.post('/admin/routing/case-sets', data),
+  deleteCaseSet: (processId, stationId, setId) =>
+    api.delete('/admin/routing/case-sets', {
+      params: { process_id: processId, station_id: stationId, set_id: setId },
+    }),
 
   createItem: (data) => api.post('/admin/routing/items', data),
   updateItem: (itemId, data) => api.put(`/admin/routing/items/${itemId}`, data),

@@ -34,6 +34,7 @@ from .models import (
     ProductModel,
     ProductStatus,
     Station,
+    StationCaseSet,
     StationClient,
     StationItem,
     TestRecord,
@@ -84,6 +85,10 @@ TOPOLOGY = [
     # 选检工位（QA 抽查）：演示"不卡完工、抽查件才走"的形态
     ("PROC-SCOPE-DPO-BASE", "QA-CHECK", 50, ["TST-IFACE"], True),
 ]
+
+# 演示数据只铺一套用例集合；一个工位多套集合由现场按机型/构型自行导入
+SET_ID = "S1"
+SET_NAME = "标准用例集"
 
 ITEMS = [
     ("CAL-PARAM", "tests/test_cal_param.py::TestAmp::test_amp_cal", "CHn幅度校准"),
@@ -440,22 +445,39 @@ def _seed_static_rules(db) -> None:
                 )
             )
 
-    existing_items = {
+    existing_sets = {
         (row[0], row[1], row[2])
         for row in db.query(
-            StationItem.process_id, StationItem.station_id, StationItem.case_id
+            StationCaseSet.process_id, StationCaseSet.station_id, StationCaseSet.set_id
+        ).all()
+    }
+    existing_items = {
+        (row[0], row[1], row[2], row[3])
+        for row in db.query(
+            StationItem.process_id, StationItem.station_id, StationItem.set_id, StationItem.case_id
         ).all()
     }
     for process_id in (p[0] for p in PROCESSES):
         for station_id, case_id, item_name in ITEMS:
             if process_id == "PROC-SCOPE-DPO-BASE" and station_id in DPO_EXCLUDED:
                 continue
-            if (process_id, station_id, case_id) in existing_items:
+            if (process_id, station_id, SET_ID) not in existing_sets:
+                existing_sets.add((process_id, station_id, SET_ID))
+                db.add(
+                    StationCaseSet(
+                        process_id=process_id,
+                        station_id=station_id,
+                        set_id=SET_ID,
+                        set_name=SET_NAME,
+                    )
+                )
+            if (process_id, station_id, SET_ID, case_id) in existing_items:
                 continue
             db.add(
                 StationItem(
                     process_id=process_id,
                     station_id=station_id,
+                    set_id=SET_ID,
                     case_id=case_id,
                     item_name=item_name,
                     is_mandatory=True,
