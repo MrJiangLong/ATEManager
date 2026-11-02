@@ -123,6 +123,20 @@
             <CodeTip :name="stationName(row.station_id)"><span class="code">{{ row.station_id }}</span></CodeTip>
           </template>
         </el-table-column>
+        <el-table-column :label="$t('configs.caseSetCol')" min-width="120">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.executed_items?.case_set_id"
+              :content="row.executed_items?.case_set_name || row.executed_items.case_set_id"
+              placement="top"
+              :show-after="400"
+              :disabled="!row.executed_items?.case_set_name"
+            >
+              <el-tag size="small" effect="plain" type="info">{{ row.executed_items.case_set_id }}</el-tag>
+            </el-tooltip>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="client_id" :label="$t('records.tableClient')" min-width="150">
           <template #default="{ row }">
             <CodeTip :name="clientName(row.client_id)"><span class="code">{{ row.client_id }}</span></CodeTip>

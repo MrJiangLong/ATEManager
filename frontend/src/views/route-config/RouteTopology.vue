@@ -10,24 +10,21 @@
             </div>
           </el-option>
         </el-select>
-        <div class="seq-group">
-          <el-switch
-            v-model="seqEnabled"
-            :disabled="!processId || !canManage"
-            @change="onToggleSequence"
-          />
-          <span class="seq-label">{{ t('configs.strictSequence') }}</span>
-          <el-popover placement="bottom" :width="340" trigger="hover">
-            <template #reference>
-              <el-icon class="seq-help"><QuestionFilled /></el-icon>
-            </template>
-            <div class="seq-help-body">
-              <div><b>{{ t('configs.seqHelpOnTitle') }}</b>{{ t('configs.seqHelpOn') }}</div>
-              <div style="margin-top: 6px"><b>{{ t('configs.seqHelpOffTitle') }}</b>{{ t('configs.seqHelpOff') }}</div>
-              <div class="muted" style="margin-top: 6px">{{ t('configs.seqHelpNote') }}</div>
-            </div>
-          </el-popover>
-        </div>
+        <!-- 顺序防呆：流程级口径，切换即时落库；问号给两种口径的说明 -->
+        <el-radio-group v-model="seqMode" :disabled="!processId || !canManage">
+          <el-radio-button value="strict">{{ t('configs.seqStrict') }}</el-radio-button>
+          <el-radio-button value="deps">{{ t('configs.seqDepsOnly') }}</el-radio-button>
+        </el-radio-group>
+        <el-popover placement="bottom" :width="340" trigger="hover">
+          <template #reference>
+            <el-icon class="seq-help"><QuestionFilled /></el-icon>
+          </template>
+          <div class="seq-help-body">
+            <div><b>{{ t('configs.seqHelpOnTitle') }}</b>{{ t('configs.seqHelpOn') }}</div>
+            <div style="margin-top: 6px"><b>{{ t('configs.seqHelpOffTitle') }}</b>{{ t('configs.seqHelpOff') }}</div>
+            <div class="muted" style="margin-top: 6px">{{ t('configs.seqHelpNote') }}</div>
+          </div>
+        </el-popover>
       </div>
       <div class="filter-row">
         <el-button size="small" :icon="CircleCheck" :disabled="!processId" @click="onValidate">
@@ -362,6 +359,17 @@ const topologyRequest = inject('topologyRequest', null)
 const processId = ref('')
 const steps = ref([])
 const seqEnabled = ref(true)
+
+/** 过程防呆口径：strict = 严格顺序（工步序兜底）；deps = 仅按 depends_on 判定。
+ *  切换即时落库（PUT /processes），弱化方向有二次确认，取消自动回弹。 */
+const seqMode = computed({
+  get: () => (seqEnabled.value ? 'strict' : 'deps'),
+  set: (mode) => {
+    const next = mode === 'strict'
+    if (next === seqEnabled.value) return
+    onToggleSequence(next)
+  },
+})
 const loading = ref(false)
 const saving = ref(false)
 const savedStations = ref([])
@@ -763,19 +771,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.seq-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  /* 与流程选择框（默认尺寸 32px）等高，避免开关视觉上“矮一截” */
-  height: 32px;
-}
-.seq-label {
-  font-size: 14px;
-  line-height: 32px;
-  color: var(--el-text-color-regular);
-  margin-left: 2px;
-}
+/* 顺序防呆的分段控件与流程选择框同排：高度对齐、不被弹性行拉伸 */
+.filter-row .el-radio-group { flex: none; }
 .seq-help {
   color: var(--el-text-color-secondary);
   cursor: help;

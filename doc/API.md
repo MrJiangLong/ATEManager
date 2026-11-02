@@ -332,7 +332,8 @@ NULL ─────────────→ IDLE ─────────
     {"case_id": "tests/test_cal_param.py::TestAmp::test_amp_cal",
      "item_name": "CHn幅度校准", "is_mandatory": true}
   ],
-  "case_set_id": "S1",                 // 本次进站命中的用例集合（无命中时为空）
+  "case_set_id": "S1",                 // 本次进站命中的用例集合字段码（无命中时为空）
+  "case_set_name": "标准用例集",        // 命中集合的名称（便于日志/界面直接展示）
   "passed_stations": [],               // 已盖章工位
   "next_stations": [{"station_id": "CAL-IFACE", "station_name": "...", "step_order": 20}],
   "server_time": "...",
@@ -497,6 +498,10 @@ NULL ─────────────→ IDLE ─────────
 
 **需求 1 的落点**：必须拿到本接口的 201 回执，才允许拔线流转。
 
+工位配置多套用例集合时，服务端按「必测缺失最少」的那一套判漏测（并列取已跑更多的），
+并把该集合的字段码与名称快照写进台账记录（`executed_items.case_set_id/case_set_name`），
+台账、SN 追溯与回执都能回答"这一站本次按哪套集合判定"。
+
 **请求**
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -530,6 +535,8 @@ NULL ─────────────→ IDLE ─────────
   "checkout_id": "...",
   "session_id": "3f2a...",
   "checkpoint_merged_count": 2,  // 由断点补齐的用例数
+  "case_set_id": "S1",           // 本次漏测判定所用的用例集合（与台账记录一致）
+  "case_set_name": "标准用例集",  // 该集合名称快照
   "sn": "C020001",
   "station_id": "CAL-PARAM",
   "overall_result": "PASS",      // PASS / FAIL

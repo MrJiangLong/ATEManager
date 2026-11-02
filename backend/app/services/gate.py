@@ -410,6 +410,24 @@ def _seq_diff(incoming: List[str], manifest: List[str]) -> Tuple[List[str], List
     return missing, extra, first_diff
 
 
+def _case_set_name(
+    db: Session, process_id: str, station_id: str, set_id: Optional[str]
+) -> Optional[str]:
+    """命中集合的展示名称（集合主数据缺失时回落到字段码）。"""
+    if not set_id:
+        return None
+    row = (
+        db.query(models.StationCaseSet)
+        .filter(
+            models.StationCaseSet.process_id == process_id,
+            models.StationCaseSet.station_id == station_id,
+            models.StationCaseSet.set_id == set_id,
+        )
+        .first()
+    )
+    return (row.set_name or set_id) if row is not None else set_id
+
+
 def report_manifest(db: Session, client_id: str, product_model: str, case_ids) -> dict:
     """录制态草稿上报（独立于进站，不受任何进站校验影响）。
 
@@ -861,6 +879,7 @@ def check_in(
         created_on_checkin=created,
         rules=station_rules(graph, station_id, matched_set),
         case_set_id=matched_set,
+        case_set_name=_case_set_name(db, graph.process_id, station_id, matched_set),
         passed_stations=sorted(passed),
         next_stations=next_stations(graph, passed),
         server_time=utcnow().isoformat(),
@@ -1284,8 +1303,9 @@ def check_out(
     #    跑完 S2 时两套"已跑数"相同，按已跑最多会选 S1 而误报漏测）
     submitted = {it.get("case_id"): it for it in merged_items}
     best_rows: List[models.StationItem] = []
+    best_set: Optional[str] = None
     best_key: Optional[Tuple[int, int]] = None
-    for rows in case_sets_of(graph, station_id).values():
+    for set_id, rows in case_sets_of(graph, station_id).items():
         missing = [
             c
             for c in mandatory_case_ids(rows)
@@ -1293,7 +1313,7 @@ def check_out(
         ]
         key = (len(missing), -(len(mandatory_case_ids(rows)) - len(missing)))
         if best_key is None or key < best_key:
-            best_key, best_rows = key, rows
+            best_key, best_rows, best_set = key, rows, set_id
     required = mandatory_case_ids(best_rows)
     absent = [c for c in required if c not in submitted or submitted[c].get("result") == RESULT_SKIP]
     if absent:
@@ -1307,7 +1327,7 @@ def check_out(
             "missing_mandatory",
             f"漏测拦截：工位 {_station_label(graph, station_id)} 有 {len(absent)} 条必测用例未执行",
             exit_code=EXIT_MISSING_MANDATORY,
-            data={"case_ids": absent},
+            data={"case_ids": absent, "case_set_id": best_set, "case_sets": sorted(case_sets_of(graph, station_id))},
         )
 
     mandatory_set = set(required)
@@ -1334,6 +1354,9 @@ def check_out(
             "session_id": session.session_id if session else None,
             "attempt": session.attempt if session else 1,
             "checkpoint_merged_count": checkpoint_merged_count,
+            # 本次出站漏测判定所用的用例集合（快照，集合日后改名/删除不影响台账追溯）
+            "case_set_id": best_set,
+            "case_set_name": _case_set_name(db, graph.process_id, station_id, best_set),
             "items": merged_items,
         },
     )
@@ -1378,6 +1401,8 @@ def _ack(
         checkout_id=checkout_id,
         session_id=payload.get("session_id"),
         checkpoint_merged_count=int(payload.get("checkpoint_merged_count") or 0),
+        case_set_id=payload.get("case_set_id"),
+        case_set_name=payload.get("case_set_name"),
         sn=product.sn,
         station_id=record.station_id,
         overall_result=record.overall_result,

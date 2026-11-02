@@ -2709,6 +2709,13 @@ def test_multi_case_set_match():
     resp = v1("check-out", {"client_id": "SMOKE-MSET", "sn": sn, "checkout_id": uuid.uuid4().hex,
                             "items": items_for(s2_cases), "duration_ms": 1000})
     check(resp.status_code == 201, f"checkout second set: {resp.text}")
+    # 出站回执与台账都记录本次判定所用的集合（快照，便于追溯）
+    check(resp.json()["data"].get("case_set_id") == SET2,
+          f"ack carries case_set_id: {resp.json()['data'].get('case_set_id')}")
+    recs = admin("GET", "/api/admin/records", params={"sn": sn}).json()
+    rec = next(r for r in recs["items"] if r["station_id"] == st)
+    check(rec["executed_items"].get("case_set_id") == SET2,
+          f"record snapshots case_set_id: {rec['executed_items'].get('case_set_id')}")
 
     # ② 混搭（两套都不满足）→ 400，报错带最接近的集合
     resp = checkin(f"SIMRS-MSET-B-{STAMP}", ["tests/ms.py::t2", "tests/ms.py::t3"])
@@ -2764,6 +2771,10 @@ def test_subset_set_checkout():
                             "checkout_id": uuid.uuid4().hex,
                             "items": items_for(s2_cases), "duration_ms": 800})
     check(resp.status_code == 201, f"subset checkout must pass: {resp.status_code} {resp.text}")
+    recs = admin("GET", "/api/admin/records", params={"sn": sn}).json()
+    rec = next(r for r in recs["items"] if r["station_id"] == st)
+    check(rec["executed_items"].get("case_set_id") == SET2,
+          f"subset record must use S2: {rec['executed_items'].get('case_set_id')}")
 
 def test_case_set_crud():
     """用例集合主数据：新建（字段码+名称）/重名 409/清单带项数/锁定态禁删/删除连带清用例。"""

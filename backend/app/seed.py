@@ -219,7 +219,10 @@ def _make_items(db, process_id: str, station_id: str, rng: random.Random, failed
             failed = False
     return items
 
-def _write_record(db, *, sn, station_id, items, overall, when, firmware, duration_ms) -> TestRecord:
+def _write_record(
+    db, *, sn, station_id, items, overall, when, firmware, duration_ms,
+    case_set_id: str = SET_ID, case_set_name: str = SET_NAME,
+) -> TestRecord:
     record = TestRecord(
         sn=sn,
         station_id=station_id,
@@ -231,6 +234,9 @@ def _write_record(db, *, sn, station_id, items, overall, when, firmware, duratio
             "checkout_id": uuid.uuid4().hex,
             "firmware": firmware,
             "reason": None,
+            # 演示数据统一走 S1；无用例的工位留空（与真实出站口径一致）
+            "case_set_id": case_set_id if items else None,
+            "case_set_name": case_set_name if items else None,
             "items": items,
         },
         created_at=when,

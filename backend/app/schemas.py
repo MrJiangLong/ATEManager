@@ -256,6 +256,8 @@ class CheckInData(BaseModel):
     rules: List[StationRule] = []
     """ 本次进站命中的用例集合（工位配置了多套集合时，rules 为命中那套的清单） """
     case_set_id: Optional[str] = None
+    """ 命中集合的名称（便于上位机日志/界面直接展示，无需再查集合清单） """
+    case_set_name: Optional[str] = None
     passed_stations: List[str] = []
     next_stations: List[NextStation] = []
     server_time: str
@@ -290,6 +292,9 @@ class AckData(BaseModel):
     checkpoint_merged_count: int = Field(
         default=0, description="由 checkpoint 补齐的用例数（续测断点回放）"
     )
+    """ 本次出站漏测判定所用的用例集合（已随记录落库，便于客户端日志对齐） """
+    case_set_id: Optional[str] = None
+    case_set_name: Optional[str] = None
 
 class HeartbeatData(BaseModel):
     sn: str
