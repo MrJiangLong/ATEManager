@@ -969,9 +969,12 @@ class ForceReleaseIn(BaseModel):
 
 class ForceReleaseOut(BaseModel):
     sn: str
+    """ 是否真的释放了东西：false = 本来就没有锁/运行中会话（幂等，不报错） """
     released: bool = True
     previous_client: Optional[str] = None
     session_id: Optional[str] = None
+    """ 本次一并关闭的 RUNNING 会话数（历史漂移可能残留多条） """
+    sessions_closed: int = 0
     reason: Optional[str] = None
 
 class SessionAbortIn(BaseModel):

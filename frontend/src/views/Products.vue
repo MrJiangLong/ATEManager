@@ -279,8 +279,10 @@ async function onForceRelease(row) {
     return
   }
   try {
-    await productApi.forceRelease(row.sn, reason)
-    ElMessage.success(t('products.forceReleaseSuccess'))
+    const res = await productApi.forceRelease(row.sn, reason)
+    // released=false 表示本来就没有锁/运行中会话：如实提示，不假装成功
+    if (res.data?.released === false) ElMessage.info(t('products.forceReleaseNothing'))
+    else ElMessage.success(t('products.forceReleaseSuccess'))
     drawerVisible.value = false
     load()
   } catch (e) {

@@ -292,6 +292,7 @@ export default {
     forceReleaseTip: 'Release the station lock of {sn} (stamps and fail count stay intact). Reason:',
     forceReleasePh: 'e.g. Station BSOD, switched to backup rig',
     forceReleaseSuccess: 'Lock released, check-in is available again',
+    forceReleaseNothing: 'Nothing to release: no lock or running session',
   },
 
   sessions: {
@@ -472,7 +473,8 @@ export default {
     snLooking: 'Looking up WIP status…',
     snNotFound: 'No WIP record found for this SN',
     snTestingHint: 'Under test; stop the session or wait for it to finish',
-    noPassedStation: 'No stamped stations; RETEST / ROLLBACK unavailable',
+    noPassedStation: 'No station available for this action',
+    currentStep: 'current step',
     batchSnList: 'SN List',
     batchSnListPh: 'One SN per line, or separated by commas/semicolons',
     batchCount: '{n} SN(s)',

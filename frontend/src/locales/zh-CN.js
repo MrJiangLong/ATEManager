@@ -293,6 +293,7 @@ export default {
     forceReleaseTip: '将释放 {sn} 的工位锁（不改变印章与失败计数），请填写原因：',
     forceReleasePh: '例如：机台蓝屏，已换备用机台',
     forceReleaseSuccess: '锁已释放，可重新进站',
+    forceReleaseNothing: '当前没有需要释放的锁或运行中会话',
   },
 
   sessions: {
@@ -475,7 +476,8 @@ export default {
     snLooking: '正在查询在制状态…',
     snNotFound: '未找到该 SN 的在制记录，请核对序列号',
     snTestingHint: '该件正在测试中，需先停止会话或等待测试结束',
-    noPassedStation: '该件没有已盖章工位，RETEST / ROLLBACK 不可用',
+    noPassedStation: '该件没有可选的处置工位',
+    currentStep: '当前待测',
     batchSnList: 'SN 清单',
     batchSnListPh: '每行一个 SN，也可用逗号/分号分隔',
     batchCount: '共 {n} 个 SN',

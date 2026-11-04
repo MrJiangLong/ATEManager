@@ -423,8 +423,9 @@ async function onReleaseLock(row) {
     return
   }
   try {
-    await productApi.forceRelease(row.holding_sn, reason)
-    ElMessage.success(t('products.forceReleaseSuccess'))
+    const res = await productApi.forceRelease(row.holding_sn, reason)
+    if (res.data?.released === false) ElMessage.info(t('products.forceReleaseNothing'))
+    else ElMessage.success(t('products.forceReleaseSuccess'))
     load()
   } catch (e) {
     ElMessage.error(e.message)

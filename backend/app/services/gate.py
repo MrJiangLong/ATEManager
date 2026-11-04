@@ -1055,36 +1055,51 @@ def release_lock(
 def force_release_lock(
     db: Session, *, sn: str, reason: str, operator: str
 ) -> schemas.ForceReleaseOut:
-    """运维强制解锁：仅释放锁与会话，不改变印章/失败计数。"""
+    """运维强制解锁：释放工位锁 + 关闭该 SN 的全部运行中会话，不动印章/失败计数。
+
+    幂等且"该清的都清"：
+    - 锁字段无论当前状态如何都清理（历史脏数据：状态已非 TESTING 但 lock_token 残留）；
+    - **全部** RUNNING 会话一并关闭（并发/接管漂移可能残留多条，留着会把工位锁死）；
+    - 状态只在 TESTING 时回落 IDLE，LOCKED / SCRAPPED 等业务状态保持不变；
+    - 什么都没释放时返回 released=false，前端据此提示"当前无持锁"，不再假装成功。
+    """
     product = _locked_product(db, sn)
     if product is None:
         raise not_found("product_not_found", f"序列号 {sn} 不存在或尚未建档")
 
     previous_client = product.current_client
-    session_id = None
-    if product.current_status == models.STATUS_TESTING:
-        session = (
-            db.query(models.TestSession)
-            .filter(
-                models.TestSession.sn == sn,
-                models.TestSession.status == models.SESSION_RUNNING,
-            )
-            .order_by(models.TestSession.started_at.desc())
-            .first()
+    was_testing = product.current_status == models.STATUS_TESTING
+    has_lock = bool(
+        product.lock_token or product.lock_acquired_at or product.lock_last_seen_at
+    )
+    sessions = (
+        db.query(models.TestSession)
+        .filter(
+            models.TestSession.sn == sn,
+            models.TestSession.status == models.SESSION_RUNNING,
         )
-        if session is not None:
-            session_id = session.session_id
-            _close_session(session, models.SESSION_ABORTED, f"force_release: {reason}", operator)
-        _release_lock(product)
+        .order_by(models.TestSession.started_at.desc())
+        .all()
+    )
+    for session in sessions:
+        _close_session(session, models.SESSION_ABORTED, f"force_release: {reason}", operator)
+
+    _release_lock(product)
+    if was_testing:
         product.current_status = models.STATUS_IDLE
+    if was_testing or has_lock:
+        # 释放后不应再显示"当前机台"（机台页持锁判定只看 TESTING，这里清掉避免误导）
+        product.current_client = None
+    if was_testing or has_lock or sessions:
         product.updated_at = utcnow()
         db.commit()
 
     return schemas.ForceReleaseOut(
         sn=sn,
-        released=True,
+        released=bool(was_testing or has_lock or sessions),
         previous_client=previous_client,
-        session_id=session_id,
+        session_id=sessions[0].session_id if sessions else None,
+        sessions_closed=len(sessions),
         reason=reason,
     )
 
@@ -1507,10 +1522,18 @@ def _check_repair(
         if action == models.REPAIR_RETEST:
             revoked = {target_station} & passed
             if not revoked:
-                raise bad_request(
-                    "station_not_passed",
-                    f"重测拦截：{sn} 尚未通过工位 {_station_label(graph, target_station)}",
-                )
+                """ 允许「重测当前待测工位」：该站尚未盖章，但前序（依赖 + 严格顺序）已满足
+                → 没有印章可撤，只解除工程锁定、清零失败计数，让操作员就地重跑这一站。
+                （对未通过工位做 RESET 会清空全部印章，代价过大，这里给出精确入口。）
+                前序未满足仍是跳站，按防呆拒绝。 """
+                lacking = missing_prereq(graph, target_station, passed) if graph else []
+                if lacking:
+                    raise bad_request(
+                        "station_not_passed",
+                        f"重测拦截：{sn} 尚未通过工位 {_station_label(graph, target_station)}"
+                        f"（缺前置：{', '.join(lacking)}）",
+                    )
+                revoked = set()
             mutates = target_station in graph.invalidates if graph else False
             downstream: Set[str] = set()
             if graph and mutates:
@@ -1583,7 +1606,7 @@ def apply_repair(
         product.current_status = models.STATUS_IDLE
         product.locked_at = None
         product.locked_reason = None
-    else:  # RETEST / ROLLBACK：revoked 已由守卫算出且非空
+    else:  # RETEST / ROLLBACK：revoked 由守卫算出（重测当前待测工位时为空 → 只清锁定）
         snapshot["invalidated_record_ids"] = _invalidate_records(db, sn, revoked)
         _write_passed(product, passed - revoked, graph)
         product.current_status = models.STATUS_IDLE

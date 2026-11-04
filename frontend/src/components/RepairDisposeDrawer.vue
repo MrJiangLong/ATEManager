@@ -36,16 +36,21 @@
       <el-form-item v-if="needsTarget" required>
         <template #label>
           {{ t('products.repairTargetStation') }}
-          <span v-if="!passedStations.length" class="text-danger">{{ t('repairs.noPassedStation') }}</span>
+          <span v-if="!targetOptions.length" class="text-danger">{{ t('repairs.noPassedStation') }}</span>
         </template>
         <el-select
           v-model="form.target_station"
           filterable
-          :disabled="!passedStations.length"
+          :disabled="!targetOptions.length"
           :placeholder="t('products.repairTargetStation')"
           style="width:100%"
         >
-          <el-option v-for="s in passedStations" :key="s" :value="s" :label="stationLabel(s)" />
+          <el-option
+            v-for="s in targetOptions"
+            :key="s"
+            :value="s"
+            :label="s === currentStep && form.repair_action === 'RETEST' ? `${stationLabel(s)}（${t('repairs.currentStep')}）` : stationLabel(s)"
+          />
         </el-select>
       </el-form-item>
       <el-form-item :label="t('products.repairReason')" required>
@@ -59,7 +64,7 @@
           type="primary"
           :icon="Check"
           :loading="saving"
-          :disabled="snInfoError === 'not_found' || (needsTarget && !passedStations.length)"
+          :disabled="snInfoError === 'not_found' || (needsTarget && !targetOptions.length)"
           @click="submit"
         >
           {{ t('repairs.execute') }}
@@ -107,6 +112,25 @@ const snInfoError = ref('')
 const snStatusKey = computed(() => snStatusKeyOf(snInfo.value?.product))
 const passedStations = computed(() => passedPathOf(snInfo.value || {}))
 
+/** 当前待测工位：按工步序第一个未通过的必跑工位（失败就卡在这里） */
+const currentStep = computed(
+  () =>
+    (snInfo.value?.steps || [])
+      .filter((s) => !s.passed && !s.is_optional)
+      .sort((a, b) => (a.step_order || 0) - (b.step_order || 0))[0]?.station_id || ''
+)
+
+/** 可选目标工位：RETEST 额外允许选中「当前待测工位」（只解除锁定/清失败计数，不动印章）；
+ *  ROLLBACK 语义是回退已盖章工位，仍只列已通过工位 */
+const targetOptions = computed(() => {
+  if (form.repair_action === 'ROLLBACK') return passedStations.value
+  const rows = snInfo.value?.steps || []
+  if (!rows.length) return passedStations.value
+  return rows
+    .filter((s) => s.passed || s.station_id === currentStep.value)
+    .map((s) => s.station_id)
+})
+
 function snStatusKeyOf(product) {
   if (!product) return 'IDLE'
   return product.is_completed ? 'COMPLETED' : product.current_status
@@ -147,10 +171,14 @@ async function lookupSn(force = false) {
   }
 }
 
-watch([needsTarget, passedStations], () => {
-  if (needsTarget.value && !passedStations.value.includes(form.target_station)) {
-    form.target_station = passedStations.value[0] || ''
-  }
+// 目标工位默认值：RETEST 优先「当前待测工位」（失败就修这里），ROLLBACK 取最早的已通过工位
+watch([needsTarget, targetOptions, () => form.repair_action], () => {
+  if (!needsTarget.value) return
+  if (targetOptions.value.includes(form.target_station)) return
+  form.target_station =
+    form.repair_action === 'RETEST'
+      ? currentStep.value || targetOptions.value[0] || ''
+      : targetOptions.value[0] || ''
 })
 
 watch(

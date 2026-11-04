@@ -290,8 +290,9 @@ async function onForceRelease(row) {
   const reason = await askReason('products.forceRelease', 'products.forceReleaseTip', row.sn)
   if (!reason) return
   try {
-    await productApi.forceRelease(row.sn, reason)
-    ElMessage.success(t('products.forceReleaseSuccess'))
+    const res = await productApi.forceRelease(row.sn, reason)
+    if (res.data?.released === false) ElMessage.info(t('products.forceReleaseNothing'))
+    else ElMessage.success(t('products.forceReleaseSuccess'))
     drawerVisible.value = false
     load()
   } catch (e) {

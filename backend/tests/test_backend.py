@@ -808,6 +808,49 @@ def test_fail_streak_lock_403():
     resp = checkin("CAL-PARAM", sn)
     check(resp.status_code == 200, f"unlocked: {resp.text}")
 
+def test_retest_current_station():
+    """RETEST 允许选中「当前待测工位」：只解除工程锁定/清失败计数，不动已盖章工位。"""
+    sn = new_sn("RETESTCUR")
+    pass_station("CAL-PARAM", sn)  # 第 1 站已盖章，失败发生在第 2 站
+
+    for i in range(3):
+        resp = checkin("CAL-IFACE", sn)
+        check(resp.status_code == 200, f"check-in round {i}: {resp.text}")
+        cases = rules_of(resp)
+        resp = checkout("CAL-IFACE", sn, cases, fail=(cases[0],))
+        check(resp.status_code == 201, f"fail round {i}: {resp.text}")
+
+    resp = checkin("CAL-IFACE", sn)
+    check(resp.status_code == 403 and resp.json()["code"] == "product_locked",
+          f"must be engineering-locked: {resp.text}")
+
+    # 跳站式重测（前序未通过）仍按防跳站拒绝
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "TST-PARAM", "reason": "x"})
+    check(resp.status_code == 400 and resp.json()["code"] == "station_not_passed",
+          f"jump retest must be 400: {resp.text}")
+
+    # ROLLBACK 语义是回退已盖章工位，未通过工位仍不可选
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "ROLLBACK", "target_station": "CAL-IFACE", "reason": "x"})
+    check(resp.status_code == 400 and resp.json()["code"] == "station_not_passed",
+          f"rollback to unpassed must be 400: {resp.text}")
+
+    # 重测当前待测工位：解除锁定 + 清零失败计数，印章保持
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-IFACE",
+                  "reason": "治具复位，重新测本站"})
+    check(resp.status_code == 201, f"retest current step: {resp.text}")
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.current_status == models.STATUS_IDLE, f"unlocked: {product.current_status}")
+        check(product.fail_count == 0, f"fail count must reset: {product.fail_count}")
+        check(sorted(product.passed_stations) == ["CAL-PARAM"], f"stamps must stay: {product.passed_stations}")
+
+    # 立即可重跑这一站（不需要从头再来）
+    resp = checkin("CAL-IFACE", sn)
+    check(resp.status_code == 200, f"re-run current station: {resp.text}")
+
 def test_lock_conflict_409_and_timeout_takeover():
     sn = new_sn("CONFLICT")
     resp = checkin("CAL-PARAM", sn)
@@ -1479,6 +1522,58 @@ def test_force_release_and_sessions_api():
 
     resp = admin("GET", "/api/admin/metrics/overview", params={"days": 14})
     check("locks" in resp.json(), f"metrics locks: {resp.text}")
+
+    # 幂等：本来就没有锁/运行中会话 → released=false，不假装成功
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "再次解锁"})
+    check(resp.status_code == 200 and resp.json()["released"] is False
+          and resp.json()["sessions_closed"] == 0, f"idempotent force-release: {resp.text}")
+
+    # 工程锁定（LOCKED）不持锁：强制解锁不得改业务状态
+    with SessionLocal() as db:
+        db.get(models.ProductStatus, sn).current_status = models.STATUS_LOCKED
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "锁定件"})
+    check(resp.json()["released"] is False, f"locked product: {resp.text}")
+    with SessionLocal() as db:
+        check(db.get(models.ProductStatus, sn).current_status == models.STATUS_LOCKED,
+              "force release must not clear LOCKED")
+
+    # 脏数据兜底：状态已非 TESTING 但锁字段残留 → 必须清干净
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        product.current_status = models.STATUS_IDLE
+        product.lock_token = "stale-token"
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "清脏锁"})
+    check(resp.json()["released"] is True, f"stale lock cleanup: {resp.text}")
+    with SessionLocal() as db:
+        check(db.get(models.ProductStatus, sn).lock_token is None, "stale lock_token must be cleared")
+
+    # 多条 RUNNING 会话（历史漂移）：强制解锁必须全部关闭，不能只关最新一条
+    sn2 = new_sn("FORCE2")
+    resp = checkin("CAL-PARAM", sn2)
+    check(resp.status_code == 200, f"check-in 2: {resp.text}")
+    with SessionLocal() as db:
+        db.add(
+            models.TestSession(
+                session_id=uuid.uuid4().hex,
+                sn=sn2,
+                station_id="CAL-PARAM",
+                client_id=CLIENTS["CAL-PARAM"],
+                status=models.SESSION_RUNNING,
+            )
+        )
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn2}/force-release", {"reason": "多会话残留"})
+    check(resp.json()["sessions_closed"] >= 2, f"all running sessions closed: {resp.text}")
+    with SessionLocal() as db:
+        left = (
+            db.query(models.TestSession)
+            .filter(models.TestSession.sn == sn2, models.TestSession.status == models.SESSION_RUNNING)
+            .count()
+        )
+        check(left == 0, f"no RUNNING session may be left: {left}")
+        check(db.get(models.ProductStatus, sn2).current_client is None, "holder cleared after force release")
 
 def test_import_blocks_running_session():
     """导入闸门：工位有 RUNNING 会话时，"新增必测"默认 409；收缩清单放行，dry-run 转告警，force 放行。"""
@@ -3689,6 +3784,7 @@ TESTS = [
     test_ack_and_idempotent_replay,
     test_missing_mandatory_400,
     test_fail_streak_lock_403,
+    test_retest_current_station,
     test_lock_conflict_409_and_timeout_takeover,
     test_scrap_blocked,
     test_repair_actions,
