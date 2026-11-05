@@ -75,10 +75,12 @@ def list_repairs(
 @router.post("", response_model=schemas.RepairOut, status_code=201, summary="登记维修处置")
 def create_repair(payload: schemas.RepairIn, db: Session = Depends(get_db), user=Depends(require_operator)):
     """维修处置语义
-        RETEST   清除指定工位印章，允许重测
+        RETEST   已盖章工位：收回印章允许重测；当前待测工位（未盖章、前序已满足）：
+                 不撤印章，仅解除工程锁定 + 清零失败计数，供修复后原地重跑
         ROLLBACK 回退到指定工位（清除该工位及其后续所有印章）
-        RESET    清空全部印章与失败计数，重新投产
+        RESET    清空全部印章与失败计数，重新投产（报废件不可复活）
         SCRAP    报废，永久拦截
+        所有需重新进站的处置均要求该 SN 没有残留 RUNNING 会话（否则会被误当续测）。
     """
     _product, record = apply_repair(
         db,

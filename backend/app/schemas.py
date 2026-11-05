@@ -975,6 +975,8 @@ class ForceReleaseOut(BaseModel):
     session_id: Optional[str] = None
     """ 本次一并关闭的 RUNNING 会话数（历史漂移可能残留多条） """
     sessions_closed: int = 0
+    """ 释放工位锁后是否仍处于工程锁定（工位锁 ≠ 工程锁定，前端据此提示走维修处置） """
+    still_engineering_locked: bool = False
     reason: Optional[str] = None
 
 class SessionAbortIn(BaseModel):

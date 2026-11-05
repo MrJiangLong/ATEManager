@@ -112,13 +112,13 @@ const snInfoError = ref('')
 const snStatusKey = computed(() => snStatusKeyOf(snInfo.value?.product))
 const passedStations = computed(() => passedPathOf(snInfo.value || {}))
 
-/** 当前待测工位：按工步序第一个未通过的必跑工位（失败就卡在这里） */
-const currentStep = computed(
-  () =>
-    (snInfo.value?.steps || [])
-      .filter((s) => !s.passed && !s.is_optional)
-      .sort((a, b) => (a.step_order || 0) - (b.step_order || 0))[0]?.station_id || ''
-)
+/** 当前待测工位：按工步序第一个未通过工位；必跑优先，全是选检时退回第一个选检工位 */
+const currentStep = computed(() => {
+  const pending = [...(snInfo.value?.steps || [])]
+    .filter((s) => !s.passed)
+    .sort((a, b) => (a.step_order || 0) - (b.step_order || 0))
+  return pending.find((s) => !s.is_optional)?.station_id || pending[0]?.station_id || ''
+})
 
 /** 可选目标工位：RETEST 额外允许选中「当前待测工位」（只解除锁定/清失败计数，不动印章）；
  *  ROLLBACK 语义是回退已盖章工位，仍只列已通过工位 */

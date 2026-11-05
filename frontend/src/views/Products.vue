@@ -282,6 +282,7 @@ async function onForceRelease(row) {
     const res = await productApi.forceRelease(row.sn, reason)
     // released=false 表示本来就没有锁/运行中会话：如实提示，不假装成功
     if (res.data?.released === false) ElMessage.info(t('products.forceReleaseNothing'))
+    else if (res.data?.still_engineering_locked) ElMessage.warning(t('products.forceReleaseStillLocked'))
     else ElMessage.success(t('products.forceReleaseSuccess'))
     drawerVisible.value = false
     load()

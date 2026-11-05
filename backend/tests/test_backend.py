@@ -802,6 +802,8 @@ def test_fail_streak_lock_403():
     check(resp.status_code == 403, f"locked must be 403, got {resp.status_code} {resp.text}")
     check(resp.json()["code"] == "product_locked", f"code: {resp.json()}")
     check(resp.json()["exit_code"] == 16, f"exit_code: {resp.json()}")
+    check("维修处置" in resp.json()["message"] and resp.json()["data"]["repair_hint"],
+          f"product_locked must point to repair: {resp.json()}")
 
     resp = admin("POST", "/api/admin/repairs", {"sn": sn, "repair_action": "RESET", "reason": "工程师确认后重投"})
     check(resp.status_code == 201, f"reset: {resp.text}")
@@ -947,6 +949,36 @@ def test_repair_actions():
 
     resp = admin("GET", "/api/admin/repairs", params={"sn": sn})
     check(resp.json()["total"] == 3, f"repair history: {resp.json()['total']}")
+
+def test_repair_blocks_orphan_session():
+    """处置前必须没有 RUNNING 会话：否则重新进站会被当续测并合并旧断点。"""
+    sn = new_sn("RPRUN")
+    pass_station("CAL-PARAM", sn)
+    with SessionLocal() as db:
+        db.add(
+            models.TestSession(
+                session_id=uuid.uuid4().hex,
+                sn=sn,
+                station_id="CAL-IFACE",
+                client_id=CLIENTS["CAL-IFACE"],
+                status=models.SESSION_RUNNING,
+            )
+        )
+        db.commit()
+
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-IFACE", "reason": "x"})
+    check(resp.status_code == 409 and resp.json()["code"] == "running_session_block",
+          f"orphan session must block repair: {resp.text}")
+    check(resp.json()["data"]["running_sessions"] == 1, f"running count: {resp.json()}")
+
+    # 先释放工位锁清理会话，之后处置即可生效
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "清理孤儿会话"})
+    check(resp.json()["released"] is True and resp.json()["sessions_closed"] == 1,
+          f"cleanup orphan session: {resp.text}")
+    resp = admin("POST", "/api/admin/repairs",
+                 {"sn": sn, "repair_action": "RETEST", "target_station": "CAL-IFACE", "reason": "x"})
+    check(resp.status_code == 201, f"repair after cleanup: {resp.text}")
 
 def test_repair_guards():
     sn = new_sn("RGUARD")
@@ -1501,10 +1533,12 @@ def test_force_release_and_sessions_api():
     resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "机台蓝屏"})
     check(resp.status_code == 200, f"force-release: {resp.text}")
     check(resp.json()["previous_client"] == CLIENTS["CAL-PARAM"], f"previous: {resp.text}")
+    check(resp.json()["still_engineering_locked"] is False, f"not eng-locked: {resp.json()}")
 
     with SessionLocal() as db:
         product = db.get(models.ProductStatus, sn)
         check(product.current_status == models.STATUS_IDLE, f"status after force: {product.current_status}")
+        check(product.current_client is None, f"holder must be cleared: {product.current_client}")
 
     resp = admin("GET", "/api/admin/sessions", params={"sn": sn})
     check(resp.status_code == 200, f"sessions: {resp.text}")
@@ -1548,6 +1582,55 @@ def test_force_release_and_sessions_api():
     check(resp.json()["released"] is True, f"stale lock cleanup: {resp.text}")
     with SessionLocal() as db:
         check(db.get(models.ProductStatus, sn).lock_token is None, "stale lock_token must be cleared")
+
+    # 工程锁定 + 残留锁字段：清锁但保持 LOCKED，并明确告知仍不能进站
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        product.current_status = models.STATUS_LOCKED
+        product.lock_token = "stale-locked-token"
+        product.current_client = CLIENTS["CAL-PARAM"]
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "锁定件残留锁"})
+    check(resp.json()["released"] is True and resp.json()["still_engineering_locked"] is True,
+          f"locked + stale lock: {resp.text}")
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.current_status == models.STATUS_LOCKED and product.lock_token is None
+              and product.current_client is None,
+              f"engineering lock must survive, lease fields cleared: {product.current_status}")
+
+    # 仅残留 testing_started_at / heartbeat_count：has_lock 覆盖全字段且清理必须落库
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        product.current_status = models.STATUS_IDLE
+        product.testing_started_at = datetime.now(timezone.utc)
+        product.lock_heartbeat_count = 3
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "清剩余租约字段"})
+    check(resp.json()["released"] is True, f"residual-only cleanup: {resp.text}")
+    with SessionLocal() as db:
+        product = db.get(models.ProductStatus, sn)
+        check(product.testing_started_at is None and product.lock_heartbeat_count == 0,
+              "residual lease fields must be committed as cleared")
+
+    # 无锁、仅有孤儿 RUNNING 会话：也应关闭并如实回报，状态保持 IDLE
+    with SessionLocal() as db:
+        db.add(
+            models.TestSession(
+                session_id=uuid.uuid4().hex,
+                sn=sn,
+                station_id="CAL-PARAM",
+                client_id=CLIENTS["CAL-PARAM"],
+                status=models.SESSION_RUNNING,
+            )
+        )
+        db.commit()
+    resp = admin("POST", f"/api/admin/products/{sn}/force-release", {"reason": "孤儿会话"})
+    check(resp.json()["released"] is True and resp.json()["sessions_closed"] == 1,
+          f"orphan session cleanup: {resp.text}")
+    with SessionLocal() as db:
+        check(db.get(models.ProductStatus, sn).current_status == models.STATUS_IDLE,
+              "orphan-session-only release must not change IDLE")
 
     # 多条 RUNNING 会话（历史漂移）：强制解锁必须全部关闭，不能只关最新一条
     sn2 = new_sn("FORCE2")
@@ -3789,6 +3872,7 @@ TESTS = [
     test_scrap_blocked,
     test_repair_actions,
     test_repair_guards,
+    test_repair_blocks_orphan_session,
     test_trace,
     test_metrics,
     test_no_bilingual,

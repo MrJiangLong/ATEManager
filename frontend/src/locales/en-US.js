@@ -293,6 +293,7 @@ export default {
     forceReleasePh: 'e.g. Station BSOD, switched to backup rig',
     forceReleaseSuccess: 'Lock released, check-in is available again',
     forceReleaseNothing: 'Nothing to release: no lock or running session',
+    forceReleaseStillLocked: 'Station lock released, but the unit is still engineering-locked: use Repair Disposition (retest current step / reset) before check-in',
   },
 
   sessions: {

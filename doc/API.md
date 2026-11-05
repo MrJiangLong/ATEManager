@@ -664,7 +664,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 400 | `set_required` | 10 | 管理端 baseline/lock | `source=draft` 必须指定草稿物化到的集合 `set_id` |
 | 409 | `case_set_already_exists` | 10 | 管理端 case-sets | 同一工位已有该字段码的用例集合（`set_id` 工位内唯一） |
 | 404 | `case_set_not_found` | 10 | 管理端 case-sets 删除 | 要删除的集合不存在 |
-| 409 | `running_session_block` | 10 | 管理端 case-sets 删除 / items 导入 / baseline lock | 该工位有 RUNNING 会话：新增必测、删除集合或锁定基线会破坏在跑会话的出站判定，需先中止会话（`data.running_sessions`） |
+| 409 | `running_session_block` | 10 | 管理端 case-sets 删除 / items 导入 / baseline lock / repairs | 该 SN/工位有 RUNNING 会话：新增必测、删除集合、锁定基线或维修处置会破坏在跑会话（处置后重新进站会被误当续测并合并旧断点），需先中止会话或释放工位锁（`data.running_sessions`） |
 
 **工位基线锁定的来源（`source`，管理端 `POST /routing/baseline/lock`）**
 
@@ -691,7 +691,7 @@ GET /api/v1/client/ack?sn=C020001&checkout_id=<幂等键>
 | 403 | `firmware_mismatch` | 10 | check-in | 固件不满足基线（口径见机型 `fw_match_rule`） |
 | 403 | `app_version_mismatch` | 10 | check-in | 测试软件版本不满足基线（口径见机型 `app_match_rule`） |
 | 403 | `product_scrapped` | 10 | check-in | 已报废 |
-| 403 | `product_locked` | 16 | check-in | 已工程锁定 |
+| 403 | `product_locked` | 16 | check-in | 已工程锁定（连续失败达 `FAIL_LIMIT`）：`message` 与 `data.repair_hint` 提示走「维修处置」（RETEST 当前待测工位 / RESET 重投）；与工位锁无关 |
 | 403 | `lock_invalid` | 14 | check-out / checkpoint / artifact / release | 锁被接管或失效 |
 | 403 | `lock_expired` | 14 | check-out | 锁超过硬超时 |
 | 404 | `client_not_registered` | 10 | 全部 | 机台未注册 |
@@ -1130,8 +1130,8 @@ void Handle(string line) {
 | `GET /api/admin/sessions/{id}` | 会话详情，含 checkpoint 明细（"跑到哪崩的"） |
 | `POST /api/admin/sessions/{id}/abort` | 强制终止会话并解锁（body: `{"reason": "..."}`） |
 | `POST /api/admin/sessions/abort-running` | 批量终止运行中的会话；body 至少给一个过滤条件 `station_id / process_id / sn / client_id`（否则 400 `scope_required`），支持 `dry_run` 预演 |
-| `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`）：清理工位锁字段并关闭该 SN **全部** RUNNING 会话（历史漂移残留多条也一并关），不改印章与失败计数；`TESTING` 回落 `IDLE`，`LOCKED/SCRAPPED` 等业务状态保持不变。幂等：本来无锁无会话时返回 `released=false`、`sessions_closed=0` |
-| `POST /api/admin/repairs` | 单条处置：`{"sn", "repair_action"(RETEST/ROLLBACK/RESET/SCRAP), "target_station"?, "reason"?, "confirm_downstream"?}`。守卫：报废件 403 `product_scrapped`、持锁 409 `product_holding_lock`、RETEST/ROLLBACK 目标工位前序未满足 400 `station_not_passed`。**RETEST 允许选「当前待测工位」**（未盖章但前序已满足）：不动印章，仅解除工程锁定 + 清零失败计数，用于修复后原地重跑该站；`RESET` 会清空全部印章（重投，代价最大）；RETEST 命中依赖重测工位（`invalidates_downstream`）且下游有已盖章工位时，未确认 409 `downstream_invalidation_required`（`data.stations` 回显依赖重测工位清单），`confirm_downstream=true` 确认后下游印章与记录一并作废。处置破坏完工态时自动作废该 SN 报告（MinIO/本地副本清除，已上传 MES 的副本按规则 `mes_void_url` 联动作废，未配置转人工） |
+| `POST /api/admin/products/{sn}/force-release` | 强制解锁（body: `{"reason": "..."}`）：清理工位锁字段并关闭该 SN **全部** RUNNING 会话（历史漂移残留多条也一并关），不改印章与失败计数；`TESTING` 回落 `IDLE`，`LOCKED/SCRAPPED` 等业务状态保持不变。返回 `released`（无对象可释放时 `false`）、`sessions_closed`、`still_engineering_locked`（为 `true` 表示仍工程锁定，须走维修处置才能进站） |
+| `POST /api/admin/repairs` | 单条处置：`{"sn", "repair_action"(RETEST/ROLLBACK/RESET/SCRAP), "target_station"?, "reason"?, "confirm_downstream"?}`。守卫：报废件 403 `product_scrapped`、持锁 409 `product_holding_lock`、残留 RUNNING 会话 409 `running_session_block`（SCRAP 除外）、RETEST/ROLLBACK 目标工位前序未满足 400 `station_not_passed`。**RETEST 允许选「当前待测工位」**（未盖章但前序已满足）：不动印章，仅解除工程锁定 + 清零失败计数，用于修复后原地重跑该站；`RESET` 会清空全部印章（重投，代价最大）；RETEST 命中依赖重测工位（`invalidates_downstream`）且下游有已盖章工位时，未确认 409 `downstream_invalidation_required`（`data.stations` 回显依赖重测工位清单），`confirm_downstream=true` 确认后下游印章与记录一并作废。处置破坏完工态时自动作废该 SN 报告（MinIO/本地副本清除，已上传 MES 的副本按规则 `mes_void_url` 联动作废，未配置转人工） |
 | `POST /api/admin/repairs/batch` | 批量处置（仅 RETEST/ROLLBACK）：`{"items": [sn...], "repair_action", "target_station", "reason", "dry_run", "confirm_downstream"?}`；dry_run=true 只守卫不落库并回显破坏面（机型/流程/当前状态/将撤销印章/将作废记录数）；RETEST 命中依赖重测工位时未确认 409 `downstream_invalidation_required`，确认后级联生效；逐条独立生效，失败项不影响已成功项；上限 50；非 dry_run 响应携带 `batch_id` 供批量撤销 |
 | `POST /api/admin/repairs/batch-undo` | 批量撤销：`{"batch_id"}`，按快照逐条独立还原整批处置（每条走单条撤销全部守卫：SCRAP/最新一条/零后续动作/未撤销），失败项回显原因不影响已成功项 |
 | `POST /api/admin/repairs/{repair_id}/undo` | 撤销维修处置（窄窗口）：按处置前快照精确还原印章/失败计数/状态，被作废的台账记录按快照 ID 精确恢复；完工态恢复后自动重出报告。边界（409）：仅 RETEST/ROLLBACK/RESET（`action_not_undoable`，SCRAP 永不可撤）、仅该 SN 最新一条（`not_latest_disposition`）、处置后无新会话且印章未变（`repair_state_changed`）、不可重复撤销（`already_undone`） |

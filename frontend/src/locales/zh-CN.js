@@ -294,6 +294,7 @@ export default {
     forceReleasePh: '例如：机台蓝屏，已换备用机台',
     forceReleaseSuccess: '锁已释放，可重新进站',
     forceReleaseNothing: '当前没有需要释放的锁或运行中会话',
+    forceReleaseStillLocked: '工位锁已释放，但该件仍「工程锁定」：请在「维修处置」中重测当前工位或重投后才能重新进站',
   },
 
   sessions: {

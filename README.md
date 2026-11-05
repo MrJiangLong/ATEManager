@@ -598,7 +598,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | 机型不符 / 未注册 | 403 | `model_mismatch` / `model_not_registered` | 10 | 检查贴标与工艺配置 |
 | **SN 准入极性（生产服黑名单）** | **403** | `sn_is_test_device` | 10 | 登记的试验设备严禁进生产流程 |
 | **SN 准入极性（测试服白名单）** | **403** | `sn_not_registered_test_device` | 10 | 联系管理员登记试验设备后重试 |
-| 已工程锁定 | 403 | `product_locked` | 16 | 提示送修 |
+| 已工程锁定 | 403 | `product_locked` | 16 | 提示走「维修处置」：`RETEST` 当前待测工位（只清锁定/失败计数）或 `RESET` 重投（清空全部印章）；与工位锁无关 |
 | 已报废 | 403 | `product_scrapped` | 10 | 禁止流转 |
 | 锁失效 / 超时 / 被接管 | 403 | `lock_invalid` / `lock_expired` | 14 | 停机，重新进站 |
 | **复测拦截** | **409** | `station_already_passed` | 10 | 提示推错车，禁止复测 |
@@ -651,7 +651,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 | SN 登记 | view / mgr 写 | `GET/POST /api/admin/sn-registry`、`DELETE /api/admin/sn-registry/{sn}`、`GET /api/admin/sn-registry/export`、`POST /api/admin/sn-registry/import`（清单 JSON 导出导入；导入事务式、已存在的 SN 跳过幂等，登记人记为当前操作者；SN 准入极性的事实来源，语义由部署环境 `SERVER_ROLE` 解释） |
 | 工位 | view / mgr 写 | `GET/POST /api/admin/stations`、`PUT/DELETE /api/admin/stations/{id}` |
 | 工艺拓扑 | view / mgr 写 | `GET /api/admin/routing/topology`、`GET/PUT/DELETE /api/admin/routing/stations[/{station_id}]`、`GET/POST/DELETE /api/admin/routing/case-sets`（用例集合主数据：一个工位可挂多套，`set_id`=字段码 + `set_name`=名称；删除连带清理该集合用例，锁定态或有 RUNNING 会话时 409）、`GET/POST/PUT/DELETE /api/admin/routing/items[/{item_id}]`（测试项按 `set_id` 归属集合，`sort_order` 在集合内独立续排）、`POST /api/admin/routing/items/import`（`{process_id, station_id, set_id, items[], mode=upsert\|replace}`：replace 只停用**同集合内**清单外项，重新出现自动复活）、`POST /api/admin/routing/topology/impact`（保存前影响面预演：草案拓扑只读计算——受影响在制品/缺前置将被拦/失效用例/失效机台，非阻断）、`GET /api/admin/routing/validate`、`POST /api/admin/routing/clone`、`POST /api/admin/routing/processes/import`、`GET /api/admin/routing/processes[/{id}]/export`（`export_version=3`，携带 `case_sets`（集合名称）与 items 的 `set_id`；导入/导出/克隆保留 `sort_order`、`invalidates_downstream` 与流程级 `is_sequential`）、`POST /api/admin/routing/baseline/lock`（`source=items`：冻结该工位全部集合、不物化；`source=draft`：把录制草稿**物理覆盖**到指定 `set_id`——草稿外用例删除、草稿内全部必测，其他集合不动）、`POST /api/admin/routing/baseline/unlock`（解锁回录制态；锁定态下用例与集合禁止增删改）、`GET /api/admin/routing/item-summary` |
-| 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`（强制解锁：清锁字段 + 关闭该 SN **全部** RUNNING 会话，`TESTING` 回落 `IDLE`，`LOCKED/SCRAPPED` 不变；幂等返回 `released=false`）、`GET /api/admin/products/{sn}/sessions` |
+| 在制品 | view / op 写 | `GET /api/admin/products`（支持 `zombie_only`）、`GET /api/admin/products/{sn}`、`POST /api/admin/products/{sn}/force-release`（强制解锁：清锁字段 + 关闭该 SN **全部** RUNNING 会话，`TESTING` 回落 `IDLE`，`LOCKED/SCRAPPED` 不变；幂等返回 `released=false`、`sessions_closed=N`，`still_engineering_locked=true` 表示仍须走维修处置才能进站）、`GET /api/admin/products/{sn}/sessions` |
 | 台账追溯 | view | `GET /api/admin/records`、`GET /api/admin/records/{id}`、`GET /api/admin/records/trace/{sn}`、`GET /api/admin/records/{id}/files/{index}`（测试产物下载） |
 | 维修履历 | view / op 写 | `GET /api/admin/repairs`、`POST /api/admin/repairs`（单条处置；**RETEST 可直接选「当前待测工位」**——未盖章但前序已满足时不动印章，仅解除工程锁定 + 清零失败计数，用于修复后原地重跑该站；`RESET` 会清空全部印章，代价最大）、`POST /api/admin/repairs/batch`（仅 RETEST/ROLLBACK，支持 dry_run 预演与依赖重测确认 `confirm_downstream`，上限 50；RESET/SCRAP 仅单条 + 二次确认；报废件复活通道已封死）、`POST /api/admin/repairs/batch-undo`（按 `batch_id` 整批撤销，逐条独立生效走单条全部守卫）、`POST /api/admin/repairs/{id}/undo`（窄窗口撤销：仅最新一条且处置后零后续动作，按处置前快照精确还原；SCRAP 不可撤） |
 | 测试会话 | view / op 写 | `GET /api/admin/sessions`、`GET /api/admin/sessions/zombie-locks`、`GET /api/admin/sessions/{id}`、`POST /api/admin/sessions/{id}/abort`、`POST /api/admin/sessions/abort-running` |
@@ -778,12 +778,14 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 
 | 动作 | 语义 | 记录作废 |
 |---|---|---|
-| `RETEST` | 收回指定工位印章，允许重测 | 该工位旧记录 `is_valid=false` |
+| `RETEST` | 目标工位已盖章：收回该工位印章允许重测；目标为**当前待测工位**（未盖章且前序已满足）：不撤印章，仅解除工程锁定 + 清零失败计数，用于原地重跑该站 | 已盖章工位的旧记录 `is_valid=false` |
 | `ROLLBACK` | 回退到目标工位，清除其及后续所有工步印章 | 涉及的记录作废 |
-| `RESET` | 清空全部印章与失败计数，重新投产（可复活报废品） | 全部记录作废 |
+| `RESET` | 清空全部印章与失败计数，重新投产（报废件不可复活） | 全部记录作废 |
 | `SCRAP` | 判定报废，后续进站一律 403 | — |
 
-处置仅在在制品未被持锁（非 `TESTING`）时允许执行，否则返回 `409 product_holding_lock`。
+处置仅在在制品未被持锁（非 `TESTING`）且**没有残留 RUNNING 会话**时允许执行，否则分别返回
+`409 product_holding_lock` / `409 running_session_block`（后者需先「释放工位锁」或中止会话，
+避免重新进站时被误当续测、合并旧断点）。`SCRAP` 不再进站，不受会话闸门限制。
 
 **与出厂报告的联动**：RETEST / ROLLBACK / RESET 破坏完工态时，该 SN 的报告任务自动
 **作废**（状态 `invalid`，产物从 MinIO 与本地清除——报告反映的测试数据已失效）。RETEST

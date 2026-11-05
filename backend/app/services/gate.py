@@ -635,9 +635,14 @@ def check_in(
     if product.current_status == models.STATUS_LOCKED:
         raise forbidden(
             "product_locked",
-            f"序列号 {sn} 连续失败已达上限（{product.fail_count}/{settings.FAIL_LIMIT}），已被工程锁定",
+            f"序列号 {sn} 连续失败已达上限（{product.fail_count}/{settings.FAIL_LIMIT}），已被工程锁定；"
+            f"请在管理端「维修处置」中对当前待测工位执行 RETEST（或 RESET 重投）后重新进站",
             exit_code=EXIT_PRODUCT_LOCKED,
-            data={"fail_count": product.fail_count, "locked_reason": product.locked_reason},
+            data={
+                "fail_count": product.fail_count,
+                "locked_reason": product.locked_reason,
+                "repair_hint": "RETEST 当前待测工位 / RESET 重投",
+            },
         )
 
     passed = _passed(product)
@@ -1069,8 +1074,14 @@ def force_release_lock(
 
     previous_client = product.current_client
     was_testing = product.current_status == models.STATUS_TESTING
+    # has_lock 必须覆盖 _release_lock 会清的全部字段：否则仅残留
+    # testing_started_at / lock_heartbeat_count 时不会 commit，清理被回滚
     has_lock = bool(
-        product.lock_token or product.lock_acquired_at or product.lock_last_seen_at
+        product.lock_token
+        or product.lock_acquired_at
+        or product.lock_last_seen_at
+        or product.testing_started_at
+        or product.lock_heartbeat_count
     )
     sessions = (
         db.query(models.TestSession)
@@ -1100,6 +1111,8 @@ def force_release_lock(
         previous_client=previous_client,
         session_id=sessions[0].session_id if sessions else None,
         sessions_closed=len(sessions),
+        # 释放工位锁不解除工程锁定：明确告诉前端「仍不能进站」，避免提示误导
+        still_engineering_locked=product.current_status == models.STATUS_LOCKED,
         reason=reason,
     )
 
@@ -1492,6 +1505,26 @@ def _check_repair(
             f"处置拦截：{sn} 正在由机台 {product.current_client} 测试中，请先中止会话",
             exit_code=EXIT_LOCK_CONFLICT,
         )
+
+    # 处置后必然要重新进站：若仍有 RUNNING 会话（状态却已非 TESTING 的脏数据），
+    # check_in 会把它当续测（attempt+1 + 旧断点合并），可能污染漏测判定。
+    # 要求先「释放工位锁」或中止会话；SCRAP 不再进站，无需拦。
+    if (repair_action or "").upper() != models.REPAIR_SCRAP:
+        running = (
+            db.query(models.TestSession)
+            .filter(
+                models.TestSession.sn == sn,
+                models.TestSession.status == models.SESSION_RUNNING,
+            )
+            .count()
+        )
+        if running:
+            raise conflict_error(
+                "running_session_block",
+                f"处置拦截：{sn} 还有 {running} 个运行中的会话，请先『释放工位锁』或中止会话再处置",
+                data={"running_sessions": running},
+            )
+
     action = (repair_action or "").upper()
     if action not in (models.REPAIR_RETEST, models.REPAIR_ROLLBACK, models.REPAIR_RESET, models.REPAIR_SCRAP):
         raise bad_request("invalid_repair_action", f"未知的处置动作：{repair_action}")
@@ -1526,7 +1559,12 @@ def _check_repair(
                 → 没有印章可撤，只解除工程锁定、清零失败计数，让操作员就地重跑这一站。
                 （对未通过工位做 RESET 会清空全部印章，代价过大，这里给出精确入口。）
                 前序未满足仍是跳站，按防呆拒绝。 """
-                lacking = missing_prereq(graph, target_station, passed) if graph else []
+                if graph is None:
+                    raise bad_request(
+                        "station_not_passed",
+                        f"重测拦截：{sn} 的流程拓扑缺失，无法校验工位 {target_station} 的前置条件",
+                    )
+                lacking = missing_prereq(graph, target_station, passed)
                 if lacking:
                     raise bad_request(
                         "station_not_passed",
