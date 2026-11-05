@@ -3702,6 +3702,25 @@ def test_p0_abort_stale_session_keeps_live_lock():
         )
         check(db.get(models.TestSession, stale_id).status == models.SESSION_ABORTED, "stale session not closed")
 
+def test_seed_wipe_targets_cover_all_tables():
+    """--wipe 的目标表 = 元数据全部表 - users（新增表自动纳入，不再靠手工清单）。"""
+    from app.seed import _wipe_targets, _KEEP_ON_CLEAR_BUSINESS
+
+    all_names = set(Base.metadata.tables.keys())
+    targets = {t.name for t in _wipe_targets(frozenset({"users"}))}
+    check(targets == all_names - {"users"},
+          f"wipe targets: missing={sorted(all_names - {'users'} - targets)}, extra={sorted(targets - all_names)}")
+    # 此前硬编码清单漏掉的 6 张表必须纳入
+    for name in ("station_case_sets", "sn_registry", "report_jobs", "report_rules",
+                 "report_standards", "report_templates"):
+        check(name in targets, f"{name} must be wiped: {sorted(targets)}")
+    # --clear-business 只保留配置类表，运行数据表必须清
+    business_targets = {t.name for t in _wipe_targets(_KEEP_ON_CLEAR_BUSINESS)}
+    check("report_jobs" in business_targets and "product_status" in business_targets,
+          f"runtime tables must be cleared: {sorted(business_targets)}")
+    check("station_items" not in business_targets and "users" not in business_targets,
+          f"config tables must be kept: {sorted(business_targets)}")
+
 def test_p0_added_columns_cover_optional_and_station_active():
     """增量列迁移清单不得因重复字典键丢失 is_optional / station_items.is_active。"""
     from app.database import _ADDED_COLUMNS
@@ -3909,6 +3928,7 @@ TESTS = [
     test_p0_report_retry_status_guards,
     test_p0_abort_stale_session_keeps_live_lock,
     test_p0_added_columns_cover_optional_and_station_active,
+    test_seed_wipe_targets_cover_all_tables,
     test_p0_scheduler_watchdog_reclaims_orphans,
     test_p0_scheduler_ticks_after_runtime_rule,
     test_p0_invalidation_marks_then_purges_after_commit,

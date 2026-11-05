@@ -281,7 +281,8 @@ python -m app.seed --reset                # 清空业务表与工艺配置后重
 python -m app.seed --reset --products 80  # 指定随机在制品数量
 python -m app.seed --reset --no-repairs   # 不生成维修履历
 python -m app.seed --scenarios            # 仅重建租约锁/会话场景数据（C0990xx）
-python -m app.seed --clear-business       # 只清业务数据，保留工艺配置
+python -m app.seed --wipe                 # 只清空不重建：按元数据清空除 users 外全部表（含集合/SN 登记/报告）
+python -m app.seed --clear-business       # 只清运行数据（含报告任务），保留工艺配置与 users
 python -m app.seed --backfill-completed   # 回填 is_completed 冗余列
 ```
 

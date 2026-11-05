@@ -8,8 +8,8 @@
     python -m app.seed --no-repairs             不生成维修处置履历
     python -m app.seed --scenarios              仅重建租约锁/会话场景数据
     python -m app.seed --reset                  清空全部数据后重建（需输入 YES 确认）
-    python -m app.seed --wipe                   只清空、不重建，得到仅剩 users 的空库
-    python -m app.seed --clear-business         只清运行数据，工艺配置原样保留
+    python -m app.seed --wipe                   只清空、不重建：按元数据清空除 users 外全部表
+    python -m app.seed --clear-business         只清运行数据（含报告任务），工艺配置原样保留
     python -m app.seed --backfill-completed     回填 is_completed 冗余列
 
 静态规则严格按方案预置：
@@ -342,43 +342,57 @@ def _ensure_admin(db) -> None:
         db.commit()
         print(f"[seed] 默认管理员 {settings.DEFAULT_ADMIN_USERNAME} / {settings.DEFAULT_ADMIN_PASSWORD}")
 
-def _reset_all_tables(db) -> None:
-    """清空全部业务表与工艺配置表（users 保留）。
+# --clear-business 保留的「配置类」表：账号、工艺配置、SN 登记、报告规则/标准/模板。
+# 其余表一律视为运行数据（在制品、台账、会话、机台注册、报告任务等）。
+_KEEP_ON_CLEAR_BUSINESS = frozenset({
+    "users",
+    "processes",
+    "stations",
+    "product_models",
+    "process_stations",
+    "station_items",
+    "station_case_sets",
+    "sn_registry",
+    "report_rules",
+    "report_standards",
+    "report_templates",
+})
+
+def _wipe_targets(keep):
+    """按外键依赖逆序给出需清空的表。
+
+    表名直接取自 SQLAlchemy 元数据：新增表自动纳入，不再依赖手工清单（此前
+    station_case_sets / sn_registry / report_* 共 6 张表被漏掉）。
+    sorted_tables 是父表在前，反转后先删子表，PG 下也不会撞外键约束。
+    """
+    return [t for t in reversed(Base.metadata.sorted_tables) if t.name not in keep]
+
+def _wipe_tables(db, keep) -> list:
+    """只删数据、不删表结构，返回实际清空的表名列表。"""
+    cleared = []
+    for table in _wipe_targets(keep):
+        db.execute(table.delete())
+        cleared.append(table.name)
+    db.commit()
+    return cleared
+
+def _reset_all_tables(db) -> list:
+    """清空除 users 外的全部表（--reset / --wipe 共用）。
 
     注意：这会覆盖现场手工维护的工艺配置。若只想清业务数据、保留工艺配置，
     请使用 --clear-business。
     """
-    for table in (
-        "repair_records",
-        "test_sessions",
-        "test_records",
-        "product_status",
-        "station_clients",
-        "station_items",
-        "process_stations",
-        "product_models",
-        "stations",
-        "processes",
-    ):
-        db.execute(Base.metadata.tables[table].delete())
-    db.commit()
+    return _wipe_tables(db, frozenset({"users"}))
 
 def _clear_business_only(db) -> None:
     """只清空运行时业务数据，保留工艺配置与 users。
 
     用于"保留现场工艺配置、重新跑一轮测试"：清空在制品、测试记录、会话、
-    维修履历与机台注册，工艺配置（流程/工位/机型/工步/用例清单）原样保留。
+    维修履历、机台注册、报告任务，工艺配置（流程/工位/机型/工步/用例集合/
+    SN 登记/报告规则）原样保留。
     """
-    for table in (
-        "repair_records",
-        "test_sessions",
-        "test_records",
-        "product_status",
-        "station_clients",
-    ):
-        db.execute(Base.metadata.tables[table].delete())
-    db.commit()
-    print("[seed] --clear-business: 已清空业务数据（工艺配置与 users 保留）")
+    cleared = _wipe_tables(db, _KEEP_ON_CLEAR_BUSINESS)
+    print(f"[seed] --clear-business: 已清空 {len(cleared)} 张运行数据表（工艺配置与 users 保留）")
 
 def _backfill_is_completed(db) -> None:
     """回填 is_completed 冗余列：新增该列后对存量数据执行一次。
@@ -905,12 +919,12 @@ def seed(
             _backfill_is_completed(db)
             return
         if wipe:
-            _reset_all_tables(db)
-            print("[seed] --wipe: 已清空业务与工艺配置（users 保留），未重建任何数据")
+            cleared = _reset_all_tables(db)
+            print(f"[seed] --wipe: 已清空 {len(cleared)} 张表（仅 users 保留），未重建任何数据")
             return
         if reset:
-            _reset_all_tables(db)
-            print("[seed] --reset: 已清空业务表与工艺配置（users 保留，随后重建工艺配置）")
+            cleared = _reset_all_tables(db)
+            print(f"[seed] --reset: 已清空 {len(cleared)} 张表（仅 users 保留，随后重建工艺配置）")
         elif db.query(ProcessStation).count():
             if scenarios_only:
                 # 只重建场景数据：依赖相对时间，重复 seed 才会刷新"多久之前心跳"
