@@ -3721,6 +3721,116 @@ def test_seed_wipe_targets_cover_all_tables():
     check("station_items" not in business_targets and "users" not in business_targets,
           f"config tables must be kept: {sorted(business_targets)}")
 
+def test_plugin_sql_api():
+    """插件任意查询：api.sql 参数绑定/只读友好报错/行数上限，tables/describe 自助探查。"""
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.services.reports import executor, extractor
+
+    # ① 首关键字识别（跳过注释），只用于友好报错
+    check(extractor._leading_keyword("  -- note\n SELECT 1") == "SELECT",
+          "leading keyword after line comment")
+    check(extractor._leading_keyword(" /* c */ WITH x AS (SELECT 1) SELECT * FROM x") == "WITH",
+          "leading keyword after block comment")
+    check(extractor._leading_keyword("DELETE FROM x") == "DELETE", "write keyword detected")
+
+    class _Row:
+        """模拟 SQLAlchemy Row 的 _mapping 接口。"""
+
+        def __init__(self, data):
+            self._mapping = data
+
+    class _Result:
+        def __init__(self, rows):
+            self._rows = [_Row(r) for r in rows]
+
+        def fetchmany(self, n):
+            return self._rows[:n]
+
+    class _Conn:
+        def __init__(self, rows):
+            self.rows, self.calls = rows, []
+
+        def execute(self, stmt, params=None):
+            self.calls.append((str(stmt), params))
+            return _Result(self.rows)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class _Engine:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def connect(self):
+            return self._conn
+
+    # ② 参数绑定 + 事务级超时 + 结果映射
+    row = {"n": 1}
+    conn = _Conn([row])
+    with patch.object(extractor, "_engine", return_value=_Engine(conn)):
+        out = extractor.fetch_sql(
+            "DPO4054B", "SELECT count(*) AS n FROM bandwidth WHERE sn = :sn",
+            {"sn": "SN1"}, timeout_ms=1500, max_rows=10,
+        )
+        check(out == [row], f"fetch_sql result: {out}")
+        check(len(conn.calls) == 2 and "set_config" in conn.calls[0][0]
+              and conn.calls[0][1] == {"ms": "1500"}, f"timeout must be set: {conn.calls}")
+        check(conn.calls[1][1] == {"sn": "SN1"}, f"params must be bound: {conn.calls[1]}")
+
+    # ③ 非读语句给友好报错；写防护实际由只读事务承担
+    try:
+        extractor.fetch_sql("DPO4054B", "UPDATE bandwidth SET value = 1")
+    except ValueError as e:
+        check("api.sql 仅用于读取" in str(e), f"friendly error: {e}")
+    else:
+        check(False, "non-SELECT should be rejected with a friendly error")
+
+    # ④ 行数上限：fetchmany(max_rows+1) 后拒绝
+    over = _Conn([{"n": i} for i in range(4)])
+    with patch.object(extractor, "_engine", return_value=_Engine(over)):
+        try:
+            extractor.fetch_sql("DPO4054B", "SELECT 1", max_rows=3)
+        except RuntimeError as e:
+            check("超过上限" in str(e), f"row cap: {e}")
+        else:
+            check(False, "over-limit result should raise")
+
+    # ⑤ 空 SQL 也要挡
+    try:
+        extractor.fetch_sql("DPO4054B", "   ")
+    except ValueError:
+        pass
+    else:
+        check(False, "empty SQL should raise")
+
+    # ⑥ ScriptApi 三个新接口转发 + 配置项透传 + 统一计数
+    api = executor.ScriptApi(
+        SimpleNamespace(rule="unit"), "DPO4054B", "SN1", Path(tempfile.gettempdir())
+    )
+    with patch.object(executor.extractor, "fetch_sql", return_value=[{"x": 1}]) as m:
+        check(api.sql("SELECT :x AS x", {"x": 1}) == [{"x": 1}], "ScriptApi.sql result")
+        check(m.call_args[0][1] == "SELECT :x AS x", "SQL forwarded unchanged")
+        check(m.call_args[1]["timeout_ms"] == settings.REPORT_SQL_TIMEOUT_MS,
+              "timeout from settings")
+        check(m.call_args[1]["max_rows"] == settings.REPORT_SQL_MAX_ROWS,
+              "max_rows from settings")
+    with patch.object(executor.extractor, "list_tables",
+                      return_value=[{"table_name": "bandwidth", "table_type": "BASE TABLE"}]):
+        check(api.tables()[0]["table_name"] == "bandwidth", "ScriptApi.tables")
+    with patch.object(executor.extractor, "describe_table",
+                      return_value=[{"column_name": "sn"}]) as d:
+        check(api.describe("bandwidth")[0]["column_name"] == "sn", "ScriptApi.describe")
+        check(d.call_args[0][1] == "bandwidth", "table name forwarded")
+    check(api._query_count == 3, f"all three counted: {api._query_count}")
+
 def test_p0_added_columns_cover_optional_and_station_active():
     """增量列迁移清单不得因重复字典键丢失 is_optional / station_items.is_active。"""
     from app.database import _ADDED_COLUMNS
@@ -3929,6 +4039,7 @@ TESTS = [
     test_p0_abort_stale_session_keeps_live_lock,
     test_p0_added_columns_cover_optional_and_station_active,
     test_seed_wipe_targets_cover_all_tables,
+    test_plugin_sql_api,
     test_p0_scheduler_watchdog_reclaims_orphans,
     test_p0_scheduler_ticks_after_runtime_rule,
     test_p0_invalidation_marks_then_purges_after_commit,

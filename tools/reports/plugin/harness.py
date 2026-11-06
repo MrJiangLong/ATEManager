@@ -2,7 +2,8 @@
 
 做什么：
   1. 读取 .env 获得工厂测试库连接（必须在开发包目录建 .env；仓库内开发可回退 backend/.env）
-  2. 构造符合契约的 api 对象，执行插件的 generate() 并保存产物到 _out/<产品族>/
+  2. 构造符合契约的 api 对象（含 sql / tables / describe），执行插件的 generate()
+     并保存产物到 _out/<产品族>/
   3. 按线上 executor._validate_artifacts 的口径校验产物清单，打印产物与失败项
 
 取数引擎统一走 engine/ 镜像（与线上 backend/app/services/reports/extractor.py
@@ -81,6 +82,31 @@ class Api:
         from app.services.reports import extractor
 
         return extractor.fetch_latest(self.model, table, self.sn, column)
+
+    def sql(self, query, params=None):
+        """与线上 ScriptApi.sql 等价：资源上限读同一组 REPORT_SQL_* 环境变量。"""
+        from app.config import settings
+        from app.services.reports import extractor
+
+        return extractor.fetch_sql(
+            self.model, query, params,
+            timeout_ms=settings.REPORT_SQL_TIMEOUT_MS,
+            max_rows=settings.REPORT_SQL_MAX_ROWS,
+        )
+
+    def tables(self):
+        from app.config import settings
+        from app.services.reports import extractor
+
+        return extractor.list_tables(self.model, timeout_ms=settings.REPORT_SQL_TIMEOUT_MS)
+
+    def describe(self, table):
+        from app.config import settings
+        from app.services.reports import extractor
+
+        return extractor.describe_table(
+            self.model, table, timeout_ms=settings.REPORT_SQL_TIMEOUT_MS
+        )
 
     def template(self, name):
         path = self.family_dir / "templates" / name

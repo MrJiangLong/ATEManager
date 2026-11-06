@@ -16,6 +16,8 @@ class Settings:
     FACTORY_DB_PORT = _as_int(os.getenv("FACTORY_DB_PORT"), 5432)
     FACTORY_DB_USER = os.getenv("FACTORY_DB_USER", "")
     FACTORY_DB_PASSWORD = os.getenv("FACTORY_DB_PASSWORD", "")
+    REPORT_SQL_TIMEOUT_MS = _as_int(os.getenv("REPORT_SQL_TIMEOUT_MS"), 30000)
+    REPORT_SQL_MAX_ROWS = _as_int(os.getenv("REPORT_SQL_MAX_ROWS"), 50000)
 
 
 settings = Settings()

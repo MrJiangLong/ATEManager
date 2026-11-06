@@ -1168,6 +1168,8 @@ void Handle(string line) {
 | `ENFORCE_FW` | true | 固件基线校验 |
 | `ENFORCE_APP_SW` | true | 测试软件版本基线校验（机型基线留空则不卡控） |
 | `CLIENT_ONLINE_WINDOW_SECONDS` | 90 | 机台在线判定窗口 |
+| `REPORT_SQL_TIMEOUT_MS` | 30000 | 插件任意查询 `api.sql` 的事务级 `statement_timeout`（毫秒），保护工厂测试库 |
+| `REPORT_SQL_MAX_ROWS` | 50000 | `api.sql` 单次结果行数上限，超限报错 |
 
 > **用例ID 校验恒开、无配置开关**：工位配了用例集合 → **必须上报 `case_ids`**（否则 400
 > `case_ids_required`），并对上报清单校验（未锁定 = 任一套必测覆盖 + 相对顺序；

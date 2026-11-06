@@ -32,6 +32,8 @@ services:
       MINIO_SECURE: "false"
       REPORT_PDF_MODE: "external"
       REPORT_MAX_CONCURRENCY: "2"
+      REPORT_SQL_TIMEOUT_MS: "30000"
+      REPORT_SQL_MAX_ROWS: "50000"
       REPORT_SCAN_INTERVAL_SEC: "60"
       REPORT_WORK_DIR: /app/data/reports
       REPORT_TEMPLATE_DIR: /app/data/report_templates

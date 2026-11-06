@@ -1,6 +1,8 @@
 """插件脚本执行器：注入只读 api，在受控线程中运行 generate() 并校验产物。
 
-脚本 = 受信任代码（manager/admin 上传）；取数只能走注入 api（该连接强制只读），
+脚本 = 受信任代码（manager/admin 上传）；取数走注入 api：
+api.query 是「分区取最新 PASS」的便利封装，api.sql 支持任意参数化只读查询，
+api.tables/describe 供插件自助探查 schema；连接强制只读且带超时/行数上限。
 脚本只负责产出 Excel，MinIO / PDF / MES 管线留在引擎。
 """
 
@@ -8,6 +10,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Optional
 
 from ...config import settings
 from ...logging import get_logger
@@ -51,7 +54,49 @@ class ScriptApi:
     def template(self, name: str) -> Path:
         return self._rule.template_path(name)
 
-def _validate_artifacts(raw, work_dir: Path) -> tuple:
+    def sql(self, query: str, params: Optional[dict] = None) -> list:
+        """任意只读查询：参数化 SQL，固定查当前型号分库（库名 = api.model）。
+
+        资源上限由 REPORT_SQL_TIMEOUT_MS / REPORT_SQL_MAX_ROWS 约束；
+        写操作由连接级只读事务在 PG 层拒绝。
+        """
+        t0 = time.perf_counter()
+        rows = extractor.fetch_sql(
+            self.model, query, params,
+            timeout_ms=settings.REPORT_SQL_TIMEOUT_MS,
+            max_rows=settings.REPORT_SQL_MAX_ROWS,
+        )
+        self._account(t0, "sql", query, len(rows))
+        return rows
+
+    def tables(self) -> list:
+        """当前型号库 public schema 下的表/视图清单（自助探查 schema）。"""
+        t0 = time.perf_counter()
+        rows = extractor.list_tables(self.model, timeout_ms=settings.REPORT_SQL_TIMEOUT_MS)
+        self._account(t0, "tables", "information_schema.tables", len(rows))
+        return rows
+
+    def describe(self, table: str) -> list:
+        """表/视图的列清单：column_name / data_type / is_nullable / ordinal_position。"""
+        t0 = time.perf_counter()
+        rows = extractor.describe_table(
+            self.model, table, timeout_ms=settings.REPORT_SQL_TIMEOUT_MS
+        )
+        self._account(t0, "describe", f"describe {table}", len(rows))
+        return rows
+
+    def _account(self, t0: float, kind: str, statement: str, row_count: int) -> None:
+        """统一观测：SQL 摘要只写服务端日志（api.log 不落库，这里也不落 report_jobs）。"""
+        ms = (time.perf_counter() - t0) * 1000
+        self._query_ms += ms
+        self._query_count += 1
+        summary = " ".join(str(statement or "").split())[:200]
+        logger.info(
+            "插件SQL[%s %s] %s: rows=%d %.1fms %s",
+            getattr(self._rule, "rule", "?"), self.sn, kind, row_count, ms, summary,
+        )
+
+def _validate_artifacts(raw, work_dir: Path) -> list:
     """校验插件返回的产物清单，规范化为引擎 artifact dict。"""
     if not isinstance(raw, list):
         raise ValueError(f"generate() must return a list, got {type(raw).__name__}")

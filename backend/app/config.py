@@ -127,6 +127,9 @@ class Settings:
     # 上传式插件：模板物化缓存目录 + 脚本执行超时
     REPORT_TEMPLATE_DIR: str = os.getenv("REPORT_TEMPLATE_DIR", "report_templates")
     REPORT_SCRIPT_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_SCRIPT_TIMEOUT_SEC"), 300)
+    # 插件任意查询 api.sql 的资源上限：工厂库是生产测试库，防止全表扫描/笛卡尔积拖垮产线
+    REPORT_SQL_TIMEOUT_MS: int = _as_int(os.getenv("REPORT_SQL_TIMEOUT_MS"), 30000)
+    REPORT_SQL_MAX_ROWS: int = _as_int(os.getenv("REPORT_SQL_MAX_ROWS"), 50000)
     # 任务级运行超时：超时仍为 running 的任务是进程中断遗留的孤儿，判失败可重试；<=0 关闭看门狗
     REPORT_JOB_TIMEOUT_SEC: int = _as_int(os.getenv("REPORT_JOB_TIMEOUT_SEC"), 600)
     # 工厂测试库（各型号分库同一台 PG，库名 = 型号；报告引擎只读）

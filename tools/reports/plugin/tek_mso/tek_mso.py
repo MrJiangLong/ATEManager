@@ -5,6 +5,10 @@
 
 ══════════════════════ 插件契约（服务端注入 api）══════════════════════
     api.model / api.sn                  型号与序列号（型号派生由脚本自行解析）
+    api.sql(query, params) -> list[dict]
+                                        任意参数化只读查询（JOIN/聚合/CTE 均可，仅当前型号分库），
+                                        带事务级超时与结果行数上限；值一律走 params 绑定
+    api.tables() / api.describe(table) 自助探查表/视图清单与列结构
     api.query(table, partition, select, filters) -> list[dict]
                                         工厂库 ROW_NUMBER 分区取 date 最新；
                                         PASS 条件由 filters 声明（各表列名不同，非内置），
