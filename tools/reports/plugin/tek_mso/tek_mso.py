@@ -6,20 +6,23 @@
 ══════════════════════ 插件契约（服务端注入 api）══════════════════════
     api.model / api.sn                  型号与序列号（型号派生由脚本自行解析）
     api.query(table, partition, select, filters) -> list[dict]
-                                        工厂测试库最新 PASS（ROW_NUMBER 取 date 最新，
-                                        连接级强制只读）。select 必须包含
-                                        比对要用到的列（分区/过滤/取值列）。
-    api.latest(table, column) -> str    该 SN 在表中最新一条记录的某列（date/version/tester）
-    api.template(name) -> Path          上传模板的本地缓存路径
-    api.work_dir -> Path                产物输出目录
+                                        工厂库 ROW_NUMBER 分区取 date 最新；
+                                        PASS 条件由 filters 声明（各表列名不同，非内置），
+                                        filters 仅支持等值；该连接强制只读，缺表返回 []。
+                                        select 必须包含分区/过滤/取值所需的全部列。
+    api.latest(table, column) -> str    该 SN 最新一条记录的某列；缺表会抛异常，需自行兜底
+    api.template(name) -> Path          上传模板的本地缓存路径（ETag 校验）
+    api.work_dir -> Path                产物输出目录；path 必须落在此目录内
     api.standards -> list[dict]         标准器台账（Web 端「报告产品族」页维护）
-    api.log(msg)                        写任务日志
+    api.log(msg)                        写服务端进程日志（不落 report_jobs）
 
-版本来源由脚本自定：version = api.latest("bandwidth", "version")。
+版本来源由脚本自定：本实现用 _latest_version(api) 跨 _VERSION_TABLES 取 date 最新，
+不是单表 api.latest("bandwidth", "version")。
 返回: [{"type", "filename", "path", "pdf", "mes", "mes_field", "failed_items"}, ...]
-  type : data_report / cal_report / certificate（引擎据此串接 PDF 与 MES）
-  pdf  : 是否需要转 PDF；mes : 是否随 MES 上传
-  mes_field : mes=true 时该产物 PDF 在 MES multipart 中的字段名
+  path : 必填且文件真实存在；filename 会被服务端以 path.name 覆盖
+  type : 本族约定的 data_report / cal_report / certificate（引擎不解释，仅作日志与
+         mes_field 回退）；mes=true 必须配合 pdf=true
+  mes_field : MES multipart 字段名，缺省回退为 type；多个产物不得重名
 ═════════════════════════════════════════════════════════════════════
 """
 

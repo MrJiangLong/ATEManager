@@ -318,16 +318,20 @@ async def pdf_result(
 
 
 # =====================================================================
-# 报告产品族（上传式插件：脚本 = 受信任代码，仅 admin）
+# 报告产品族（上传式插件：脚本 = 受信任代码，写操作 manager/admin）
 # =====================================================================
 def _validate_script(source: str, rule: str) -> None:
-    """上传校验：UTF-8 解码、语法编译、generate(api) 入口存在。"""
+    """上传校验：语法编译 + 在命名空间中确认 generate 可调用。
+
+    注意：exec 会真实执行模块级代码；UTF-8 解码与 .py 后缀检查在上传端点内完成。
+    不检查 import / AST / generate 的参数签名。
+    """
     try:
         code = compile(source, f"{rule}.py", "exec")
     except SyntaxError as exc:
         raise bad_request("script_syntax_error", f"script syntax error: {exc}") from None
     namespace: dict = {}
-    exec(code, namespace)  # 编译期检查入口；模块级代码会在注册表加载时再执行
+    exec(code, namespace)  # 此处已真实执行模块级代码；规则加载时 registry 会再执行一次
     if not callable(namespace.get("generate")):
         raise bad_request("script_entry_missing", "script must define generate(api)")
 
@@ -353,12 +357,12 @@ def _rule_out(db: Session, row: models.ReportRule) -> schemas.ReportRuleOut:
         updated_at=row.updated_at,
     )
 
-@rules_router.get("", response_model=List[schemas.ReportRuleOut], summary="报告规则清单(仅 admin)")
+@rules_router.get("", response_model=List[schemas.ReportRuleOut], summary="报告规则清单(manager/admin)")
 def list_rules(db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     rows = db.query(models.ReportRule).order_by(models.ReportRule.rule).all()
     return [_rule_out(db, r) for r in rows]
 
-@rules_router.post("", response_model=schemas.ReportRuleOut, status_code=201, summary="新建报告规则(仅 admin)")
+@rules_router.post("", response_model=schemas.ReportRuleOut, status_code=201, summary="新建报告规则(manager/admin)")
 def create_rule(
     payload: schemas.ReportRuleIn,
     db: Session = Depends(get_db),
@@ -379,7 +383,7 @@ def create_rule(
     )
     return _rule_out(db, row)
 
-@rules_router.put("/{rule}", response_model=schemas.ReportRuleOut, summary="更新报告规则(仅 admin)")
+@rules_router.put("/{rule}", response_model=schemas.ReportRuleOut, summary="更新报告规则(manager/admin)")
 def update_rule(
     rule: str,
     payload: schemas.ReportRuleIn,
@@ -403,7 +407,7 @@ def update_rule(
     )
     return _rule_out(db, db.get(models.ReportRule, rule))
 
-@rules_router.delete("/{rule}", status_code=204, summary="删除报告规则(仅 admin)")
+@rules_router.delete("/{rule}", status_code=204, summary="删除报告规则(manager/admin)")
 def delete_rule(rule: str, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     row = db.get(models.ReportRule, rule)
     if row is None:
@@ -425,7 +429,7 @@ def delete_rule(rule: str, db: Session = Depends(get_db), user: models.User = De
             store.remove(key)
     reports.registry.reset_cache()
 
-@rules_router.post("/{rule}/script", response_model=schemas.ReportRuleOut, summary="上传插件脚本 .py(仅 admin)")
+@rules_router.post("/{rule}/script", response_model=schemas.ReportRuleOut, summary="上传插件脚本 .py(manager/admin)")
 async def upload_script(
     rule: str,
     file: UploadFile = File(...),
@@ -494,7 +498,7 @@ async def upload_templates(
     reports.registry.reset_cache()
     return _rule_out(db, row)
 
-@rules_router.delete("/{rule}/templates/{filename}", status_code=204, summary="删除模板(仅 admin)")
+@rules_router.delete("/{rule}/templates/{filename}", status_code=204, summary="删除模板(manager/admin)")
 def delete_template(
     rule: str,
     filename: str,
@@ -510,7 +514,7 @@ def delete_template(
 
 
 # =====================================================================
-# 标准器台账（证书回填与校准日期校验的数据源，仅 admin）
+# 标准器台账（证书回填与校准日期校验的数据源，写操作 manager/admin）
 # =====================================================================
 @standards_router.get("", response_model=List[schemas.ReportStandardOut], summary="标准器台账(按报告规则，仅 admin)")
 def list_standards(
@@ -525,7 +529,7 @@ def list_standards(
         .all()
     )
 
-@standards_router.post("", response_model=schemas.ReportStandardOut, status_code=201, summary="新增标准器(仅 admin)")
+@standards_router.post("", response_model=schemas.ReportStandardOut, status_code=201, summary="新增标准器(manager/admin)")
 def create_standard(
     payload: schemas.ReportStandardIn,
     db: Session = Depends(get_db),
@@ -539,7 +543,7 @@ def create_standard(
     db.refresh(row)
     return row
 
-@standards_router.put("/{std_id}", response_model=schemas.ReportStandardOut, summary="更新标准器(仅 admin)")
+@standards_router.put("/{std_id}", response_model=schemas.ReportStandardOut, summary="更新标准器(manager/admin)")
 def update_standard(
     std_id: int,
     payload: schemas.ReportStandardIn,
@@ -556,7 +560,7 @@ def update_standard(
     db.commit()
     return row
 
-@standards_router.delete("/{std_id}", status_code=204, summary="删除标准器(仅 admin)")
+@standards_router.delete("/{std_id}", status_code=204, summary="删除标准器(manager/admin)")
 def delete_standard(std_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_manager)):
     row = db.get(models.ReportStandard, std_id)
     if row is None:

@@ -1,6 +1,6 @@
 """插件脚本执行器：注入只读 api，在受控线程中运行 generate() 并校验产物。
 
-脚本 = 受信任代码（仅 admin 上传）；取数只能走注入 api（连接级强制只读），
+脚本 = 受信任代码（manager/admin 上传）；取数只能走注入 api（该连接强制只读），
 脚本只负责产出 Excel，MinIO / PDF / MES 管线留在引擎。
 """
 
@@ -33,7 +33,8 @@ class ScriptApi:
         logger.info("插件[%s %s]: %s", self._rule.rule, self.sn, msg)
 
     def query(self, table: str, partition: list, select: list, filters: dict) -> list:
-        """工厂测试库最新 PASS（ROW_NUMBER 取 date 最新；连接级强制只读，缺表返回 []）。"""
+        """工厂库取数：ROW_NUMBER 分区取 date 最新；PASS 条件由 filters 声明（非内置）；
+        该连接强制只读，缺表返回 []。filters 仅支持等值。"""
         t0 = time.perf_counter()
         rows = extractor.fetch_newest_pass(self.model, table, self.sn, select, partition, filters)
         self._query_ms += (time.perf_counter() - t0) * 1000

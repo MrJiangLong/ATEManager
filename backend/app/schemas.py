@@ -1183,7 +1183,7 @@ class ReportDownloadOut(BaseModel):
     filename: str
     url: str
 
-# ---- 报告规则（上传式插件，仅 admin）----
+# ---- 报告规则（上传式插件，写操作 manager/admin）----
 class ReportRuleIn(BaseModel):
     """新建/更新报告规则基础信息（脚本与模板经独立上传接口维护）。"""
 

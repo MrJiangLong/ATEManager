@@ -211,7 +211,7 @@ export const reportApi = {
     api.get(`/admin/report-jobs/${jobId}/download/${index}`, { params: { variant } }),
 }
 
-/** 报告规则（上传式插件，仅 admin） */
+/** 报告规则（上传式插件，写操作 manager/admin） */
 export const ruleApi = {
   list: () => api.get('/admin/report-rules'),
   create: (data) => api.post('/admin/report-rules', data),
@@ -231,7 +231,7 @@ export const ruleApi = {
     api.delete(`/admin/report-rules/${rule}/templates/${encodeURIComponent(filename)}`),
 }
 
-/** 标准器台账（按报告规则隔离，仅 admin） */
+/** 标准器台账（按报告规则隔离，写操作 manager/admin） */
 export const standardsApi = {
   list: (rule) => api.get('/admin/report-standards', { params: { rule } }),
   create: (data) => api.post('/admin/report-standards', data),
