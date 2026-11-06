@@ -773,12 +773,14 @@ ack = cli.check_out(items)                                     # 201 + acknowled
 | `REPORT_SQL_TIMEOUT_MS` | `30000` | 插件任意查询 `api.sql` 的事务级 `statement_timeout`（毫秒） |
 | `REPORT_SQL_MAX_ROWS` | `50000` | `api.sql` 单次结果行数上限（超限报错，任务判 failed） |
 
-插件取数有两个层次：`api.query` 是「ROW_NUMBER 分区取最新 PASS」的固定模板便利封装；
-**`api.sql(query, params)` 支持任意参数化只读查询**（JOIN/聚合/CTE 均可），
-配合 `api.tables()` / `api.describe(table)` 自助探查 schema。所有取数接口共用
-强制只读连接（`SET default_transaction_read_only = on`）、事务级超时与行数上限；
+插件取数只有一条通道：**`api.sql(query, params)` 支持任意参数化只读查询**
+（JOIN/聚合/CTE 均可，SQL 由插件自己写），配合 `api.tables()` / `api.describe(table)`
+自助探查 schema。所有取数接口共用强制只读连接
+（`SET default_transaction_read_only = on`）、事务级超时与行数上限；
 只查当前型号分库（库名 = 型号），不支持跨库。两项上限为运维可调配置，开发包台架读同名环境变量
-（在包内 `.env` 填同值即与线上对齐）；契约见 `tools/reports/plugin/插件开发规则.md` 附录 A/C。
+（在包内 `.env` 填同值即与线上对齐）。随包参考实现 `tek_mso/tek_mso.py` 的全部取数都基于
+`api.sql`（`_newest_pass` / `_latest` / `_table_names` 三个 helper），并经过改造前后逐格差分验证。
+契约见 `tools/reports/plugin/插件开发规则.md` 附录 A/C。
 | `REPORT_SCRIPT_TIMEOUT_SEC` | `300` | 插件 `generate()` 执行超时 |
 | `REPORT_JOB_TIMEOUT_SEC` | `600` | 任务级运行超时：超时仍为 running 的任务判失败可重试（防服务重启遗留孤儿卡死）；`<=0` 关闭看门狗 |
 

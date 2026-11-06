@@ -3,25 +3,24 @@
 报告逻辑 1:1 移植自 TekReport 桌面工具（Report.cs / ExportTestReportModel.cs），
 已经过与 ATEManager 引擎输出的逐单元格一致性差分验证。
 
+本范本的**全部取数都走 api.sql**（见 _newest_pass / _latest），不再使用旧的便利封装：
+一方面示范任意查询如何覆盖真实业务，另一方面把「分区取最新 PASS」「缺表跳过」
+这些口径显式写在插件里，换产品族时可直接改写 SQL。
+
 ══════════════════════ 插件契约（服务端注入 api）══════════════════════
     api.model / api.sn                  型号与序列号（型号派生由脚本自行解析）
     api.sql(query, params) -> list[dict]
                                         任意参数化只读查询（JOIN/聚合/CTE 均可，仅当前型号分库），
                                         带事务级超时与结果行数上限；值一律走 params 绑定
-    api.tables() / api.describe(table) 自助探查表/视图清单与列结构
-    api.query(table, partition, select, filters) -> list[dict]
-                                        工厂库 ROW_NUMBER 分区取 date 最新；
-                                        PASS 条件由 filters 声明（各表列名不同，非内置），
-                                        filters 仅支持等值；该连接强制只读，缺表返回 []。
-                                        select 必须包含分区/过滤/取值所需的全部列。
-    api.latest(table, column) -> str    该 SN 最新一条记录的某列；缺表会抛异常，需自行兜底
+    api.tables() -> list[dict]          当前型号库表/视图清单，用于「缺表跳过」判断
+    api.describe(table) -> list[dict]   表/视图列结构（开发期自助探查）
     api.template(name) -> Path          上传模板的本地缓存路径（ETag 校验）
     api.work_dir -> Path                产物输出目录；path 必须落在此目录内
     api.standards -> list[dict]         标准器台账（Web 端「报告产品族」页维护）
     api.log(msg)                        写服务端进程日志（不落 report_jobs）
 
 版本来源由脚本自定：本实现用 _latest_version(api) 跨 _VERSION_TABLES 取 date 最新，
-不是单表 api.latest("bandwidth", "version")。
+不是单表取版本。
 返回: [{"type", "filename", "path", "pdf", "mes", "mes_field", "failed_items"}, ...]
   path : 必填且文件真实存在；filename 会被服务端以 path.name 覆盖
   type : 本族约定的 data_report / cal_report / certificate（引擎不解释，仅作日志与
@@ -377,7 +376,7 @@ def _render_cert(api, sheet, D, derived, test_date, version):
         return failed
 
     def check(table, manufacturer, model_prefix, row):
-        tester = api.latest(table, "tester").split("_")[0]
+        tester = _latest(api, table, "tester").split("_")[0]
         info = _find_standard(api.standards, manufacturer, tester, model_prefix)
         if info is None:
             failed.append(f"Certificate: 台账中未找到 {manufacturer} {model_prefix}*（工位 {tester}）")
@@ -454,6 +453,66 @@ _VERSION_TABLES = (
     "basenoise", "phasedelay", "afgsin", "afgsquare", "auxout", "localsignal", "amplitude",
 )
 
+# ---------------------------------------------------------------- 取数 helper（全部走 api.sql）
+_KNOWN_TABLES = {}
+
+
+def _qi(name: str) -> str:
+    """标识符加双引号转义：api.sql 的标识符由插件自己负责，大小写敏感。"""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _table_names(api) -> set:
+    """当前型号库的表/视图名集合，按型号缓存（一次 generate 只调 api.tables 一次）。
+
+    按型号缓存，与服务端连接的缓存口径一致：运行期新建表不会立即可见。
+    """
+    model = api.model
+    if model not in _KNOWN_TABLES:
+        _KNOWN_TABLES[model] = {t["table_name"] for t in api.tables()}
+    return _KNOWN_TABLES[model]
+
+
+def _newest_pass(api, table, partition, select, filters):
+    """分区内取 date 最新一条（等价于旧的便利封装，SQL 由本插件自己写）。
+
+    缺表返回 []：无 AFG 机型的 afg* 表靠这个整节跳过，不能用 try/except 笼统吞掉。
+    filters 的绑定名用序号，列名含特殊字符也不会生成非法参数名。
+    """
+    if table not in _table_names(api):
+        return []
+    cols = ", ".join(_qi(c) for c in select)
+    part = ", ".join(_qi(c) for c in partition)
+    conds = ["sn = :sn"] + [f"{_qi(c)} = :f{i}" for i, c in enumerate(filters)]
+    params = {"sn": api.sn}
+    params.update({f"f{i}": v for i, v in enumerate(filters.values())})
+    sql = (
+        f"WITH ranked AS (SELECT {cols}, ROW_NUMBER() OVER "
+        f"(PARTITION BY {part} ORDER BY {_qi('date')} DESC) AS rn "
+        f"FROM {_qi(table)} WHERE {' AND '.join(conds)}) "
+        f"SELECT {cols} FROM ranked WHERE rn = 1"
+    )
+    return api.sql(sql, params)
+
+
+def _latest(api, table, column) -> str:
+    """该 SN 最新一条记录的某列（等价于旧的便利封装）；缺表/无记录返回空串。
+
+    原来缺表会抛异常，由 _latest_version 的 try/except 兜住；这里直接返回空串，
+    调用方的判空逻辑保持不变。
+    """
+    try:
+        rows = api.sql(
+            f"SELECT {_qi(column)} AS v FROM {_qi(table)} "
+            f"WHERE sn = :sn ORDER BY {_qi('date')} DESC LIMIT 1",
+            {"sn": api.sn},
+        )
+    except Exception:
+        return ""
+    v = rows[0]["v"] if rows else None
+    return str(v or "")
+
+
 def _latest_version(api) -> str:
     """跨全部测试表取 date 最新的 version（对齐 TekReport SQLHelper 的 UNION ALL 口径）。
 
@@ -463,7 +522,7 @@ def _latest_version(api) -> str:
     best_date, best_ver = "", ""
     for t in _VERSION_TABLES:
         try:
-            d, v = api.latest(t, "date"), api.latest(t, "version")
+            d, v = _latest(api, t, "date"), _latest(api, t, "version")
         except Exception:
             continue
         if d and v and str(d) >= best_date:
@@ -483,29 +542,29 @@ def generate(api):
     api.log(f"派生属性: {derived}")
 
     D = {
-        "bw1": api.query("bandwidth", ["sn", "vertical", "vin", "chnum", "freq"],
+        "bw1": _newest_pass(api, "bandwidth", ["sn", "vertical", "vin", "chnum", "freq"],
                          ["chnum", "vertical", "freq", "value", "gain"],
                          {"multichannelmode": 1, "result": "PASS"}),
-        "bw4": api.query("bandwidth", ["sn", "vertical", "vin", "chnum", "freq"],
+        "bw4": _newest_pass(api, "bandwidth", ["sn", "vertical", "vin", "chnum", "freq"],
                          ["chnum", "vertical", "freq", "value", "gain"],
                          {"multichannelmode": 4, "result": "PASS"}),
-        "dc": api.query("dc", ["sn", "vertical", "vin", "chnum"], ["chnum", "vertical", "vin", "value"],
+        "dc": _newest_pass(api, "dc", ["sn", "vertical", "vin", "chnum"], ["chnum", "vertical", "vin", "value"],
                         {"result": "PASS"}),
-        "timebase": api.query("timebaseaccuracy", ["sn"], ["value"], {"result": "PASS"}),
-        "afgdc": api.query("afgdc", ["sn", "offsetvamp"], ["offsetvamp", "value"], {"result": "PASS"}),
-        "impedance": api.query("impedance", ["sn", "vertical", "chnum"], ["chnum", "vertical", "resvalue", "capvalue"],
+        "timebase": _newest_pass(api, "timebaseaccuracy", ["sn"], ["value"], {"result": "PASS"}),
+        "afgdc": _newest_pass(api, "afgdc", ["sn", "offsetvamp"], ["offsetvamp", "value"], {"result": "PASS"}),
+        "impedance": _newest_pass(api, "impedance", ["sn", "vertical", "chnum"], ["chnum", "vertical", "resvalue", "capvalue"],
                                {"resresult": "PASS", "capresult": "PASS"}),
-        "dcoffset": api.query("dcoffset", ["sn", "vertical", "offsetvamp", "chnum"],
+        "dcoffset": _newest_pass(api, "dcoffset", ["sn", "vertical", "offsetvamp", "chnum"],
                               ["chnum", "vertical", "offsetvamp", "value"], {"result": "PASS"}),
-        "basenoise": api.query("basenoise", ["sn", "vertical", "chnum", "timebase"],
+        "basenoise": _newest_pass(api, "basenoise", ["sn", "vertical", "chnum", "timebase"],
                                ["chnum", "vertical", "timebase", "value"], {"result": "PASS"}),
-        "phasedelay": api.query("phasedelay", ["sn", "valuedscr"], ["valuedscr", "value"], {"result": "PASS"}),
-        "afgsin": api.query("afgsin", ["sn", "freq"], ["freq", "value"], {"result": "PASS"}),
-        "afgsquare": api.query("afgsquare", ["sn", "freq"], ["freq", "value"], {"result": "PASS"}),
-        "auxout": api.query("auxout", ["sn"], ["amphmax", "amphmin", "amplmax", "amplmin"], {"result": "PASS"}),
-        "localsignal": api.query("localsignal", ["sn"], ["ampvalue", "freqvalue"],
+        "phasedelay": _newest_pass(api, "phasedelay", ["sn", "valuedscr"], ["valuedscr", "value"], {"result": "PASS"}),
+        "afgsin": _newest_pass(api, "afgsin", ["sn", "freq"], ["freq", "value"], {"result": "PASS"}),
+        "afgsquare": _newest_pass(api, "afgsquare", ["sn", "freq"], ["freq", "value"], {"result": "PASS"}),
+        "auxout": _newest_pass(api, "auxout", ["sn"], ["amphmax", "amphmin", "amplmax", "amplmin"], {"result": "PASS"}),
+        "localsignal": _newest_pass(api, "localsignal", ["sn"], ["ampvalue", "freqvalue"],
                                  {"ampresult": "PASS", "freqresult": "PASS"}),
-        "amplitude": api.query("amplitude", ["sn", "couple", "vertical", "vin", "chnum"],
+        "amplitude": _newest_pass(api, "amplitude", ["sn", "couple", "vertical", "vin", "chnum"],
                                ["chnum", "vertical", "value"], {"couple": "AC", "result": "PASS"}),
     }
     dc_rows = D.pop("dc")
@@ -513,7 +572,7 @@ def generate(api):
     D["dc_neg"] = [r for r in dc_rows if _num(r["vin"]) < 0]
     api.log("取数完成: " + ", ".join(f"{k}={len(v)}" for k, v in D.items()))
 
-    test_date = _parse_date(api.latest("bandwidth", "date"))
+    test_date = _parse_date(_latest(api, "bandwidth", "date"))
     date_file = test_date.strftime("%d%m%Y")
     cer_no = str(derived["cer_no"])
 

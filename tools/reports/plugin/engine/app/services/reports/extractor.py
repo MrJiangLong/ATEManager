@@ -1,8 +1,8 @@
 """工厂测试库只读取数器：各型号一个分库（库名 = 型号），同一台 PG。
 
-仅执行 SELECT；连接按库名缓存。所有「取最新 PASS」查询共用同一模式：
-ROW_NUMBER() OVER (PARTITION BY ... ORDER BY date DESC) 取 rn = 1，
-与 TekReport 桌面工具的取数口径完全一致。
+只暴露三件事给插件：api.sql 的任意参数化只读查询、api.tables / api.describe 的
+schema 自助探查。SQL 由插件自己编写，本模块只负责连接、强制只读、
+事务级超时与结果行数上限；连接按库名缓存（NullPool，用完即断）。
 """
 
 from functools import lru_cache
@@ -39,68 +39,6 @@ def _engine(db_name: str):
         db_name, settings.FACTORY_DB_HOST, settings.FACTORY_DB_PORT,
         settings.FACTORY_DB_USER, settings.FACTORY_DB_PASSWORD,
     )
-
-def _qi(identifier: str) -> str:
-    """标识符加引号并转义（防注入，表名/列名来自插件脚本，仍统一收口）。"""
-    return '"' + str(identifier).replace('"', '""') + '"'
-
-@lru_cache(maxsize=512)
-def _table_exists(db_name: str, table: str) -> bool:
-    with _engine(db_name).connect() as conn:
-        return bool(conn.execute(
-            sa.text(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = :t"
-            ),
-            {"t": table},
-        ).scalar())
-
-def fetch_newest_pass(
-    db_name: str,
-    table: str,
-    sn: str,
-    select_cols: list,
-    partition_by: list,
-    filters: dict,
-) -> list:
-    """取每个分区键组合下 date 最新的一条记录（调用方在 filters 中声明 result=PASS）。
-
-    表不存在时返回空列表（等价 TekReport.CheckTableAndSn 的 False 分支）——
-    不同机型分库的测试项表集合不同，缺表是正常业务形态而非错误。"""
-    if not _table_exists(db_name, table):
-        return []
-    cols = ", ".join(_qi(c) for c in select_cols)
-    part = ", ".join(_qi(c) for c in partition_by)
-    where = ["sn = :sn"]
-    params: dict = {"sn": sn}
-    for col, val in (filters or {}).items():
-        where.append(f"{_qi(col)} = :f_{col}")
-        params[f"f_{col}"] = val
-    sql = (
-        f"WITH ranked AS (SELECT {cols}, ROW_NUMBER() OVER "
-        f"(PARTITION BY {part} ORDER BY {_qi('date')} DESC) AS rn "
-        f"FROM {_qi(table)} WHERE {' AND '.join(where)}) "
-        f"SELECT {cols} FROM ranked WHERE rn = 1"
-    )
-    with _engine(db_name).connect() as conn:
-        result = conn.execute(sa.text(sql), params)
-        return [dict(row._mapping) for row in result]
-
-def _fetch_one(db_name: str, table: str, sn: str, column: str):
-    with _engine(db_name).connect() as conn:
-        row = conn.execute(
-            sa.text(
-                f"SELECT {_qi(column)} FROM {_qi(table)} "
-                f"WHERE sn = :sn ORDER BY {_qi('date')} DESC LIMIT 1"
-            ),
-            {"sn": sn},
-        ).first()
-    return None if row is None else row[0]
-
-def fetch_latest(db_name: str, table: str, sn: str, column: str) -> str:
-    """该 SN 在表中最新一条记录的某列（date/version/tester 等通用入口）。"""
-    return str(_fetch_one(db_name, table, sn, column) or "")
-
 
 # =====================================================================
 # 插件任意查询（api.sql / api.tables / api.describe）

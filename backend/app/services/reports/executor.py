@@ -1,7 +1,6 @@
 """插件脚本执行器：注入只读 api，在受控线程中运行 generate() 并校验产物。
 
-脚本 = 受信任代码（manager/admin 上传）；取数走注入 api：
-api.query 是「分区取最新 PASS」的便利封装，api.sql 支持任意参数化只读查询，
+脚本 = 受信任代码（manager/admin 上传）；取数统一走 api.sql（任意参数化只读查询），
 api.tables/describe 供插件自助探查 schema；连接强制只读且带超时/行数上限。
 脚本只负责产出 Excel，MinIO / PDF / MES 管线留在引擎。
 """
@@ -34,22 +33,6 @@ class ScriptApi:
     def log(self, msg) -> None:
         self.logs.append(str(msg))
         logger.info("插件[%s %s]: %s", self._rule.rule, self.sn, msg)
-
-    def query(self, table: str, partition: list, select: list, filters: dict) -> list:
-        """工厂库取数：ROW_NUMBER 分区取 date 最新；PASS 条件由 filters 声明（非内置）；
-        该连接强制只读，缺表返回 []。filters 仅支持等值。"""
-        t0 = time.perf_counter()
-        rows = extractor.fetch_newest_pass(self.model, table, self.sn, select, partition, filters)
-        self._query_ms += (time.perf_counter() - t0) * 1000
-        self._query_count += 1
-        return rows
-
-    def latest(self, table: str, column: str) -> str:
-        t0 = time.perf_counter()
-        val = extractor.fetch_latest(self.model, table, self.sn, column)
-        self._query_ms += (time.perf_counter() - t0) * 1000
-        self._query_count += 1
-        return val
 
     def template(self, name: str) -> Path:
         return self._rule.template_path(name)
@@ -127,7 +110,7 @@ def run_generate(rule, model: str, sn: str, work_dir: Path) -> tuple:
     在隔离线程中带超时运行：插件崩溃/超时只判本任务失败，不影响服务。"""
     work_dir.mkdir(parents=True, exist_ok=True)
     api = ScriptApi(rule, model, sn, work_dir)
-    # 版本来源由脚本自定（api.latest），服务器不注入任何机型相关值
+    # 版本来源、型号派生均由脚本自己用 api.sql 取数后决定，服务器不注入任何机型相关值
     api.standards = rule.load_standards()
 
     result: dict = {}

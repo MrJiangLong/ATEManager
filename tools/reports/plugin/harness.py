@@ -73,16 +73,6 @@ class Api:
         std_file = family_dir / "standards.json"
         self.standards = json.loads(std_file.read_text(encoding="utf-8"))["standards"] if std_file.exists() else []
 
-    def query(self, table, partition, select, filters):
-        from app.services.reports import extractor
-
-        return extractor.fetch_newest_pass(self.model, table, self.sn, select, partition, filters)
-
-    def latest(self, table, column):
-        from app.services.reports import extractor
-
-        return extractor.fetch_latest(self.model, table, self.sn, column)
-
     def sql(self, query, params=None):
         """与线上 ScriptApi.sql 等价：资源上限读同一组 REPORT_SQL_* 环境变量。"""
         from app.config import settings

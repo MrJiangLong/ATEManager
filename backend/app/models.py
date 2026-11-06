@@ -467,7 +467,7 @@ class ReportRule(Base):
 
     一条规则 = 一个脚本（generate(api)）+ 多个模板，服务确定型号清单内的全部型号；
     型号派生（通道/带宽/AFG 等）全部在脚本内完成，服务器不解析型号字符串。
-    版本来源由脚本自定（api.latest），上传同名覆盖、保存即生效。
+    版本来源由脚本自行用 api.sql 取数决定，上传同名覆盖、保存即生效。
     """
 
     __tablename__ = "report_rules"
