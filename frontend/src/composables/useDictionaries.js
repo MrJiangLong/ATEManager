@@ -7,6 +7,8 @@ import { useProcesses } from './useProcesses'
  *
  * 规则：字典里设置了名字且名字与编码不同才返回名字；否则返回空字符串，
  * 调用方（CodeTip 组件）据此不渲染 tooltip —— 编码本身就是兜底展示。
+ * 用例 tooltip 走 caseLabel，统一「名称（字段码）」；无名称时退回纯字段码，
+ * 因为表格溢出提示 / el-tooltip 的内容不能为空，否则会弹空白浮层。
  *
  * 流程与工位复用 useProcesses 的全局共享缓存；机台清单在此单例加载一次。
  * 用例名称不在台账/会话探针数据里，需从各流程拓扑惰性拉取（仅需用到 tooltip 的页面调用）。
@@ -80,10 +82,13 @@ export function useDictionaries() {
     await caseNamesLoading
   }
 
-  // tooltip 文案统一为「用例ID(用例名称)」，查不到名称时退回纯用例ID
+  // 与 CodeTip / 运营总览统一为「名称（字段码）」；查不到名称时退回纯字段码。
+  // 调用方是表格溢出提示 / el-tooltip，提示内容不能为空，否则会弹空白浮层；
+  // 且 SessionDrawer 用 show-overflow-tooltip 的 formatter，无法按行 disabled。
   function caseLabel(stationId, caseId) {
-    const name = caseNames.value.get(caseKey(stationId, caseId)) || ''
-    return name && name !== caseId ? `${caseId}(${name})` : caseId
+    const name = (caseNames.value.get(caseKey(stationId, caseId)) || '').trim()
+    const code = String(caseId || '').trim()
+    return name && code && name !== code ? `${name}（${code}）` : code
   }
 
   /** 机台清单（供筛选下拉使用；复用 ensureClients 的缓存，不额外请求） */

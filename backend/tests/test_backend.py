@@ -3831,6 +3831,67 @@ def test_plugin_sql_api():
         check(d.call_args[0][1] == "bandwidth", "table name forwarded")
     check(api._query_count == 3, f"all three counted: {api._query_count}")
 
+def test_top_failed_names_come_from_current_config():
+    """展示标签口径：总览名称只来自当前 station_items，查不到即退回字段码。
+
+    使用虚拟 case_id 与独立配置行，避免与种子数据互相干扰；快照里故意带旧名，
+    验证它不再作为名称来源（既不冻结、也无需回填）。
+    """
+    from app.services.metrics import build_overview
+
+    station_id = "CAL-PARAM"
+    case_id = "tests/virtual.py::TestNameProbe::test_unique_probe"
+
+    with SessionLocal() as db:
+        # 重复多条，确保该用例进入 most_common(10)
+        items = [
+            {"case_id": case_id, "result": "FAIL", "item_name": "SNAPSHOT_OLD_NAME"}
+            for _ in range(200)
+        ]
+        record = models.TestRecord(
+            sn="METRIC-NAME-VERIFY",
+            station_id=station_id,
+            client_id="TEST-CLIENT",
+            overall_result="FAIL",
+            duration_ms=0,
+            is_valid=True,
+            executed_items={"items": items},
+        )
+        db.add(record)
+        db.commit()
+        rid = record.record_id
+
+        def shown():
+            db.expire_all()
+            overview = build_overview(db, days=14)
+            hit = [p for p in overview.top_failed_items if p.case_id == case_id]
+            return hit[0].item_name if hit else None
+
+        try:
+            # ① 配置里没有该用例 → 字段码（快照旧名不生效）
+            check(shown() == case_id, f"config missing must fall back to code: {shown()}")
+            # ② 有当前配置名 → 实时显示
+            cfg = models.StationItem(
+                process_id="PROC-SCOPE-DPO-BASE",
+                station_id=station_id,
+                set_id="S1",
+                case_id=case_id,
+                item_name="CURRENT_CONFIG_NAME",
+            )
+            db.add(cfg)
+            db.commit()
+            cfg_id = cfg.item_id
+            check(shown() == "CURRENT_CONFIG_NAME", f"current config name: {shown()}")
+            # ③ 配置改名/清空 → 字段码（不保留历史旧名）
+            db.get(models.StationItem, cfg_id).item_name = ""
+            db.commit()
+            check(shown() == case_id, f"cleared config must fall back to code: {shown()}")
+        finally:
+            db.query(models.StationItem).filter(models.StationItem.case_id == case_id).delete()
+            db.delete(db.get(models.TestRecord, rid))
+            db.commit()
+
+
 def test_p0_added_columns_cover_optional_and_station_active():
     """增量列迁移清单不得因重复字典键丢失 is_optional / station_items.is_active。"""
     from app.database import _ADDED_COLUMNS
@@ -4040,6 +4101,7 @@ TESTS = [
     test_p0_added_columns_cover_optional_and_station_active,
     test_seed_wipe_targets_cover_all_tables,
     test_plugin_sql_api,
+    test_top_failed_names_come_from_current_config,
     test_p0_scheduler_watchdog_reclaims_orphans,
     test_p0_scheduler_ticks_after_runtime_rule,
     test_p0_invalidation_marks_then_purges_after_commit,

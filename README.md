@@ -554,7 +554,7 @@ URL、SCPI 指令、日志文件名里都无需转义。
 |---|---|
 | `product_status.passed_stations` | 已盖章工位集合。**唯一写入口是 `gate._write_passed()`**，改它才能同步维护冗余列 |
 | `product_status.is_completed` | 冗余派生列：全部必跑工步（选检工位除外）是否已盖齐。用于列表页在 SQL 层精确过滤与分页 |
-| `test_records.executed_items` | 执行快照 JSONB，内部携带 `checkout_id`（幂等键）、`session_id`、`attempt`，以及 `case_set_id/case_set_name`（本次漏测判定所用的用例集合快照，集合日后改名/删除不影响追溯） |
+| `test_records.executed_items` | 执行快照 JSONB，内部携带 `checkout_id`（幂等键）、`session_id`、`attempt`，以及 `case_set_id/case_set_name`（本次漏测判定所用的用例集合快照，集合日后改名/删除不影响追溯）。用例名称定位为**展示标签**、不写入快照：统计与展示统一以当前 `station_items` 配置为准，查不到（改名/删除）直接退回字段码；历史数据无需回填 |
 | `test_records.is_valid` | 维修处置作废标记；作废记录不参与追溯结论 |
 | `test_sessions.checkpoint` | 续测断点（按 `case_id` 去重覆盖）与客户端 `cursor` |
 | `product_models.fw_match_rule` | 固件基线口径：`exact` 完全一致（默认）；`min` 不低于基线，按数字段比较（`V3.9 < V3.20`） |

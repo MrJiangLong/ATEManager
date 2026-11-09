@@ -225,6 +225,17 @@ def build_overview(
 
     unit_yield_rows, unit_yield_pending = unit_yield_by_process()
 
+    # 用例名称是展示标签：统一以当前 station_items 为准（一次查询建映射，不是 N+1）；
+    # 出站快照不携带名称，改名/删除查不到时直接退回字段码，历史数据无需回填。
+    item_names: Dict[tuple, str] = {}
+    for row in (
+        db.query(models.StationItem)
+        .filter(models.StationItem.item_name != "")
+        .all()
+    ):
+        if row.item_name:
+            item_names.setdefault((row.station_id, row.case_id), row.item_name)
+
     fail_counter: Counter = Counter()
     fail_names: Dict[str, str] = {}
     for _, r in records:
@@ -238,7 +249,8 @@ def build_overview(
             if not case_id:
                 continue
             fail_counter[case_id] += 1
-            fail_names.setdefault(case_id, item.get("item_name") or case_id)
+            if case_id not in fail_names:
+                fail_names[case_id] = item_names.get((r.station_id, case_id)) or case_id
     top_failed = [
         schemas.FailedItemPoint(
             case_id=case_id, item_name=fail_names.get(case_id) or case_id, fail_count=count
