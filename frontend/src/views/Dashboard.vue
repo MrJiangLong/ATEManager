@@ -88,6 +88,7 @@
         <YieldTable
           :rows="overview?.station_yield"
           :column-label="$t('dashboard.stationColName')"
+          :name-of="stationName"
           :search-ph="$t('dashboard.stationSearchPh')"
           :empty-text="$t('dashboard.noData')"
           show-first-pass
@@ -101,6 +102,7 @@
         <YieldTable
           :rows="overview?.process_unit_yield"
           :column-label="$t('dashboard.processColName')"
+          :name-of="dictProcessName"
           :search-ph="$t('dashboard.processSearchPh')"
           :empty-text="$t('dashboard.noData')"
           show-first-pass
@@ -159,6 +161,7 @@ import PageToolbar from '../components/PageToolbar.vue'
 import StatTile from '../components/StatTile.vue'
 import TopFailedList from '../components/TopFailedList.vue'
 import YieldTable from '../components/YieldTable.vue'
+import { useDictionaries } from '../composables/useDictionaries'
 import { usePolling } from '../composables/usePolling'
 import { useProcesses } from '../composables/useProcesses'
 
@@ -169,6 +172,9 @@ const WINDOWS = [7, 14, 30]
 const { t, locale } = useI18n()
 const router = useRouter()
 const { processes, processName, loadProcesses } = useProcesses()
+/* 良率表的 key 分别是工位/流程编码：tooltip 复用全局字典显示「名称（字段码）」。
+   这里的 processName 与下拉用的同名函数不同：字典版在名称缺失时返回空串，不回退成编码。 */
+const { stationName, processName: dictProcessName } = useDictionaries()
 
 const windowDays = ref(14)
 const processFilter = ref('')

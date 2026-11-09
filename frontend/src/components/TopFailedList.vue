@@ -4,7 +4,7 @@
       v-for="(row, i) in items"
       :key="row.case_id"
       class="rank-row"
-      :title="row.case_id"
+      :title="tipOf(row)"
       @click="onCopy(row.case_id)"
     >
       <span class="rank-no" :class="{ 'is-top': i < 3 }">{{ i + 1 }}</span>
@@ -32,6 +32,14 @@ const props = defineProps({
 })
 
 const { t } = useI18n()
+
+/** 与其他页面一致：悬浮提示「名称（字段码）」；
+ *  名称缺失或与字段码相同时不重复提示（字段码本身已在行内展示）。 */
+function tipOf(row) {
+  const name = String(row.item_name || '').trim()
+  const code = String(row.case_id || '').trim()
+  return name && code && name !== code ? `${name}（${code}）` : ''
+}
 
 async function onCopy(text) {
   if (!text) return

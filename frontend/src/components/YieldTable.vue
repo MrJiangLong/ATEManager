@@ -31,7 +31,7 @@
         :class="rowClass(row.pass_rate)"
         :style="gridStyle"
       >
-        <span class="yield-key" :title="row.key">{{ row.key }}</span>
+        <span class="yield-key" :title="tipOf(row)">{{ row.key }}</span>
         <span
           class="yield-rate"
           :class="rateClass(row.pass_rate)"
@@ -79,6 +79,8 @@ const props = defineProps({
   /** 列说明按表定制（工位/流程口径不同），缺省回落到通用文案 */
   rateTip: { type: String, default: '' },
   fpyTip: { type: String, default: '' },
+  /** 编码 → 名称 的解析器：由调用方按 key 的含义传（工位 / 流程） */
+  nameOf: { type: Function, default: null },
 })
 
 /** 概览页默认只渲染前 N 项，避免上千项一次性进 DOM */
@@ -136,6 +138,13 @@ watch(
     expanded.value = false
   }
 )
+
+/** 与其他页面一致：悬浮提示「名称（字段码）」；无名称或名称即编码时不提示 */
+function tipOf(row) {
+  const code = String(row.key || '').trim()
+  const name = String(props.nameOf?.(code) || '').trim()
+  return name && code && name !== code ? `${name}（${code}）` : ''
+}
 
 /** 主指标：达标品牌蓝、接近阈值浅蓝、低于 80% 红 */
 function rateClass(rate) {
