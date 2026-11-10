@@ -953,14 +953,22 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 ```bat
 set ATE_URL=http://10.1.1.4:8000
 set ATE_API_KEY=<V1 API Key>
-set ATE_CLIENT_ID=SZ-L9-CAL-99-PARAM
 set ATE_STATE_FILE=D:\ate\cal-state.json
 
-ate-cli
+ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
 ```
 
-**没有子命令**，启动即进入常驻循环（`--url/--key/--client/--app/--state/--timeout` 可命令行覆盖，
+**没有子命令**，启动即进入常驻循环（`--url/--key/--station/--app/--state/--timeout` 可命令行覆盖，
 密钥建议只走环境变量）。启动后先探测服务端（`GET /api/health`，固定 1s 超时）再输出就绪行：
+
+机台编号固定为 `<电脑名>-<工位>`，工位只由 `--station` 传入；不传时只用电脑名
+（调试场景）。同一台电脑跑多个工位时各建一个机台档案；误填完整编号也不会重复拼前缀
+（如 `<电脑名>-CAL-PARAM` 保持原样）。工位只参与生成编号，
+实际绑定仍在 Web 端「机台管理」维护。
+
+> 变更提醒：启动参数已由 `--client` / `ATE_CLIENT_ID` 改为 `--station`，现场脚本
+> 需把原值改填工位（如 `CAL-PARAM`）。编号统一带电脑名前缀后，与 Web 端已绑定的
+> 旧档案（如 `SZ-L1-CAL-01`）不同，需在管理端重新绑定。
 
 ```json
 {"ok": true, "command": "serve",

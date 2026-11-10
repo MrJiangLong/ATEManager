@@ -1,7 +1,7 @@
 """ate-cli：给非 Python 程序的**常驻**接入通道（stdin/stdout JSON-lines）。
 
 只提供一种形态：进程常驻，按行收发 JSON。宿主（C#/LabVIEW/bat/任意语言）只需：
-    1. 启动一次：ate-cli --url ... --key ... --client ... --state ...
+    1. 启动一次：ate-cli --url ... --key ... --station ... --state ...
     2. 写一行 JSON 请求 → 读一行 JSON 响应（按 id 配对，事件行看 event 字段）
     3. 非 0 的 exit 即代表业务拦截/网络不可达，宿主据此停机
 
@@ -15,6 +15,10 @@
 
 约定：stdout 只输出 JSON（日志走 stderr）；退出码 0 放行 / 10 业务拦截 / 11 失锁 /
 12 网络不可达 / 130 被中断（Ctrl+C）。
+
+机台编号统一为 <电脑名>-<工位>，工位由 --station 传入（同一台电脑上按工位
+各建一个机台档案）。不传工位时只用电脑名（调试场景）；已带电脑名前缀的值
+不会重复添加（幂等）。工位只参与生成编号，实际绑定仍在 Web 端「机台管理」维护。
 """
 from __future__ import annotations
 
@@ -150,7 +154,7 @@ def build_client(args: argparse.Namespace) -> "ate.AteClient":
     return ate.AteClient(
         args.url,
         args.key,
-        client_id=args.client,
+        client_id=resolve_client_id(args),
         app_version=args.app,
         state_file=state_path,
         timeout=args.timeout,
@@ -191,7 +195,7 @@ def cmd_case_list(args: argparse.Namespace) -> int:
     if not cases:
         return _fail("invalid_cases", "至少需要一个 case", EXIT_USAGE)
     client = build_client(args)
-    data = client.report_case_list(args.client, args.model, cases)
+    data = client.report_case_list(resolve_client_id(args), args.model, cases)
     emit({"ok": True, "command": "case-list", "data": data})
     return EXIT_OK
 
@@ -621,6 +625,21 @@ def run_server(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def resolve_client_id(args: argparse.Namespace) -> str:
+    """机台编号 = <电脑名>-<工位>，工位只来自 --station。
+
+    不传工位时只用电脑名（调试场景）。已经带电脑名前缀的值保持原样，
+    避免误填完整编号时拼成 <电脑名>-<电脑名>-xxx。
+    """
+    host = str(ate.CLIENT_ID or "").strip()
+    station = (getattr(args, "station", "") or "").strip()
+    if not station:
+        return host
+    if station == host or station.startswith(host + "-"):
+        return station
+    return f"{host}-{station}" if host else station
+
+
 def build_parser() -> argparse.ArgumentParser:
     """只保留全局连接参数——没有子命令，启动即常驻。"""
     parser = argparse.ArgumentParser(
@@ -630,8 +649,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default=os.getenv("ATE_URL", ate.ATE_URL), help="服务端地址（env ATE_URL）")
     parser.add_argument("--key", default=os.getenv("ATE_API_KEY", ate.ATE_KEY),
                         help="X-API-Key（建议走 env ATE_API_KEY，命令行会暴露在进程列表）")
-    parser.add_argument("--client", default=os.getenv("ATE_CLIENT_ID", ate.CLIENT_ID),
-                        help="机台编号（env ATE_CLIENT_ID）")
+    parser.add_argument("--station", default="",
+                        help="工位，机台编号自动为 <电脑名>-<工位>；不传则只用电脑名")
     parser.add_argument("--app", default=os.getenv("ATE_APP_VERSION", ate.APP_VERSION),
                         help="上位机版本（env ATE_APP_VERSION）")
     parser.add_argument("--state", default=os.getenv("ATE_STATE_FILE", DEFAULT_STATE),
