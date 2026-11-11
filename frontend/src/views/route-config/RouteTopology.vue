@@ -352,8 +352,6 @@ function stationName(stationId) {
   return stations.value.find((s) => s.station_id === stationId)?.station_name || stationId
 }
 
-
-
 const route = useRoute()
 const topologyRequest = inject('topologyRequest', null)
 const processId = ref('')

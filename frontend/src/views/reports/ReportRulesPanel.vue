@@ -461,7 +461,6 @@ useTabRefresh('rules', () => { load(); loadStandards() })
 
 onMounted(() => {
   load()
-  loadStandards()
 })
 </script>
 

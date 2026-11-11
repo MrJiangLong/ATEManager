@@ -66,7 +66,7 @@ def download_to(key: str, local_path: Path) -> None:
     _get_client().fget_object(settings.MINIO_BUCKET, key, str(local_path))
 
 def remove(key: str) -> None:
-    """删除对象（脚本换名归档、模板清理时用；对象不存在不报错）。"""
+    """删除对象（作废清产物、删规则、换名归档时用；对象不存在不报错）。"""
     from minio.error import S3Error
 
     try:

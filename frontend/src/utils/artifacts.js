@@ -2,7 +2,7 @@ import { ElMessage } from 'element-plus'
 import { recordApi } from '../api'
 
 /** 展平 executed_items.items[].files 的全局下载索引（与后端 _record_files 同序） */
-export function flatFileIndex(row, itemIndex, fileIndex) {
+function flatFileIndex(row, itemIndex, fileIndex) {
   const items = row.executed_items?.items || []
   let n = 0
   for (let i = 0; i < itemIndex; i++) n += (items[i]?.files || []).length

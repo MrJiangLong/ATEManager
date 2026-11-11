@@ -1,6 +1,6 @@
 """用户管理（/api/admin/users，仅 admin）。
 
-三角色模型：viewer 只读 / operator 产线操作 / admin 配置+用户管理。
+四角色模型：viewer 只读 / operator 产线操作 / manager 配置管理 / admin 全部权限。
 守卫核心：系统中必须永远存在至少一个"启用中的 admin"——所有会触碰
 这一不变量的操作（自删、自停、自降权、停用/降级最后一个 admin）一律 409。
 """

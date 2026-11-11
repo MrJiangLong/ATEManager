@@ -3811,7 +3811,7 @@ def test_plugin_sql_api():
     else:
         check(False, "empty SQL should raise")
 
-    # ⑥ ScriptApi 三个新接口转发 + 配置项透传 + 统一计数
+    # ⑥ ScriptApi 三个取数接口转发 + 配置项透传 + 统一计数
     api = executor.ScriptApi(
         SimpleNamespace(rule="unit"), "DPO4054B", "SN1", Path(tempfile.gettempdir())
     )

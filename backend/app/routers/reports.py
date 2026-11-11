@@ -32,9 +32,6 @@ standards_router = APIRouter(prefix="/api/admin/report-standards", tags=["admin-
 # PDF 认领租约：Worker 领取后超过此时长未回传结果即视为失联，认领作废重新分发
 PDF_CLAIM_LEASE_SEC = 600
 
-def _can_download(user) -> bool:
-    return True  # 登录即可下载；生成/重试另有 require_operator 收口
-
 @router.get("", response_model=schemas.ReportJobPageOut, summary="报告任务清单(分页)")
 def list_jobs(
     sn: Optional[str] = None,
@@ -464,7 +461,7 @@ async def upload_script(
     reports.registry.reset_cache()
     return _rule_out(db, row)
 
-@rules_router.post("/{rule}/templates", response_model=schemas.ReportRuleOut, summary="上传 Excel 模板(可多选，仅 admin)")
+@rules_router.post("/{rule}/templates", response_model=schemas.ReportRuleOut, summary="上传 Excel 模板(可多选，manager/admin)")
 async def upload_templates(
     rule: str,
     files: List[UploadFile] = File(...),
@@ -516,7 +513,7 @@ def delete_template(
 # =====================================================================
 # 标准器台账（证书回填与校准日期校验的数据源，写操作 manager/admin）
 # =====================================================================
-@standards_router.get("", response_model=List[schemas.ReportStandardOut], summary="标准器台账(按报告规则，仅 admin)")
+@standards_router.get("", response_model=List[schemas.ReportStandardOut], summary="标准器台账(按报告规则，manager/admin)")
 def list_standards(
     rule: str = Query(...),
     db: Session = Depends(get_db),

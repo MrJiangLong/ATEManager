@@ -143,7 +143,7 @@ def _find_dist() -> Optional[Path]:
         Path("/app/frontend/dist"),
         Path("/app/dist"),
     ):
-        if str(candidate) and (candidate / "index.html").is_file():
+        if (candidate / "index.html").is_file():
             return candidate
     return None
 

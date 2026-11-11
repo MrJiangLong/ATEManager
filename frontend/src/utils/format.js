@@ -43,20 +43,6 @@ export function fmtRelative(iso, t) {
   return t('common.agoDay', { n: Math.floor(diff / 86400) })
 }
 
-/** pytest nodeid → 用例方法名：`tests/a.py::TestB::test_c` → `test_c` */
-export function shortCaseId(caseId) {
-  if (!caseId) return '-'
-  const parts = String(caseId).split('::')
-  return parts.length > 1 ? parts[parts.length - 1] : String(caseId)
-}
-
-/** pytest nodeid → 文件 + 类：`tests/a.py::TestB::test_c` → `TestB` */
-export function caseOwner(caseId) {
-  if (!caseId) return ''
-  const parts = String(caseId).split('::')
-  return parts.length > 2 ? parts[parts.length - 2] : ''
-}
-
 /** 在制品状态 → el-tag type */
 export function statusTagType(status) {
   switch (status) {

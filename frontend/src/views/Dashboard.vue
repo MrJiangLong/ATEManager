@@ -173,7 +173,8 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { processes, processName, loadProcesses } = useProcesses()
 /* 良率表的 key 分别是工位/流程编码：tooltip 复用全局字典显示「名称（字段码）」。
-   这里的 processName 与下拉用的同名函数不同：字典版在名称缺失时返回空串，不回退成编码。 */
+   dictProcessName 是字典版 processName 的别名，名称缺失时返回空串（下拉用的
+   processName 会回退成编码，两者不能混用）。 */
 const { stationName, processName: dictProcessName } = useDictionaries()
 
 const windowDays = ref(14)

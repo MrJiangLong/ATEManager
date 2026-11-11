@@ -2,7 +2,7 @@
   <div class="repairs fade-up">
     <PageToolbar :title="$t('repairs.title')" :subtitle="$t('repairs.subtitle')" />
 
-    <!-- 面板顶部：处置动作分布统计（原环图口径，统一底色 + 动作色文字） -->
+    <!-- 面板顶部：处置动作分布统计（统一底色 + 动作色文字） -->
     <div class="stat-row">
       <div class="stat-tile">
         <div class="stat-value stat-total-value">{{ stats.total }}</div>
@@ -355,7 +355,7 @@ const statusFilter = ref('')
 const dateRange = ref(null)
 const saving = ref(false)
 
-// ---- 处置动作分布统计（原环图口径：各动作累计次数） ----
+// ---- 处置动作分布统计：各动作累计次数 ----
 const ACTION_COLORS = { RETEST: '#f59e0b', ROLLBACK: '#7c5cff', RESET: '#909399', SCRAP: '#ef4444' }
 const stats = ref({ total: 0, items: [] })
 

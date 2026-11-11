@@ -127,9 +127,7 @@ def finalize_job(db, job: models.ReportJob) -> None:
     if not ok_render:
         job.status = "failed"
         job.error = "all reports failed"
-    elif not pdf_ready:
-        job.status = "partial"
-    elif len(ok_render) < len(arts):
+    elif not pdf_ready or len(ok_render) < len(arts):
         job.status = "partial"
     else:
         job.status = "success"

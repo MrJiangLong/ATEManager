@@ -1,10 +1,9 @@
 """MES 上传传输层：multipart 上传产物 PDF。
 
 字段名与份数由插件产物（mes_field）声明，本模块不做任何产品解释；
-默认 URL 指向现行统一的 MES 校准数据接口。"""
+URL 由报告规则配置并必传，规则未配置时由调用方跳过。"""
 
 import json
-from typing import Optional
 
 import httpx
 
@@ -14,11 +13,10 @@ logger = get_logger("report.mes")
 
 def upload_mes(files: dict, sn: str, url: str) -> tuple:
     """按 {字段名: 本地 PDF 路径} 上传到 url（必传，规则未配置时调用方跳过）。"""
-    target = url
     try:
         with httpx.Client(timeout=300) as client:
             resp = client.post(
-                target,
+                url,
                 data={"sn": sn},
                 files={
                     name: (path.name, path.read_bytes(), "application/octet-stream")
@@ -47,10 +45,9 @@ def upload_mes(files: dict, sn: str, url: str) -> tuple:
 
 def void_mes(sn: str, url: str) -> tuple:
     """按 SN 作废 MES 侧报告副本（POST，sn 走 query；url 必传，调用方保证已配置）。"""
-    target = url
     try:
         with httpx.Client(timeout=10) as client:
-            resp = client.post(target, params={"sn": sn})
+            resp = client.post(url, params={"sn": sn})
         text = resp.text
         if resp.status_code >= 400:
             return False, f"HTTP {resp.status_code}: {text[:500]}"

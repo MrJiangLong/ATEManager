@@ -50,7 +50,7 @@ def build_overview(
         return graphs[pid]
 
     products = db.query(models.ProductStatus).all()
-    """ 受 process 过滤约束的台账集合：total / product_total / 状态分布 / 锁统计都基于它 """
+    # 受 process 过滤约束的台账集合：total / product_total / 状态分布 / 锁统计都基于它
     scoped = [
         p for p in products
         if not process_id or model_process.get(p.product_model) == process_id
@@ -60,9 +60,9 @@ def build_overview(
         if p.current_status == models.STATUS_SCRAPPED:
             wip.scrapped += 1
             continue
-        """ 四桶互斥：已报废 / 选检中 / 已完工 / 在制（未完结）。
-        完工件还能进站，只可能是"选检工位"（必跑站已全过 → 复测拦截 409），
-        故无需查工位归属即可精确区分——单独一桶，避免完工数在抽检期间来回抖动。 """
+        # 四桶互斥：已报废 / 选检中 / 已完工 / 在制（未完结）。
+        # 完工件还能进站，只可能是"选检工位"（必跑站已全过 → 复测拦截 409），
+        # 故无需查工位归属即可精确区分——单独一桶，避免完工数在抽检期间来回抖动。
         if p.is_completed:
             if p.current_status == models.STATUS_TESTING:
                 wip.sampling += 1
@@ -70,8 +70,8 @@ def build_overview(
                 wip.completed += 1
             continue
         wip.in_process += 1
-        """ 状态分布只在"未完结"内统计：完工件出站后状态回 IDLE，
-        旧实现会把同一件同时算进"已完工"与"待测试"。 """
+        # 状态分布只在"未完结"内统计：完工件出站后状态回 IDLE，
+        # 旧实现会把同一件同时算进"已完工"与"待测试"。
         if p.current_status == models.STATUS_TESTING:
             wip.testing += 1
         elif p.current_status == models.STATUS_IDLE:
@@ -233,8 +233,7 @@ def build_overview(
         .filter(models.StationItem.item_name != "")
         .all()
     ):
-        if row.item_name:
-            item_names.setdefault((row.station_id, row.case_id), row.item_name)
+        item_names.setdefault((row.station_id, row.case_id), row.item_name)
 
     fail_counter: Counter = Counter()
     fail_names: Dict[str, str] = {}
@@ -259,8 +258,8 @@ def build_overview(
     ]
 
     lock_stat = schemas.LockStat()
-    """ active = 在站测试的件（未完结 testing + 选检中 sampling，两者都持锁），
-    与在制管理列表 current_status=TESTING 的筛选结果一致；僵尸锁在同集合内判定 """
+    # active = 在站测试的件（未完结 testing + 选检中 sampling，两者都持锁），
+    # 与在制管理列表 current_status=TESTING 的筛选结果一致；僵尸锁在同集合内判定
     lock_stat.active = wip.testing + wip.sampling
     for p in scoped:
         if p.current_status == models.STATUS_TESTING and is_lock_lost(p):

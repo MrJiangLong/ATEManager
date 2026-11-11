@@ -6,7 +6,6 @@
 
 import threading
 from datetime import timedelta
-from pathlib import Path
 
 from ... import models
 from ...config import settings

@@ -939,7 +939,7 @@ def seed(
         if with_repairs:
             _seed_repairs(db, rng)
         _seed_lock_scenarios(db, rng)
-        # 故末尾统一回填：否则列表页"已完工"筛选（SQL 层按该列过滤）一条都筛不出，
+        # 末尾统一回填 is_completed：否则列表页「已完工」筛选（SQL 层按该列过滤）一条都筛不出
         _backfill_is_completed(db)
 
         models_count = db.query(ProductModel).count()

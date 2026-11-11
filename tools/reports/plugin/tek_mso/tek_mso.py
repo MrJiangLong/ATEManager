@@ -3,7 +3,7 @@
 报告逻辑 1:1 移植自 TekReport 桌面工具（Report.cs / ExportTestReportModel.cs），
 已经过与 ATEManager 引擎输出的逐单元格一致性差分验证。
 
-本范本的**全部取数都走 api.sql**（见 _newest_pass / _latest），不再使用旧的便利封装：
+本范本的**全部取数都走 api.sql**（见 _newest_pass / _latest）：
 一方面示范任意查询如何覆盖真实业务，另一方面把「分区取最新 PASS」「缺表跳过」
 这些口径显式写在插件里，换产品族时可直接改写 SQL。
 

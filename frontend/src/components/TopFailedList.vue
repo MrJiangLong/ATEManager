@@ -26,7 +26,7 @@ import { ElMessage } from 'element-plus'
 import EmptyState from './EmptyState.vue'
 import CaseIdText from './CaseIdText.vue'
 
-const props = defineProps({
+defineProps({
   items: { type: Array, default: () => [] },
   emptyText: { type: String, default: '' },
 })

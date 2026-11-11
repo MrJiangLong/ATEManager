@@ -95,8 +95,7 @@ class Settings:
     LOST_LOCK_FAIL_THRESHOLD: int = _as_int(os.getenv("LOST_LOCK_FAIL_THRESHOLD"), 3)
     MERGE_CHECKPOINT_ON_CHECKOUT: bool = _as_bool(os.getenv("MERGE_CHECKPOINT_ON_CHECKOUT"), True)
     METRICS_WINDOW_DAYS: int = _as_int(os.getenv("METRICS_WINDOW_DAYS"), 14)
-    APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Shanghai")
-    APP_TZ_OFFSET_HOURS: int = _as_int(os.getenv("APP_TZ_OFFSET_HOURS"), 8)
+    # APP_TIMEZONE / APP_TZ_OFFSET_HOURS 由 _tz_info() 直接读环境变量，无需冗余属性
     TZ_INFO: tzinfo = _tz_info()
 
     # ---- 出厂报告引擎 ----
