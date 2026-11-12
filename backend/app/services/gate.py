@@ -209,11 +209,29 @@ def _checkpoint_items(session: models.TestSession) -> List[dict]:
     return [it for it in items if isinstance(it, dict)]
 
 def _completed_case_ids(session: models.TestSession) -> List[str]:
-    """断点中已完成的用例ID清单（保序去重），下发给上位机用于跳过已跑用例。"""
+    """断点中已完成的用例ID清单（保序去重），下发给上位机用于跳过已跑用例。
+
+    注意 completed = 已执行（含 FAIL/SKIP），不是已通过；重跑清单见 _retry_case_ids。
+    """
     case_ids: List[str] = []
     for item in _checkpoint_items(session):
         case_id = item.get("case_id")
         if case_id and case_id not in case_ids:
+            case_ids.append(str(case_id))
+    return case_ids
+
+def _retry_case_ids(session: models.TestSession) -> List[str]:
+    """断点中未通过的用例ID（FAIL/SKIP），供同会话续测只重跑未通过项。
+
+    结果按 case_id 幂等覆盖，所以这里取到的是每个用例的最新判定；只作提示，
+    不参与漏测判定，宿主可结合 mandatory_case_ids 自行决定是否重跑可选项。
+    """
+    case_ids: List[str] = []
+    for item in _checkpoint_items(session):
+        case_id = item.get("case_id")
+        if not case_id or str(case_id) in case_ids:
+            continue
+        if str(item.get("result") or "").upper() != RESULT_PASS:
             case_ids.append(str(case_id))
     return case_ids
 
@@ -835,6 +853,7 @@ def check_in(
             resumed=True,
             attempt=session.attempt,
             completed_case_ids=_completed_case_ids(session),
+            retry_case_ids=_retry_case_ids(session),
             cursor=(session.checkpoint or {}).get("cursor") or {},
         )
 
@@ -1011,6 +1030,7 @@ def save_checkpoint(
         accepted_count=len(items),
         merged_count=merged,
         completed_case_ids=_completed_case_ids(session),
+        retry_case_ids=_retry_case_ids(session),
         server_time=now.isoformat(),
     )
 

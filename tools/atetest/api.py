@@ -59,6 +59,15 @@ CLIENT_ID = socket.gethostname()
 """ 断点目录（按 SN 分文件） """
 STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 
+
+def state_path_for(state_file: Optional[Path], sn: Optional[str] = None) -> Optional[Path]:
+    """断点文件路径：传目录 → 按 SN 分文件；传 .json 文件 → 单文件模式。"""
+    if not state_file:
+        return None
+    if state_file.suffix:
+        return state_file
+    return state_file / f".ate_state_{sn or 'unknown'}.json"
+
 """ ═══════════════════════════ 2. 传输层 ═════════════════════════════════════ """
 
 LOGGER = logging.getLogger("ate.api")
@@ -322,6 +331,8 @@ class SessionState:
     """ 出站幂等凭据 """
     checkout_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     completed_case_ids: List[str] = field(default_factory=list)
+    """ 续测待重跑清单（断点里 FAIL/SKIP 的用例ID） """
+    retry_case_ids: List[str] = field(default_factory=list)
     mandatory_case_ids: List[str] = field(default_factory=list)
     cursor: Dict[str, Any] = field(default_factory=dict)
     """ 断网期间待补传的断点 """
@@ -527,6 +538,7 @@ class AteClient:
             passthrough=bool(data.get("passthrough") or False),
             checkout_id=(previous.checkout_id if previous and previous.sn == sn else uuid.uuid4().hex),
             completed_case_ids=list(resume_info.get("completed_case_ids") or []),
+            retry_case_ids=list(resume_info.get("retry_case_ids") or []),
             mandatory_case_ids=[r.get("case_id") for r in (data.get("rules") or [])
                                 if r.get("is_mandatory", True)],
             cursor=dict(resume_info.get("cursor") or {}),
@@ -586,6 +598,7 @@ class AteClient:
 
         self.state.pending_items = []
         self.state.completed_case_ids = list(data.get("completed_case_ids") or [])
+        self.state.retry_case_ids = list(data.get("retry_case_ids") or [])
         self._persist()
         return int(data.get("merged_count") or 0)
 
@@ -691,12 +704,7 @@ class AteClient:
     """ ---- 内部 ---- """
 
     def _state_path_for(self, sn: Optional[str] = None) -> Optional[Path]:
-        """断点文件路径：state_file 传目录 → 按 SN 分文件；传 .json 文件 → 单文件模式。"""
-        if not self.state_file:
-            return None
-        if self.state_file.suffix:
-            return self.state_file
-        return self.state_file / f".ate_state_{sn or 'unknown'}.json"
+        return state_path_for(self.state_file, sn)
 
     def _persist(self) -> None:
         path = self._state_path_for(self.state.sn if self.state else None)

@@ -1,7 +1,7 @@
 """ate-cli：给非 Python 程序的**常驻**接入通道（stdin/stdout JSON-lines）。
 
 只提供一种形态：进程常驻，按行收发 JSON。宿主（C#/LabVIEW/bat/任意语言）只需：
-    1. 启动一次：ate-cli --url ... --key ... --station ... --state ...
+    1. 启动一次：ate-cli --url ... --key ... --station ...（--state 可省略，断点自动管理）
     2. 写一行 JSON 请求 → 读一行 JSON 响应（按 id 配对，事件行看 event 字段）
     3. 非 0 的 exit 即代表业务拦截/网络不可达，宿主据此停机
 
@@ -54,7 +54,6 @@ EXIT_NETWORK = 12
 EXIT_LOCK_LOST = 11
 EXIT_SIGINT = 130
 
-DEFAULT_STATE = "ate-state.json"
 CLI_VERSION = "1.0.0"
 
 
@@ -150,7 +149,7 @@ def build_client(args: argparse.Namespace) -> "ate.AteClient":
     shared = getattr(args, "_client", None)
     if shared is not None:
         return shared
-    state_path = Path(args.state).expanduser() if args.state else None
+    state_path = resolve_state_path(args)
     return ate.AteClient(
         args.url,
         args.key,
@@ -162,16 +161,26 @@ def build_client(args: argparse.Namespace) -> "ate.AteClient":
 
 
 def load_session(client: "ate.AteClient", args: argparse.Namespace) -> "ate.SessionState":
-    """从 --state 文件恢复会话（每个子命令都是独立进程，状态必须落盘）。"""
+    """从断点恢复会话（每个子命令都是独立进程，状态必须落盘）。"""
     if client.state and client.state.session_id:
         return client.state
-    if not args.state:
+    path = ate.state_path_for(resolve_state_path(args), getattr(args, "sn", ""))
+    if path is None:
         raise SystemExit(_fail("no_session", "缺少 --state（或环境变量 ATE_STATE_FILE）"))
-    state = ate.SessionState.load(Path(args.state).expanduser())
+    state = ate.SessionState.load(path)
     if state is None or not state.session_id:
-        raise SystemExit(_fail("no_session", f"会话不存在或已结束：{args.state}（请先 check-in）"))
+        raise SystemExit(_fail("no_session", f"会话不存在或已结束：{path}（请先 check-in）"))
     client.state = state
     return state
+
+
+def load_local_state(args: argparse.Namespace) -> Optional["ate.SessionState"]:
+    """按解析后的断点路径读本地会话（自动/显式同一口径）；无会话返回 None。"""
+    path = ate.state_path_for(resolve_state_path(args), getattr(args, "sn", ""))
+    if path is None:
+        return None
+    state = ate.SessionState.load(path)
+    return state if (state and state.session_id) else None
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
@@ -224,6 +233,7 @@ def cmd_check_in(args: argparse.Namespace) -> int:
             "passthrough": state.passthrough,
             "checkout_id": state.checkout_id,
             "completed_case_ids": list(state.completed_case_ids or []),
+            "retry_case_ids": list(state.retry_case_ids or []),
             "mandatory_case_ids": list(state.mandatory_case_ids or []),
         },
     })
@@ -260,7 +270,12 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     if not batch:
         return _fail("missing_args", "checkpoint 需要 case（或 items）", EXIT_USAGE)
     merged = client.checkpoint(batch)
-    emit({"ok": True, "command": "checkpoint", "data": {"merged_count": merged, "reported": len(batch)}})
+    emit({"ok": True, "command": "checkpoint", "data": {
+        "merged_count": merged,
+        "reported": len(batch),
+        "completed_case_ids": list(client.state.completed_case_ids or []) if client.state else [],
+        "retry_case_ids": list(client.state.retry_case_ids or []) if client.state else [],
+    }})
     return EXIT_OK
 
 
@@ -297,9 +312,7 @@ def cmd_check_out(args: argparse.Namespace) -> int:
 
 def cmd_ack(args: argparse.Namespace) -> int:
     client = build_client(args)
-    state = None
-    if args.state:
-        state = ate.SessionState.load(Path(args.state).expanduser())
+    state = load_local_state(args)
     if state is not None:
         client.state = state
     ok = client.ack(sn=args.sn or None, checkout_id=args.checkout_id or None)
@@ -323,10 +336,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     state = None
     if client.state and client.state.session_id:
         state = client.state
-    elif args.state:
-        state = ate.SessionState.load(Path(args.state).expanduser())
-        client.state = state if (state and state.session_id) else None
-        state = client.state
+    else:
+        state = load_local_state(args)
+        client.state = state
     if state is None:
         emit({"ok": True, "command": "status", "data": {"active": False}})
         return EXIT_OK
@@ -338,6 +350,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         "session_id": state.session_id,
         "checkout_id": state.checkout_id,
         "completed_count": len(state.completed_case_ids or []),
+        "completed_case_ids": list(state.completed_case_ids or []),
+        "retry_case_ids": list(state.retry_case_ids or []),
         "pending_count": len(state.pending_items or []),
         "lost_lock": client.lost_lock,
     }
@@ -364,36 +378,75 @@ def cmd_release(args: argparse.Namespace) -> int:
 
 
 def cmd_state(args: argparse.Namespace) -> int:
-    if not args.state:
-        return _fail("no_session", "缺少 state（--state 或 ATE_STATE_FILE）", EXIT_USAGE)
-    path = Path(args.state).expanduser()
+    path = resolve_state_path(args)
+    sn = (getattr(args, "sn", "") or "").strip()
+    target = ate.state_path_for(path, sn)
+    if target is None:
+        return _fail("no_state", "断点路径无效", EXIT_USAGE)
+
     if args.clear:
+        """ 目录模式不带 sn = 清空当前机台目录下全部断点（卸载/换批时一次性清除） """
+        if not path.suffix and not sn:
+            removed = 0
+            for f in state_files(path):
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+            emit({"ok": True, "command": "state",
+                  "data": {"cleared": str(path), "removed": removed}})
+            return EXIT_OK
         try:
-            path.unlink()
+            target.unlink()
         except OSError:
             pass
-        emit({"ok": True, "command": "state", "data": {"cleared": str(path)}})
+        emit({"ok": True, "command": "state", "data": {"cleared": str(target)}})
         return EXIT_OK
-    state = ate.SessionState.load(path)
-    if state is None:
-        emit({"ok": True, "command": "state", "data": {"exists": False, "path": str(path)}})
+
+    if path.suffix or sn:
+        """ 单文件模式 / 目录模式指定 SN：返回单条详情 """
+        state = ate.SessionState.load(target)
+        if state is None:
+            emit({"ok": True, "command": "state", "data": {"exists": False, "path": str(target)}})
+            return EXIT_OK
+        emit({
+            "ok": True,
+            "command": "state",
+            "data": {
+                "exists": True,
+                "path": str(target),
+                "sn": state.sn,
+                "session_id": state.session_id,
+                "station_id": state.station_id,
+                "attempt": state.attempt,
+                "passthrough": state.passthrough,
+                "checkout_id": state.checkout_id,
+                "completed_case_ids": list(state.completed_case_ids or []),
+                "retry_case_ids": list(state.retry_case_ids or []),
+                "pending_count": len(state.pending_items or []),
+            },
+        })
         return EXIT_OK
-    emit({
-        "ok": True,
-        "command": "state",
-        "data": {
-            "exists": True,
-            "path": str(path),
+
+    """ 目录模式未指定 SN：列出全部可续测断点（最近修改在前） """
+    sessions: List[Dict[str, Any]] = []
+    for f in state_files(path):
+        state = ate.SessionState.load(f)
+        if state is None or not state.session_id:
+            continue
+        sessions.append({
             "sn": state.sn,
             "session_id": state.session_id,
             "station_id": state.station_id,
             "attempt": state.attempt,
-            "passthrough": state.passthrough,
-            "checkout_id": state.checkout_id,
             "completed_case_ids": list(state.completed_case_ids or []),
-            "pending_count": len(state.pending_items or []),
-        },
-    })
+            "retry_case_ids": list(state.retry_case_ids or []),
+            "path": str(f),
+        })
+    emit({"ok": True, "command": "state", "data": {
+        "exists": bool(sessions), "mode": "dir", "path": str(path), "sessions": sessions,
+    }})
     return EXIT_OK
 
 
@@ -465,12 +518,19 @@ def run_server(args: argparse.Namespace) -> int:
         })
 
     client.on_lost_lock = _on_lost_lock
+    state_path = resolve_state_path(args)
     ready: Dict[str, Any] = {"ready": True, "process_ready": True,
-                             "state": args.state, "commands": sorted(SERVE_COMMANDS)}
-    if args.state:
-        leftover = ate.SessionState.load(Path(args.state).expanduser())
+                             "state": str(state_path), "commands": sorted(SERVE_COMMANDS)}
+    """ 目录模式可能有多个 SN 的断点：报最近一个 + 全部 SN，宿主据此决定续测哪个 """
+    leftovers = []
+    for f in state_files(state_path):
+        leftover = ate.SessionState.load(f)
         if leftover is not None and leftover.session_id:
-            ready.update({"resumable": True, "sn": leftover.sn, "station_id": leftover.station_id})
+            leftovers.append(leftover)
+    if leftovers:
+        ready.update({"resumable": True, "sn": leftovers[0].sn,
+                      "station_id": leftovers[0].station_id,
+                      "resumable_sn": [s.sn for s in leftovers]})
 
     """ 就绪 = 进程就绪「且」服务端可达且自检通过；探测失败即 fail-fast（退出码 12），
     由 Supervisor 决定重启/报警——CLI 不做等待与重探。 """
@@ -640,6 +700,35 @@ def resolve_client_id(args: argparse.Namespace) -> str:
     return f"{host}-{station}" if host else station
 
 
+def default_state_root() -> Path:
+    """自动断点根目录：当前运行目录下的 .state。
+
+    所有断点集中在这一处，删除该目录即清除全部；宿主要保证启动 cwd 固定
+    （快捷方式/服务配置里指定「起始位置」），否则换目录会看不到旧断点。
+    """
+    return Path.cwd() / ".state"
+
+
+def resolve_state_path(args: argparse.Namespace) -> Path:
+    """断点路径：--state（或 ATE_STATE_FILE）> 自动 <根>/<机台编号>。
+
+    带后缀 = 单文件（单 SN 独占）；无后缀 = 目录，由 SDK 按 SN 分文件。
+    """
+    explicit = (getattr(args, "state", "") or "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    return default_state_root() / resolve_client_id(args)
+
+
+def state_files(path: Path) -> List[Path]:
+    """该路径下的断点文件：单文件原样；目录取全部 .ate_state_*.json（最近修改在前）。"""
+    if path.suffix:
+        return [path] if path.is_file() else []
+    if not path.is_dir():
+        return []
+    return sorted(path.glob(".ate_state_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """只保留全局连接参数——没有子命令，启动即常驻。"""
     parser = argparse.ArgumentParser(
@@ -653,8 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="工位，机台编号自动为 <电脑名>-<工位>；不传则只用电脑名")
     parser.add_argument("--app", default=os.getenv("ATE_APP_VERSION", ate.APP_VERSION),
                         help="上位机版本（env ATE_APP_VERSION）")
-    parser.add_argument("--state", default=os.getenv("ATE_STATE_FILE", DEFAULT_STATE),
-                        help="会话状态文件（env ATE_STATE_FILE）")
+    parser.add_argument("--state", default=os.getenv("ATE_STATE_FILE", ""),
+                        help="断点目录或 .json 文件；不传则自动用当前运行目录下 "
+                             ".state/<机台编号>（env ATE_STATE_FILE）")
     parser.add_argument("--timeout", type=float, default=ate.DEFAULT_TIMEOUT, help="单次请求超时（秒）")
     parser.add_argument("--version", action="version", version=f"ate-cli {CLI_VERSION}")
     return parser

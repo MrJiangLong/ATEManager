@@ -3892,6 +3892,84 @@ def test_top_failed_names_come_from_current_config():
             db.commit()
 
 
+def _checkpoint_v1(station, sn, session_id, lock_token, items):
+    return v1("checkpoint", {
+        "client_id": CLIENTS[station], "sn": sn,
+        "session_id": session_id, "lock_token": lock_token,
+        "items": items, "cursor": {},
+    })
+
+
+def test_retry_case_ids_from_checkpoint():
+    """checkpoint 下发未通过清单：FAIL/SKIP 计入，被后来上报的 PASS 覆盖后移除。"""
+    sn = new_sn("RETRYIDS")
+    resp = checkin("CAL-PARAM", sn)
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    ack = resp.json()["data"]
+    case_ids = rules_of(resp)[:2]
+    check(len(case_ids) == 2, f"need 2 cases: {case_ids}")
+    c0, c1 = case_ids
+
+    resp = _checkpoint_v1("CAL-PARAM", sn, ack["session_id"], ack["lock_token"],
+                          items_for(case_ids, fail=(c1,)))
+    check(resp.status_code == 200, f"checkpoint: {resp.text}")
+    d = resp.json()["data"]
+    check(set(d["completed_case_ids"]) == set(case_ids),
+          f"completed = 已执行全集（含 FAIL）: {d['completed_case_ids']}")
+    check(d["retry_case_ids"] == [c1], f"FAIL must be retried: {d['retry_case_ids']}")
+
+    # PASS → SKIP 覆盖：SKIP 同样计入待重跑
+    resp = _checkpoint_v1("CAL-PARAM", sn, ack["session_id"], ack["lock_token"],
+                          items_for([c0], skip=(c0,)))
+    check(resp.status_code == 200, f"skip checkpoint: {resp.text}")
+    check(set(resp.json()["data"]["retry_case_ids"]) == {c0, c1},
+          f"SKIP must be retried: {resp.json()['data']['retry_case_ids']}")
+
+    # FAIL → PASS 覆盖：从待重跑清单移除
+    resp = _checkpoint_v1("CAL-PARAM", sn, ack["session_id"], ack["lock_token"],
+                          items_for([c1]))
+    check(resp.status_code == 200, f"re-checkpoint: {resp.text}")
+    d = resp.json()["data"]
+    check(d["retry_case_ids"] == [c0],
+          f"PASS must overwrite prior FAIL: {d['retry_case_ids']}")
+
+    v1("release", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn,
+                   "lock_token": ack["lock_token"], "reason": "test done"})
+
+
+def test_retry_case_ids_in_resume():
+    """同会话崩溃续测：check-in 的 resume 带回未通过清单（attempt+1）。"""
+    sn = new_sn("RESUMERETRY")
+    resp = checkin("CAL-PARAM", sn)
+    check(resp.status_code == 200, f"check-in: {resp.text}")
+    ack = resp.json()["data"]
+    all_case_ids = rules_of(resp)
+    case_ids = all_case_ids[:2]
+    check(len(case_ids) == 2, f"need 2 cases: {case_ids}")
+
+    resp = _checkpoint_v1("CAL-PARAM", sn, ack["session_id"], ack["lock_token"],
+                          items_for(case_ids, fail=(case_ids[1],)))
+    check(resp.status_code == 200, f"checkpoint: {resp.text}")
+    check(resp.json()["data"]["retry_case_ids"] == [case_ids[1]], "FAIL in checkpoint")
+
+    resp = v1("check-in", {
+        "client_id": CLIENTS["CAL-PARAM"], "sn": sn,
+        "product_model": M_DPO, "firmware": FW,
+        "case_ids": all_case_ids,
+        "resume_session_id": ack["session_id"],
+    })
+    check(resp.status_code == 200, f"resume check-in: {resp.text}")
+    d = resp.json()["data"]
+    check(d["attempt"] == 2, f"resume must bump attempt: {d.get('attempt')}")
+    check(d["resume"]["retry_case_ids"] == [case_ids[1]],
+          f"resume must carry retry list: {d.get('resume')}")
+    check(d["resume"]["completed_case_ids"] == case_ids,
+          f"resume completed = 已执行全集: {d.get('resume')}")
+
+    v1("release", {"client_id": CLIENTS["CAL-PARAM"], "sn": sn,
+                   "lock_token": d["lock_token"], "reason": "test done"})
+
+
 def test_p0_added_columns_cover_optional_and_station_active():
     """增量列迁移清单不得因重复字典键丢失 is_optional / station_items.is_active。"""
     from app.database import _ADDED_COLUMNS
@@ -4102,6 +4180,8 @@ TESTS = [
     test_seed_wipe_targets_cover_all_tables,
     test_plugin_sql_api,
     test_top_failed_names_come_from_current_config,
+    test_retry_case_ids_from_checkpoint,
+    test_retry_case_ids_in_resume,
     test_p0_scheduler_watchdog_reclaims_orphans,
     test_p0_scheduler_ticks_after_runtime_rule,
     test_p0_invalidation_marks_then_purges_after_commit,

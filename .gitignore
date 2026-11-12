@@ -53,3 +53,6 @@ tools/atetest/ate-cli.spec
 Thumbs.db
 *.log
 tools/atetest/demo_flow.py
+
+# ---- ate-cli / SDK 自动断点目录（当前运行目录下）----
+.state/

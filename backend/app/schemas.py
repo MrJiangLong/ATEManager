@@ -184,6 +184,7 @@ class CheckpointData(BaseModel):
     accepted_count: int = 0
     merged_count: int = 0
     completed_case_ids: List[str] = []
+    retry_case_ids: List[str] = []
     server_time: str
 
 class ReleaseIn(BaseModel):
@@ -232,6 +233,7 @@ class ResumeInfo(BaseModel):
     resumed: bool = False
     attempt: int = 1
     completed_case_ids: List[str] = []
+    retry_case_ids: List[str] = []
     cursor: Dict[str, Any] = {}
 
 class FlowManifestIn(BaseModel):

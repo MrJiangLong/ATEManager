@@ -67,9 +67,19 @@ __all__ = [
     "identity_from_report",
     "map_outcome",
     "to_ate_items",
+    "state_path_for",
 ]
 
 LOGGER = logging.getLogger("ate.client")
+
+
+def state_path_for(state_file: Optional[Path], sn: Optional[str] = None) -> Optional[Path]:
+    """断点文件路径：state_file 传**目录**按 SN 分文件，传 .json 保持单文件语义。"""
+    if not state_file:
+        return None
+    if state_file.suffix:
+        return state_file
+    return state_file / f".ate_state_{sn or 'unknown'}.json"
 LOGGER.addHandler(logging.NullHandler())
 
 # 返回的 4xx 更会掩盖真实网络拓扑。产线直连语义下代理只有坏处。
@@ -513,17 +523,7 @@ class AteClient:
         return data
 
     def _state_path_for(self, sn: Optional[str] = None) -> Optional[Path]:
-        """断点文件路径。
-
-        state_file 传**目录**时按 SN 分文件（.ate_state_{sn}.json）：一台设备中途
-        离站、另一台顶上测试时，旧断点不会被覆盖，设备拿回工位仍可续测。
-        传具体 .json 文件则保持旧的单文件语义（同一时刻只测一台件的场景）。
-        """
-        if not self.state_file:
-            return None
-        if self.state_file.suffix:
-            return self.state_file
-        return self.state_file / f".ate_state_{sn or 'unknown'}.json"
+        return state_path_for(self.state_file, sn)
 
     def check_in(
         self,

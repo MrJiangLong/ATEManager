@@ -953,9 +953,9 @@ SDK（`tools/atetest/api.py`，单文件零第三方依赖的产线形态）已�
 ```bat
 set ATE_URL=http://10.1.1.4:8000
 set ATE_API_KEY=<V1 API Key>
-set ATE_STATE_FILE=D:\ate\cal-state.json
 
 ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
+                                  :: 断点自动落在当前运行目录 .state\<机台编号>\
 ```
 
 **没有子命令**，启动即进入常驻循环（`--url/--key/--station/--app/--state/--timeout` 可命令行覆盖，
@@ -966,6 +966,21 @@ ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
 （如 `<电脑名>-CAL-PARAM` 保持原样）。工位只参与生成编号，
 实际绑定仍在 Web 端「机台管理」维护。
 
+**断点（状态）文件由 CLI 自动管理，宿主不需要传 `--state`：**
+
+| 场景 | 行为 |
+|---|---|
+| 不传 `--state` | 自动用**当前运行目录**下的 `.state\<机台编号>\`，**按 SN 分文件**；删除 `.state` 即清除全部断点 |
+| 传目录 | 按 SN 分文件（`.ate_state_<sn>.json`），适合单机台跑多个 SN |
+| 传 `.json` 文件 | 单文件模式，**一个文件只服务一个 SN**（跨 SN 复用会丢待补传断点与出站幂等凭据） |
+| 清理 | 出站 / 释放 / 续测会话失效时自动删除；`{"cmd":"state","clear":true}` 清空当前机台目录全部断点（带 `sn` 只清单条），也可直接删 `.state` 目录 |
+
+> 自动路径跟随**启动时的 cwd**，宿主要保证 cwd 固定（快捷方式/服务配置里指定「起始位置」），
+> 否则换目录启动会看不到旧断点、续测失效。
+
+`state` 命令在目录模式下不传 `sn` 时返回 `{"mode":"dir","sessions":[{sn,attempt,retry_case_ids,...}]}`，
+传 `sn` 则返回该 SN 的单条详情；就绪行的 `resumable` 会附带 `resumable_sn`（全部可续测 SN）。
+
 > 变更提醒：启动参数已由 `--client` / `ATE_CLIENT_ID` 改为 `--station`，现场脚本
 > 需把原值改填工位（如 `CAL-PARAM`）。编号统一带电脑名前缀后，与 Web 端已绑定的
 > 旧档案（如 `SZ-L1-CAL-01`）不同，需在管理端重新绑定。
@@ -974,8 +989,10 @@ ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
 {"ok": true, "command": "serve",
  "data": {"ready": true, "process_ready": true,
           "server_reachable": true, "server_healthy": true,
-          "state": "D:\\ate\\cal-state.json", "commands": ["ack", "artifact", "..."],
-          "resumable": true, "sn": "C020001", "station_id": "CAL-PARAM"}}
+          "state": "D:\\ate\\.state\\<电脑名>-CAL-PARAM",
+          "commands": ["ack", "artifact", "..."],
+          "resumable": true, "sn": "C020001", "station_id": "CAL-PARAM",
+          "resumable_sn": ["C020001"]}}
 ```
 
 - **fail-fast**：服务端不可达或自检未通过（HTTP ≥500）时，`ready:false` 并**以退出码 12 退出**，
@@ -999,6 +1016,18 @@ ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
 {"ok": true,  "id": 1, "command": "check-in", "exit": 0, "data": {"station_id": "CAL-PARAM", "session_id": "..."}}
 {"ok": false, "id": 2, "code": "missing_prereq", "message": "防跳站拦截：...", "data": {"missing": ["CAL-IFACE"]}, "exit": 10}
 ```
+
+**已完成清单 / 待重跑清单** 在 `check-in` / `checkpoint` / `status` / `state` 四个命令的 `data` 里都会返回：
+
+| 字段 | 含义 |
+|---|---|
+| `completed_case_ids` | 服务端断点中的**已执行用例全集**（按 `case_id` 覆盖，含 PASS/FAIL/SKIP），**不是「已通过」** |
+| `retry_case_ids` | 其中最新 `result` 不是 `PASS` 的用例（FAIL/SKIP），供同会话续测只重跑未通过项 |
+
+- `check-in` 首次进站两者均为空数组；**崩溃重启后带断点续测才有值**（`attempt` 同时 +1）；
+- 每次 `checkpoint` 透传服务端合并后的最新清单；同一 `case_id` 重跑上报 PASS 会覆盖旧 FAIL，`retry_case_ids` 自动移除该项；
+- 宿主续测时可直接按 `retry_case_ids` 决定本轮跑哪些；自有结果库的宿主也可自行记录失败清单，忽略该字段即可；
+- 仅对**未出站的同会话续测**有效：一旦 `check-out`，会话完结、断点清除，再次进站是新会话，两个字段都为空。必测有 FAIL 时应**先不出站**，重跑到全绿再出站。
 
 **事件行**（无 `id`，带 `event` 字段，后台线程主动推送——宿主解析时**必须先判 `event`**）：
 
@@ -1024,20 +1053,30 @@ ate-cli --station CAL-PARAM       :: 机台编号自动为 <电脑名>-CAL-PARAM
 
 ```
 → {"id":1,"cmd":"check-in","sn":"C020001","model":"DPO4054B","fw":"V3.20","case":["cal_dc","cal_ac"]}
-← {"ok":true,"id":1,"exit":0,"data":{"station_id":"CAL-PARAM","session_id":"...","completed_case_ids":[]}}
+← {"ok":true,"id":1,"exit":0,"data":{"station_id":"CAL-PARAM","session_id":"...","completed_case_ids":[],"retry_case_ids":[]}}
 
 （DC 校准完成后）
 → {"id":2,"cmd":"checkpoint","case":"cal_dc","result":"PASS","duration":1200,"values":{"gain":1.02}}
-← {"ok":true,"id":2,"exit":0,"data":{"merged_count":1,"reported":1}}
+← {"ok":true,"id":2,"exit":0,"data":{"merged_count":1,"reported":1,"completed_case_ids":["cal_dc"],"retry_case_ids":[]}}
 → {"id":3,"cmd":"artifact","case":"cal_dc","file":"D:\\logs\\dc.csv"}
 ← {"ok":true,"id":3,"exit":0,"data":{"object_key":"...","size":1024}}
 
 （AC 校准完成后）
 → {"id":4,"cmd":"checkpoint","case":"cal_ac","result":"PASS"}
-← {"ok":true,"id":4,"exit":0}
+← {"ok":true,"id":4,"exit":0,"data":{"merged_count":2,"reported":1,"completed_case_ids":["cal_dc","cal_ac"],"retry_case_ids":[]}}
 
 → {"id":5,"cmd":"status"}
-← {"ok":true,"id":5,"exit":0,"data":{"active":true,"holding_lock":true,"remaining_sec":120,"completed_count":2}}
+← {"ok":true,"id":5,"exit":0,"data":{"active":true,"holding_lock":true,"remaining_sec":120,"completed_count":2,"completed_case_ids":["cal_dc","cal_ac"],"retry_case_ids":[]}}
+
+**失败重测（同一会话，不出站）**：AC 上报 FAIL 时不要 `check-out`，退出进程后用同一个 `--state` 重启：
+
+```
+→ {"id":4,"cmd":"checkpoint","case":"cal_ac","result":"FAIL"}
+← {..."completed_case_ids":["cal_dc","cal_ac"],"retry_case_ids":["cal_ac"]}
+   （进程中断；重启后同 SN / 同 --state 进站）
+← {...,"attempt":2,"completed_case_ids":["cal_dc","cal_ac"],"retry_case_ids":["cal_ac"]}
+   （宿主只跑 retry_case_ids 里的 cal_ac；PASS 覆盖旧 FAIL → retry_case_ids 变空 → 出站）
+```
 
 → {"id":6,"cmd":"check-out","duration":120000}
 ← {"ok":true,"id":6,"exit":0,"data":{"acknowledged":true,"record_id":411,"overall_result":"PASS"}}
